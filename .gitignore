@@ -1,0 +1,43 @@
+# ===== 构建产物 =====
+build/
+out/
+cmake-build-*/
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+compile_commands.json
+CMakeCache.txt
+CMakeFiles/
+
+# ===== 核心转储（调试崩溃遗留，切勿提交） =====
+# 注意：仅匹配核心转储文件，绝不能误伤 src/core 源码目录
+core.*
+*.core
+./core
+
+# ===== 编辑器/IDE =====
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ===== 操作系统 =====
+.DS_Store
+Thumbs.db
+
+# ===== 本地配置/密钥（绝不提交） =====
+*.local
+secrets.*
+deploy_key*
+
+# ===== 大型下载模型样本（可用脚本重新下载，不入库） =====
+tools/testdata/sample_vrm1_twist.vrm
+
+# ===== 截图/临时产物 =====
+*.png.bak
+screenshots/
