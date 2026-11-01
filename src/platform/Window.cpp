@@ -29,6 +29,10 @@
 #define GLFW_EXPOSE_NATIVE_X11
 #endif
 
+// GLEW 必须在 GLFW 之前包含：glfw3.h 内部会引入 GL/gl.h，而 glew.h 要求自己先于
+// 任何 GL 头文件被包含，否则报 “gl.h included before glew.h”。
+#include <GL/glew.h>
+
 #include <GLFW/glfw3.h>
 #include <GLFW/glfw3native.h>
 
@@ -269,6 +273,10 @@ bool Window::Create(const WindowOptions& options, std::string& error) {
     glfwShowWindow(window_);
 
     ApplyPlatformOptions(options);
+
+    // 把 GL 上下文绑定到当前线程并初始化 GLEW：这是渲染能出图的前提，
+    // 缺了这两步，渲染层 / ImGui 的所有 GL 调用都会因为「无当前上下文」而失败。
+    if (!InitGL(error)) return false;
 
     ++g_windowCount;
     return true;
@@ -592,6 +600,36 @@ void Window::ApplyPlatformOptions(const WindowOptions& options) {
         platformNote_ += "透明背景需要运行中的桌面合成器";
     }
 #endif
+}
+
+bool Window::InitGL(std::string& error) {
+    if (glReady_) return true;
+    if (!window_) {
+        error = "InitGL 失败：窗口尚未创建";
+        return false;
+    }
+
+    // 1) 把 GL 上下文绑定到当前线程。GLFW 创建窗口时已经建好了上下文，
+    //    但不会自动设为当前，必须先显式 make current，否则后续 GL 调用无上下文。
+    glfwMakeContextCurrent(window_);
+    // 垂直同步：桌宠动画不需要极高帧率，开启后可避免空转占用 CPU。
+    glfwSwapInterval(1);
+
+    // 2) core profile 下必须先打开 glewExperimental，否则部分函数会报「无效操作」。
+    glewExperimental = GL_TRUE;
+    const GLenum glewStatus = glewInit();
+    if (glewStatus != GLEW_OK) {
+        error = std::string("GLEW 初始化失败：") +
+                reinterpret_cast<const char*>(glewGetErrorString(glewStatus));
+        return false;
+    }
+    // glewInit 之后常会留下一个 GL_INVALID_ENUM 之类的历史错误，清掉以免后续
+    // GL 错误检查（PPET_GL_CHECK）误报。
+    while (glGetError() != GL_NO_ERROR) {
+    }
+
+    glReady_ = true;
+    return true;
 }
 
 void Window::UpdatePlatformStateImpl() {

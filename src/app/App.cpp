@@ -26,6 +26,7 @@ constexpr const char* kIdIgnoreMouse = "ignoreMouseEvents";
 constexpr const char* kIdSettings = "settings";
 constexpr const char* kIdPrevModel = "prevModel";
 constexpr const char* kIdNextModel = "nextModel";
+constexpr const char* kIdImportModel = "importModel";
 constexpr const char* kIdLanguage = "language";
 constexpr const char* kIdLangZh = "lang.zh";
 constexpr const char* kIdLangEn = "lang.en";
@@ -225,6 +226,10 @@ void App::RebuildTrayMenu() {
                      "Ctrl+P"});
     items.push_back({Item::Type::Action, strings_.nextModel, kIdNextModel, false, true, {},
                      "Ctrl+N"});
+    // 导入模型：当前没有独立设置窗口，这里直接用系统文件对话框加载，
+    // 让桌宠在透明窗口里至少能显示出来（否则窗口内容为空）。
+    items.push_back({Item::Type::Action, strings_.importModel, kIdImportModel, false, true, {},
+                     "Ctrl+O"});
     items.push_back({Item::Type::Separator, "", "", false, true, {}, ""});
 
     // 语言子菜单
@@ -275,6 +280,27 @@ void App::OnTrayItem(const std::string& id, bool checked) {
         SwitchModel(-1);
     } else if (id == kIdNextModel) {
         SwitchModel(1);
+    } else if (id == kIdImportModel) {
+        // 用系统文件对话框选模型文件（.pmx / .vrm / .json）。
+        std::string path;
+        std::string dlgError;
+        void* owner = nullptr;
+#if defined(_WIN32)
+        // Windows 下把主窗口 HWND 作为父窗口，对话框会正确置顶在桌宠之上。
+        if (window_.Handle()) owner = glfwGetWin32Window(window_.Handle());
+#endif
+        if (OpenFileDialog(strings_.importModel, strings_.importModel,
+                           "*.pmx;*.vrm;*.json", "", owner, path, dlgError)) {
+            std::string err;
+            if (!LoadModel(path, err)) {
+                std::fprintf(stderr, "[PPet] %s: %s\n", strings_.importFailed.c_str(),
+                             err.c_str());
+            } else {
+                SaveConfig();
+            }
+        } else if (!dlgError.empty()) {
+            std::fprintf(stderr, "[PPet] %s\n", dlgError.c_str());
+        }
     } else if (id == kIdLangZh) {
         cfg.language = Language::Chinese;
         RebuildTrayMenu();

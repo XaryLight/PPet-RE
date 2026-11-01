@@ -112,6 +112,14 @@ public:
 private:
     // 各平台的附加初始化（创建窗口后调用）。
     void ApplyPlatformOptions(const WindowOptions& options);
+
+    /// 初始化 OpenGL 上下文与 GLEW。
+    /// GLFW 创建窗口后上下文默认不绑定到任何线程，必须先 glfwMakeContextCurrent
+    /// 再 glewInit，否则所有 GL/GLEW 调用都作用在「无上下文」上（函数指针为空），
+    /// 导致渲染层什么也画不出来。core profile 下必须先把 glewExperimental 打开。
+    /// 仅在第一次创建成功时调用一次。
+    bool InitGL(std::string& error);
+
     // 各平台每帧逻辑。
     void UpdatePlatformStateImpl();
 
@@ -147,6 +155,9 @@ private:
     /// 窗口创建时记录的初始尺寸，用于 Linux 上恢复点击穿透时重建输入区域。
     int lastWidth_ = 0;
     int lastHeight_ = 0;
+
+    /// OpenGL 上下文与 GLEW 是否已经初始化（仅首次创建窗口时做一次）。
+    bool glReady_ = false;
 };
 
 }  // namespace ppet
