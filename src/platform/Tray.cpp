@@ -21,8 +21,18 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+// 显式锁定 Windows 目标版本，确保 MF_RADIOCHECK 等较新菜单标志可用。
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0A00
+#endif
 #include <windows.h>
 #include <shellapi.h>
+
+// 个别交叉编译工具链（如部分 MinGW/llvm-mingw 配置）的 winuser.h 未暴露
+// MF_RADIOCHECK，这里做兜底定义（0x0200 为官方取值）。
+#ifndef MF_RADIOCHECK
+#define MF_RADIOCHECK 0x0200
+#endif
 
 #elif defined(__APPLE__)
 // Apple 平台需要以 Objective-C++ 编译（CMake 中通过 LANGUAGE OBJCXX 指定）。
@@ -183,8 +193,18 @@ struct Win32TrayState {
 
 Win32TrayState* g_win32State = nullptr;
 
+// 「任务栏已重建」并非 Windows 预定义消息，必须向系统注册（消息值为系统级、
+// 跨进程一致），因此无法作为编译期常量出现在 switch 的 case 标签里，
+// 只能在窗口过程里用 if 比较。
+UINT g_wmTaskbarCreated = 0;
+
 LRESULT CALLBACK Win32TrayWindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
     Win32TrayState* state = g_win32State;
+    if (g_wmTaskbarCreated != 0 && message == g_wmTaskbarCreated) {
+        // 资源管理器（explorer.exe）重启后会丢失托盘图标，需要重新添加。
+        if (state && state->onTaskbarCreated) state->onTaskbarCreated();
+        return 0;
+    }
     switch (message) {
         case kTrayCallbackMessage: {
             if (state && state->onIconEvent) {
@@ -196,11 +216,6 @@ LRESULT CALLBACK Win32TrayWindowProc(HWND hwnd, UINT message, WPARAM wparam, LPA
                     state->onIconEvent();
                 }
             }
-            return 0;
-        }
-        case WM_TASKBARCREATED: {
-            // 资源管理器（explorer.exe）重启后会丢失托盘图标，需要重新添加。
-            if (state && state->onTaskbarCreated) state->onTaskbarCreated();
             return 0;
         }
         default:
@@ -1514,6 +1529,9 @@ bool Tray::Create(std::string& error) {
     impl_ = new Impl();
     impl_->owner = this;
 
+    // 注册「任务栏重建」消息（资源管理器重启后用于刷新托盘图标）。
+    g_wmTaskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
+
     WNDCLASSEXW windowClass{};
     windowClass.cbSize = sizeof(windowClass);
     windowClass.lpfnWndProc = Win32TrayWindowProc;
@@ -1542,7 +1560,9 @@ bool Tray::Create(std::string& error) {
     state.nid.uID = 1;
     state.nid.uFlags = NIF_MESSAGE | NIF_TIP | NIF_ICON;
     state.nid.uCallbackMessage = kTrayCallbackMessage;
-    state.nid.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+    // IDI_APPLICATION 是基于窄字符（LPSTR）的资源宏，必须使用 LoadIconA；
+    // 若直接用 LoadIconW 会因字符串类型不匹配而无法编译。
+    state.nid.hIcon = LoadIconA(nullptr, IDI_APPLICATION);
     wcsncpy(state.nid.szTip, L"PPet", 127);
     state.nid.szTip[127] = L'\0';
 

@@ -13,6 +13,9 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0A00
+#endif
 #include <windows.h>
 
 #elif defined(__APPLE__)
@@ -25,6 +28,40 @@
 #endif
 
 namespace ppet {
+
+// ---------------------------------------------------------------------------
+// Impl（各平台实现，定义在前，确保下方所有平台回调都能引用完整类型）
+// ---------------------------------------------------------------------------
+
+struct GlobalCursorTracker::Impl {
+#if defined(_WIN32)
+    // Windows 钩子必须在安装它的线程上保持消息循环，故用单独线程安装。
+    HHOOK hook = nullptr;
+    DWORD threadId = 0;
+    HANDLE readyEvent = nullptr;
+    std::atomic<bool> stopRequested{false};
+    std::thread messageThread;
+#elif defined(__APPLE__)
+    // 单个 NSObject 指针即可承载 monitor，无需前向声明 Objective-C 类。
+    id monitor = nil;
+    id globalMonitor = nil;
+#else
+    Display* display = nullptr;
+#endif
+
+    /// 收到全局鼠标移动事件时调用（各平台共用）。
+    void OnGlobalCursorMoved(float x, float y) {
+        pendingX = x;
+        pendingY = y;
+        hasPending = true;
+    }
+
+    // 事件在钩子线程产生，Update() 在主线程读取，通过这组变量做线程间传递。
+    std::atomic<float> pendingX{0.0f};
+    std::atomic<float> pendingY{0.0f};
+    std::atomic<bool> hasPending{false};
+};
+
 namespace {
 
 #if defined(_WIN32)
@@ -80,35 +117,8 @@ LRESULT CALLBACK MouseHookProc(int code, WPARAM wParam, LPARAM lParam) {
 }  // namespace
 
 // ---------------------------------------------------------------------------
-// Impl
+// 析构与启停
 // ---------------------------------------------------------------------------
-
-struct GlobalCursorTracker::Impl {
-#if defined(_WIN32)
-    // Windows 钩子必须在安装它的线程上保持消息循环，故用单独线程安装。
-    DWORD threadId = 0;
-    HANDLE readyEvent = nullptr;
-    std::atomic<bool> stopRequested{false};
-    std::thread messageThread;
-#elif defined(__APPLE__)
-    PPetGlobalMouseMonitor* monitor = nil;
-    id globalMonitor = nil;
-#else
-    Display* display = nullptr;
-#endif
-
-    /// 收到全局鼠标移动事件时调用（各平台共用）。
-    void OnGlobalCursorMoved(float x, float y) {
-        pendingX = x;
-        pendingY = y;
-        hasPending = true;
-    }
-
-    // 事件在钩子线程产生，Update() 在主线程读取，通过这组变量做线程间传递。
-    std::atomic<float> pendingX{0.0f};
-    std::atomic<float> pendingY{0.0f};
-    std::atomic<bool> hasPending{false};
-};
 
 GlobalCursorTracker::~GlobalCursorTracker() { Stop(); }
 
@@ -132,6 +142,8 @@ bool GlobalCursorTracker::Start(std::string& error) {
     impl_->messageThread = std::thread([this]() {
         impl_->threadId = GetCurrentThreadId();
         impl_->hook = SetWindowsHookExW(WH_MOUSE_LL, &MouseHookProc, nullptr, 0);
+        // 把钩子句柄同步给全局状态，供 CallNextHookEx 使用。
+        g_hookState.hook = impl_->hook;
         SetEvent(impl_->readyEvent);
 
         MSG msg;
@@ -149,10 +161,11 @@ bool GlobalCursorTracker::Start(std::string& error) {
             UnhookWindowsHookEx(impl_->hook);
             impl_->hook = nullptr;
         }
+        g_hookState.hook = nullptr;
     });
 
     WaitForSingleObject(impl_->readyEvent, 3000);
-    if (!g_hookState.hook) {
+    if (!impl_->hook) {
         error = "安装全局鼠标钩子失败";
         Stop();
         return false;
@@ -284,7 +297,8 @@ Vec2 GlobalCursorTracker::NormalizeAround(const Vec2& cursor, const Vec2& center
 }
 
 /// 更新虚拟桌面范围（各平台）。
-void UpdateDesktopImpl(GlobalCursorTracker& tracker) {    VirtualDesktop desk;
+void UpdateDesktopImpl(GlobalCursorTracker& tracker) {
+    VirtualDesktop desk;
 #if defined(_WIN32)
     const int sx = GetSystemMetrics(SM_XVIRTUALSCREEN);
     const int sy = GetSystemMetrics(SM_YVIRTUALSCREEN);

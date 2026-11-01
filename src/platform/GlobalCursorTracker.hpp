@@ -91,7 +91,11 @@ public:
 
 private:
     // 各平台内部实现通过 pimpl 隔离，避免在头文件暴露平台头文件。
+    // 注意：Impl 必须在 public 区域声明，否则 .cpp 中的平台钩子自由函数
+    // （如 Windows 的 MouseHookProc）无法引用该类型。
+public:
     struct Impl;
+private:
     Impl* impl_ = nullptr;
 
     GlobalCursorState state_;

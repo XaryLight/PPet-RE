@@ -27,18 +27,22 @@ Language LanguageFromString(const std::string& s) {
 std::string ConfigStore::DefaultConfigPath() {
     namespace fs = std::filesystem;
 
-    if (const char* home = std::getenv("HOME")) {
 #if defined(_WIN32)
-        const char* appData = std::getenv("APPDATA");
-        if (appData) return fs::path(appData) / "PPet" / "config.json";
-#elif defined(__APPLE__)
-        return fs::path(home) / "Library" / "Application Support" / "PPet" / "config.json";
+    // Windows 配置目录优先使用 %APPDATA%。
+    if (const char* appData = std::getenv("APPDATA")) {
+        return (fs::path(appData) / "PPet" / "config.json").string();
+    }
+#else
+    if (const char* home = std::getenv("HOME")) {
+#if defined(__APPLE__)
+        return (fs::path(home) / "Library" / "Application Support" / "PPet" / "config.json").string();
 #else
         const char* xdg = std::getenv("XDG_CONFIG_HOME");
-        if (xdg && *xdg) return fs::path(xdg) / "PPet" / "config.json";
-        return fs::path(home) / ".config" / "PPet" / "config.json";
+        if (xdg && *xdg) return (fs::path(xdg) / "PPet" / "config.json").string();
+        return (fs::path(home) / ".config" / "PPet" / "config.json").string();
 #endif
     }
+#endif
 
     // 兜底：使用当前工作目录。
     return "ppet-config.json";

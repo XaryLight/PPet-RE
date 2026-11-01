@@ -440,6 +440,11 @@ Vec2 Window::Position() const {
         ClientToScreen(hwnd, &origin);
         return Vec2(static_cast<float>(origin.x), static_cast<float>(origin.y));
     }
+    // hwnd 获取失败时回退到 GLFW 提供的窗口位置。
+    int x = 0;
+    int y = 0;
+    glfwGetWindowPos(window_, &x, &y);
+    return Vec2(static_cast<float>(x), static_cast<float>(y));
 #elif defined(__APPLE__)
     int x = 0;
     int y = 0;
