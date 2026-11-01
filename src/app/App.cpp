@@ -10,6 +10,12 @@
 
 #include <GLFW/glfw3.h>
 
+#if defined(_WIN32)
+// glfw3native.h 暴露 glfwGetWin32Window，用于把主窗口 HWND 作为文件对话框的父窗口。
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
+#endif
+
 #include "core/Math.hpp"
 #include "platform/AutoStart.hpp"
 #include "platform/FileDialog.hpp"
