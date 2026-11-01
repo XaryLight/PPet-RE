@@ -71,6 +71,12 @@ endif()
 # 直接按库名链接即可，与原仓库行为一致，且对 find_package 的版本/环境差异免疫。
 set(PPET_GLEW_TARGET GLEW)
 
+# 工具链只提供「静态」libGLEW.a（无 glew32.dll / 导入库）。若不定义 GLEW_STATIC，
+# <GL/glew.h> 会把 __glewXxx 声明为 __declspec(dllimport)，要求从 DLL 导入，
+# 从而导致 Windows 链接期 “undefined symbol: __declspec(dllimport) __glewXxx”。
+# 因此必须全局声明静态链接。该宏在 Linux 上基本无副作用（dllimport 修饰仅 Windows 生效）。
+add_compile_definitions(GLEW_STATIC)
+
 # X11：仅 Linux 需要（点击穿透、托盘透明抠图等）。
 set(PPET_X11_LIBRARIES "")
 if(UNIX AND NOT APPLE)
