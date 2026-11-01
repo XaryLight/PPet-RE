@@ -64,17 +64,12 @@ else()
 endif()
 
 # GLEW：OpenGL 扩展入口点加载。
-set(PPET_GLEW_TARGET "")
-find_package(GLEW QUIET)
-if(GLEW_FOUND)
-    if(TARGET GLEW::GLEW)
-        set(PPET_GLEW_TARGET GLEW::GLEW)
-    else()
-        set(PPET_GLEW_TARGET GLEW)
-    endif()
-else()
-    set(PPET_GLEW_TARGET GLEW)
-endif()
+# 注意：不使用 find_package(GLEW)。部分 MinGW / CMake 组合（如实测 CMake 4.2 +
+# llvm-mingw）下，FindGLEW.cmake 在无法创建 GLEW::GLEW 导入目标时会直接报错
+# （get_target_property() called with non-existent target "GLEW::GLEW"）。
+# GLEW 在三大平台都以裸库名 “GLEW” 可用（Windows 为 -lGLEW，Linux 为 -lGLEW），
+# 直接按库名链接即可，与原仓库行为一致，且对 find_package 的版本/环境差异免疫。
+set(PPET_GLEW_TARGET GLEW)
 
 # X11：仅 Linux 需要（点击穿透、托盘透明抠图等）。
 set(PPET_X11_LIBRARIES "")
