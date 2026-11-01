@@ -34,6 +34,7 @@
 #include <string>
 
 #include "core/Config.hpp"
+#include "core/I18n.hpp"
 
 struct GLFWwindow;
 
@@ -101,6 +102,9 @@ public:
     /// 要编辑的配置。为 nullptr 时界面中的编辑控件会被禁用。
     AppConfig* config = nullptr;
 
+    /// 界面文案（本地化）。为 nullptr 时使用内置中文兜底。
+    Strings* strings = nullptr;
+
     /// 配置发生变化（滑块拖动、开关切换等）时回调。
     std::function<void()> onConfigChanged;
 
@@ -113,7 +117,13 @@ public:
     /// 选中模型列表中的第 index 项（切换当前模型）。
     std::function<void(int index)> onSelectModel;
 
+    /// 「清除设置」：把配置恢复为默认值。
+    std::function<void()> onClearSettings;
+
 private:
+    /// 绘制界面内容（仅在设置窗口的 GL 上下文里调用）。
+    void BuildUi();
+
     /// 内部实现（把 ImGui 头文件隔离在 .cpp 里）。
     struct Impl;
     std::unique_ptr<Impl> impl_;

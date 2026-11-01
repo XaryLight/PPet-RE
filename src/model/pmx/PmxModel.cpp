@@ -661,7 +661,7 @@ void PmxModel::Render(const RenderContext& ctx) {
         UpdateSkinningMatrices();
     }
 
-    const Mat4 viewProj = ComputeViewProjection(width, height);
+    const Mat4 viewProj = ComputeViewProjection(width, height, ctx.renderScale);
     renderer_.Draw(viewProj, skinningMatrices_, kLightDir);
     if (hasOutline_) {
         // widthScale=1：描边宽度已经在材质里换算成世界单位。
@@ -690,7 +690,8 @@ void PmxModel::EnsureGpuResources() {
     renderer_.SetTextures(std::move(textures_));
 }
 
-Mat4 PmxModel::ComputeViewProjection(int viewportWidth, int viewportHeight) const {
+Mat4 PmxModel::ComputeViewProjection(int viewportWidth, int viewportHeight,
+                                      float renderScale) const {
     const float aspect = static_cast<float>(viewportWidth) / static_cast<float>(viewportHeight);
 
     // 包围盒决定取景范围：模型高度决定纵向范围，宽度按宽高比换算。
@@ -698,6 +699,8 @@ Mat4 PmxModel::ComputeViewProjection(int viewportWidth, int viewportHeight) cons
     const float height = std::max(modelHeight_, kEpsilon);
     float halfHeight = std::max(height * 0.5f, (modelWidth * 0.5f) / std::max(aspect, kEpsilon));
     halfHeight *= kFramingMargin;
+    // 渲染缩放：视体越小，模型在窗口里显示得越大。
+    halfHeight /= std::max(renderScale, 0.01f);
 
     // 相机放在模型正前方（+Z），看向模型中心。
     // 注意：PMX 模型朝向 -Z，取反 z 之后模型朝向 +Z，因此相机放在 +Z 侧。

@@ -128,7 +128,8 @@ private:
     /// 首次渲染时建立 GPU 资源（上传网格 + 解码贴图）。
     void EnsureGpuResources();
     /// 计算视图投影矩阵：正交相机，按模型高度自动取景并居中。
-    Mat4 ComputeViewProjection(int viewportWidth, int viewportHeight) const;
+    Mat4 ComputeViewProjection(int viewportWidth, int viewportHeight,
+                                float renderScale = 1.0f) const;
 
     /// 动画通道的运行时数据。
     struct AnimChannel {

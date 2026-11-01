@@ -44,6 +44,10 @@ struct RenderContext {
 
     /// 全局鼠标是否有效（例如在无头环境或权限不足时为 false）。
     bool hasGlobalCursor = false;
+
+    /// 渲染缩放：>1 表示模型在窗口中显示得更大，<1 表示更小。
+    /// 取景时用它调整正交视体的半高（除以该系数即等比放大模型）。
+    float renderScale = 1.0f;
 };
 
 /// 模型后端接口。

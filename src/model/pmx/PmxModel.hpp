@@ -90,7 +90,8 @@ private:
     /// 按当前骨骼姿态重算蒙皮矩阵。
     void UpdateSkinningMatrices();
     /// 计算视图投影矩阵：正交相机，按模型高度自动取景并居中。
-    Mat4 ComputeViewProjection(int viewportWidth, int viewportHeight) const;
+    Mat4 ComputeViewProjection(int viewportWidth, int viewportHeight,
+                                float renderScale = 1.0f) const;
 
     /// 原始 PMX 文档。
     PmxDocument doc_;

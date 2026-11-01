@@ -36,6 +36,7 @@ Strings GetStrings(Language lang) {
         s.alwaysOnTopLabel = "窗口置顶";
         s.ignoreMouseLabel = "忽略鼠标点击";
         s.showToolLabel = "显示工具栏";
+        s.windowSection = "窗口";
         s.settingsTitle = "PPet 设置";
         s.noFontNote = "未找到中文字体，中文可能显示为方块";
 
@@ -80,6 +81,7 @@ Strings GetStrings(Language lang) {
         s.alwaysOnTopLabel = "Always On Top";
         s.ignoreMouseLabel = "Ignore Mouse Events";
         s.showToolLabel = "Show Toolbar";
+        s.windowSection = "Window";
         s.settingsTitle = "PPet Settings";
         s.noFontNote = "No CJK font found; Chinese text may show as boxes";
 

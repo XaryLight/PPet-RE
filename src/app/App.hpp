@@ -12,6 +12,7 @@
 #include "platform/GlobalCursorTracker.hpp"
 #include "platform/Tray.hpp"
 #include "platform/Window.hpp"
+#include "ui/SettingsPanel.hpp"
 
 namespace ppet {
 
@@ -49,6 +50,9 @@ private:
     /// 应用配置到窗口与追踪器。
     void ApplyConfig();
 
+    /// 配置语言变化时刷新界面文案与托盘菜单（由设置面板回调触发）。
+    void RefreshLanguageIfNeeded();
+
     /// 构建本帧的渲染上下文。
     RenderContext BuildRenderContext(float deltaTime) const;
 
@@ -66,6 +70,8 @@ private:
     std::string configPath_;
     bool running_ = false;
     bool showTool_ = true;
+    Language currentLanguage_ = Language::Chinese;
+    SettingsPanel settingsPanel_;
     float lastFrameTime_ = 0.0f;
 
     // 拖动状态：记录鼠标按下时的偏移，避免窗口跳动。

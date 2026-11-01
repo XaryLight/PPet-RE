@@ -40,6 +40,7 @@ struct Strings {
     std::string alwaysOnTopLabel;
     std::string ignoreMouseLabel;
     std::string showToolLabel;
+    std::string windowSection;
     std::string settingsTitle;
     std::string noFontNote;
 

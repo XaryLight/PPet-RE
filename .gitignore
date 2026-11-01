@@ -41,3 +41,6 @@ tools/testdata/sample_vrm1_twist.vrm
 # ===== 截图/临时产物 =====
 *.png.bak
 screenshots/
+
+# ImGui 运行时产生的布局文件（已通过 io.IniFilename = nullptr 禁用）
+imgui.ini

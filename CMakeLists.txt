@@ -48,6 +48,14 @@ else()
     find_library(PPET_GLFW_LIB NAMES glfw glfw3)
     if(PPET_GLFW_LIB)
         set(PPET_GLFW_TARGET ${PPET_GLFW_LIB})
+        # find_library 只给出库文件路径，不含头文件目录。
+        # 这里补一次头文件搜索，否则 #include <GLFW/glfw3.h> 可能找不到
+        # （ImGui 的 GLFW 后端同样需要这个头文件）。
+        find_path(PPET_GLFW_INCLUDE_DIR NAMES GLFW/glfw3.h)
+        if(PPET_GLFW_INCLUDE_DIR)
+            include_directories(${PPET_GLFW_INCLUDE_DIR})
+            message(STATUS "GLFW 头文件目录：${PPET_GLFW_INCLUDE_DIR}")
+        endif()
     else()
         include(FetchContent)
         FetchContent_Declare(glfw
@@ -178,6 +186,36 @@ if(APPLE)
 endif()
 
 # ---------------------------------------------------------------------------
+# Dear ImGui（设置界面）
+# ---------------------------------------------------------------------------
+# 设置界面是独立窗口 + ImGui 实现的，因此 ImGui 必须是真实参与编译的依赖，
+# 不能只靠 third_party 里的源码「放在那里」。
+#
+# 说明：ImGui 的 OpenGL3 后端自带一套最小化的 GL 加载器（imgl3w），
+# 不依赖 GLEW，也不与主渲染层使用的 GLEW 冲突（两者的函数指针符号互不相同）。
+set(PPET_IMGUI_SOURCES
+    third_party/imgui/imgui.cpp
+    third_party/imgui/imgui_draw.cpp
+    third_party/imgui/imgui_tables.cpp
+    third_party/imgui/imgui_widgets.cpp
+    third_party/imgui/backends/imgui_impl_glfw.cpp
+    third_party/imgui/backends/imgui_impl_opengl3.cpp
+)
+
+add_library(ppet_imgui STATIC ${PPET_IMGUI_SOURCES})
+target_include_directories(ppet_imgui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui)
+target_link_libraries(ppet_imgui PUBLIC ${PPET_GLFW_TARGET} ${OPENGL_LIBRARIES})
+if(OPENGL_INCLUDE_DIR)
+    target_include_directories(ppet_imgui PUBLIC ${OPENGL_INCLUDE_DIR})
+endif()
+# 第三方代码不参与本项目的严格告警，避免大量无关警告淹没真正的编译错误。
+if(MSVC)
+    target_compile_options(ppet_imgui PRIVATE /w)
+else()
+    target_compile_options(ppet_imgui PRIVATE -w)
+endif()
+
+# ---------------------------------------------------------------------------
 # 主程序
 # ---------------------------------------------------------------------------
 set(PPET_CORE_SOURCES
@@ -185,10 +223,11 @@ set(PPET_CORE_SOURCES
     src/core/I18n.cpp
     src/model/Model.cpp
     src/app/App.cpp
+    src/ui/SettingsPanel.cpp
 )
 
 add_executable(ppet ${PPET_CORE_SOURCES} src/main.cpp)
-target_link_libraries(ppet PRIVATE ppet_model ppet_platform)
+target_link_libraries(ppet PRIVATE ppet_model ppet_platform ppet_imgui)
 set_target_properties(ppet PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
@@ -250,6 +289,39 @@ if(UNIX AND NOT APPLE)
     # 最小化的「系统托盘宿主」模拟器，用于在无人值守环境中验证 Linux 托盘实现。
     add_executable(ppet_fake_tray tools/x11_fake_tray.cpp)
     target_link_libraries(ppet_fake_tray PRIVATE X11)
+endif()
+
+# ---------------------------------------------------------------------------
+# 设置界面冒烟测试
+# ---------------------------------------------------------------------------
+# 设置界面是独立窗口 + ImGui，必须在真实 GL 环境下验证：
+# 窗口创建、ImGui 初始化、中文字体合并、连续渲染、可见性切换。
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/settings_panel_smoke.cpp)
+    add_executable(ppet_settings_panel_smoke
+        tools/settings_panel_smoke.cpp
+        src/ui/SettingsPanel.cpp
+        src/core/I18n.cpp
+    )
+    target_include_directories(ppet_settings_panel_smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(ppet_settings_panel_smoke PRIVATE ppet_platform ppet_imgui)
+endif()
+
+# 设置界面预览工具：把面板渲染成 PNG，便于人工确认界面效果。
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/settings_panel_preview.cpp)
+    add_executable(ppet_settings_panel_preview
+        tools/settings_panel_preview.cpp
+        src/ui/SettingsPanel.cpp
+        src/core/I18n.cpp
+    )
+    target_include_directories(ppet_settings_panel_preview PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb)
+    target_link_libraries(ppet_settings_panel_preview PRIVATE ppet_platform ppet_imgui)
+    # stb_image_write 是第三方代码，其告警不参与本项目的严格告警。
+    if(NOT MSVC)
+        set_source_files_properties(tools/settings_panel_preview.cpp
+                                    PROPERTIES COMPILE_OPTIONS "-w")
+    endif()
 endif()
 
 # ---------------------------------------------------------------------------
@@ -324,4 +396,18 @@ if(TARGET ppet_render_integration)
                  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
     endif()
     set_tests_properties(render_integration PROPERTIES SKIP_RETURN_CODE 2)
+endif()
+
+# 设置界面冒烟测试同样需要真实的 GL 上下文。
+if(TARGET ppet_settings_panel_smoke)
+    if(PPET_XVFB_RUN)
+        add_test(NAME settings_panel_smoke
+                 COMMAND ${PPET_XVFB_RUN} -a $<TARGET_FILE:ppet_settings_panel_smoke>
+                 WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    else()
+        add_test(NAME settings_panel_smoke
+                 COMMAND ppet_settings_panel_smoke
+                 WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    endif()
+    set_tests_properties(settings_panel_smoke PROPERTIES SKIP_RETURN_CODE 2)
 endif()

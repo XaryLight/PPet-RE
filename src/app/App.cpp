@@ -56,12 +56,16 @@ App::~App() { Shutdown(); }
 bool App::Initialize(std::string& error) {
     // --- 配置 ---
     configPath_ = ConfigStore::DefaultConfigPath();
+    // 首次启动（配置文件不存在）时自动弹出设置面板，
+    // 否则新用户面对的是一个透明的空窗口，不知道该做什么。
+    const bool firstLaunch = !std::filesystem::exists(configPath_);
     if (!configStore_.Load(configPath_, error)) {
         // 配置损坏不应阻止启动：记录错误并使用默认配置继续。
         std::fprintf(stderr, "[PPet] %s\n", error.c_str());
         error.clear();
     }
     strings_ = GetStrings(configStore_.config().language);
+    currentLanguage_ = configStore_.config().language;
     showTool_ = configStore_.config().showTool;
 
     // --- 窗口 ---
@@ -142,6 +146,59 @@ bool App::Initialize(std::string& error) {
     ApplyConfig();
     RebuildTrayMenu();
 
+    // --- 设置界面（独立窗口 + ImGui）---
+    std::string settingsError;
+    settingsPanel_.config = &configStore_.config();
+    settingsPanel_.strings = &strings_;
+    settingsPanel_.onConfigChanged = [this]() {
+        SaveConfig();
+        ApplyConfig();
+        RefreshLanguageIfNeeded();
+    };
+    settingsPanel_.onImportModel = [this](const std::string& path) {
+        std::string err;
+        if (!LoadModel(path, err)) {
+            std::fprintf(stderr, "[PPet] %s: %s\n", strings_.importFailed.c_str(), err.c_str());
+        } else {
+            SaveConfig();
+        }
+    };
+    settingsPanel_.onRemoveModel = [this](int index) {
+        auto& list = configStore_.config().modelList;
+        if (index >= 0 && index < static_cast<int>(list.size())) {
+            list.erase(list.begin() + index);
+            SaveConfig();
+        }
+    };
+    settingsPanel_.onSelectModel = [this](int index) {
+        const auto& list = configStore_.config().modelList;
+        if (index >= 0 && index < static_cast<int>(list.size())) {
+            std::string err;
+            if (!LoadModel(list[index], err)) {
+                std::fprintf(stderr, "[PPet] %s: %s\n", strings_.modelLoadFailed.c_str(),
+                             err.c_str());
+            }
+        }
+    };
+    settingsPanel_.onClearSettings = [this]() {
+        // 保留当前模型，其余配置恢复默认。
+        const std::string keepModel = configStore_.config().modelPath;
+        configStore_.config() = AppConfig();
+        configStore_.config().modelPath = keepModel;
+        currentLanguage_ = configStore_.config().language;
+        strings_ = GetStrings(currentLanguage_);
+        settingsPanel_.strings = &strings_;
+        SaveConfig();
+        ApplyConfig();
+        RebuildTrayMenu();
+    };
+    if (!settingsPanel_.Initialize(&window_, settingsError)) {
+        // 设置界面不可用不应阻止启动：记录错误并继续。
+        std::fprintf(stderr, "[PPet] %s: %s\n", strings_.settings.c_str(), settingsError.c_str());
+    } else if (firstLaunch) {
+        settingsPanel_.Show();
+    }
+
     // --- 模型 ---
     const auto& cfg = configStore_.config();
     if (!cfg.modelPath.empty()) {
@@ -167,6 +224,15 @@ void App::ApplyConfig() {
     } else if (!cfg.fullscreenTracking && cursorTracker_.IsRunning()) {
         cursorTracker_.Stop();
     }
+}
+
+void App::RefreshLanguageIfNeeded() {
+    if (configStore_.config().language == currentLanguage_) return;
+    currentLanguage_ = configStore_.config().language;
+    strings_ = GetStrings(currentLanguage_);
+    // 设置面板持有 strings_ 指针，文案刷新后自动生效。
+    settingsPanel_.strings = &strings_;
+    RebuildTrayMenu();
 }
 
 bool App::LoadModel(const std::string& path, std::string& error) {
@@ -280,8 +346,8 @@ void App::OnTrayItem(const std::string& id, bool checked) {
         cfg.ignoreMouseEvents = checked;
         window_.SetIgnoreMouseEvents(checked);
     } else if (id == kIdSettings) {
-        // 设置界面在独立窗口中实现；当前版本先在标准输出提示。
-        std::printf("[PPet] %s\n", strings_.settings.c_str());
+        // 设置界面为独立 ImGui 窗口，直接弹出。
+        settingsPanel_.Toggle();
     } else if (id == kIdPrevModel) {
         SwitchModel(-1);
     } else if (id == kIdNextModel) {
@@ -309,9 +375,13 @@ void App::OnTrayItem(const std::string& id, bool checked) {
         }
     } else if (id == kIdLangZh) {
         cfg.language = Language::Chinese;
+        currentLanguage_ = Language::Chinese;
+        strings_ = GetStrings(currentLanguage_);
         RebuildTrayMenu();
     } else if (id == kIdLangEn) {
         cfg.language = Language::English;
+        currentLanguage_ = Language::English;
+        strings_ = GetStrings(currentLanguage_);
         RebuildTrayMenu();
     } else if (id == kIdReload) {
         // 重新渲染：重新加载当前模型以重置骨骼与表情状态。
@@ -340,7 +410,8 @@ void App::OnTrayItem(const std::string& id, bool checked) {
             std::fprintf(stderr, "[PPet] %s\n", openError.c_str());
         }
     } else if (id == kIdAbout) {
-        std::printf("[PPet] %s\n", strings_.aboutText.c_str());
+        // 「关于」打开设置窗口（面板内含「关于」折叠区）。
+        settingsPanel_.Show();
     } else if (id == kIdQuit) {
         running_ = false;
         window_.RequestClose();
@@ -398,6 +469,8 @@ RenderContext App::BuildRenderContext(float deltaTime) const {
     ctx.viewportWidth = static_cast<int>(size.x);
     ctx.viewportHeight = static_cast<int>(size.y);
     ctx.deltaTime = deltaTime;
+    // 渲染缩放：模型在窗口中的显示大小（>1 更大）。
+    ctx.renderScale = configStore_.config().renderScale;
 
     const Vec2 pos = window_.Position();
     ctx.windowOrigin = pos;
@@ -461,12 +534,17 @@ void App::Run() {
             ClearTransparent();
         }
 
+        // 设置界面是独立窗口，拥有自己的 GL 上下文；
+        // Render() 内部完成上下文切换，结束后会切回主窗口上下文。
+        settingsPanel_.Render();
+
         window_.SwapBuffers();
     }
 }
 
 void App::Shutdown() {
     cursorTracker_.Stop();
+    settingsPanel_.Shutdown();
     tray_.Destroy();
     window_.Destroy();
     model_.reset();

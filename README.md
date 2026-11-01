@@ -44,6 +44,7 @@
 - **编译器**：支持 C++17 的 GCC / Clang / MSVC
 - **构建系统**：CMake ≥ 3.16
 - **图形**：OpenGL（桌面 OpenGL 3.3 核心）、[GLFW](https://www.glfw.org/)、[GLEW](https://glew.sourceforge.net/)
+- **界面**：[Dear ImGui](https://github.com/ocornut/imgui)（源码已随仓库提供，无需另行安装）
 
 #### Linux（Ubuntu / Debian）
 
@@ -118,6 +119,8 @@ Live2D Cubism SDK 为**专有许可软件，不可随本仓库分发**。若要�
 ### 设置面板
 
 点击托盘菜单「配置」打开 ImGui 设置窗口：
+
+![设置面板](docs/settings-panel.png)
 
 - **模型列表**：显示已导入模型与类型徽章，可切换 / 删除
 - **导入模型**：从本地选择 `.vrm` / `.pmx` 文件
@@ -200,6 +203,7 @@ ctest --output-on-failure
 - **模糊测试（ASAN）**：截断 / 随机字节 / 畸形 JSON / 越界索引 —— 解析器应返回错误而非崩溃
 - **渲染冒烟测试**：真实 GL 上下文下编译着色器、绘制网格、`glReadPixels` 校验非零像素
 - **端到端集成测试**：真实模型文件 → 后端 → 渲染层 → 截图
+- **设置界面冒烟测试**：独立窗口 + ImGui 初始化、中文字体合并、连续渲染、像素校验、可见性切换
 
 测试素材由脚本生成：
 
