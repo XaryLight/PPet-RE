@@ -25,8 +25,63 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 # OpenGL 库要先找出来：渲染层（Renderer.cpp）要直接调用 GL 入口点，
 # 所以它所在的 ppet_model 目标得自己链接，不能依赖平台层间接传递。
 find_package(OpenGL REQUIRED)
-find_package(X11 REQUIRED)
 find_package(Threads REQUIRED)
+
+# ---------------------------------------------------------------------------
+# 跨平台依赖解析：GLFW / GLEW / X11
+# 原则：
+#   - 优先使用已安装的包（vcpkg / 系统包管理器 / pkg-config）。
+#   - GLFW 缺失时自动用 FetchContent 从源码构建，保证仓库“开箱即编”，
+#     不要求各平台手工安装。
+#   - X11 是 Linux 专属，绝不在 Windows/macOS 上进入链接命令，
+#     否则会出现 “unable to find library -lX11”。
+# ---------------------------------------------------------------------------
+
+# GLFW：窗口与输入。找不到系统包时回退到源码构建。
+set(PPET_GLFW_TARGET "")
+find_package(glfw3 QUIET)
+if(TARGET glfw)
+    set(PPET_GLFW_TARGET glfw)
+elseif(TARGET glfw3)
+    set(PPET_GLFW_TARGET glfw3)
+else()
+    find_library(PPET_GLFW_LIB NAMES glfw glfw3)
+    if(PPET_GLFW_LIB)
+        set(PPET_GLFW_TARGET ${PPET_GLFW_LIB})
+    else()
+        include(FetchContent)
+        FetchContent_Declare(glfw
+            GIT_REPOSITORY https://github.com/glfw/glfw.git
+            GIT_TAG 3.3.10
+            GIT_SHALLOW ON)
+        set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+        set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+        set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+        set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+        FetchContent_MakeAvailable(glfw)
+        set(PPET_GLFW_TARGET glfw)
+    endif()
+endif()
+
+# GLEW：OpenGL 扩展入口点加载。
+set(PPET_GLEW_TARGET "")
+find_package(GLEW QUIET)
+if(GLEW_FOUND)
+    if(TARGET GLEW::GLEW)
+        set(PPET_GLEW_TARGET GLEW::GLEW)
+    else()
+        set(PPET_GLEW_TARGET GLEW)
+    endif()
+else()
+    set(PPET_GLEW_TARGET GLEW)
+endif()
+
+# X11：仅 Linux 需要（点击穿透、托盘透明抠图等）。
+set(PPET_X11_LIBRARIES "")
+if(UNIX AND NOT APPLE)
+    find_package(X11 REQUIRED)
+    set(PPET_X11_LIBRARIES ${X11_LIBRARIES})
+endif()
 
 # ---------------------------------------------------------------------------
 # 模型后端静态库
@@ -56,7 +111,7 @@ add_library(ppet_model STATIC ${PPET_MODEL_SOURCES})
 target_include_directories(ppet_model PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 # 渲染层直接调用 gl* 入口点，链接关系对外 PUBLIC，
 # 这样测试目标只要链 ppet_model 就自动拿到 GL。
-target_link_libraries(ppet_model PUBLIC GLEW ${OPENGL_LIBRARIES})
+target_link_libraries(ppet_model PUBLIC ${PPET_GLEW_TARGET} ${OPENGL_LIBRARIES})
 
 # ---------------------------------------------------------------------------
 # 平台层静态库（窗口 / 托盘 / 开机启动 / 外部链接 / 文件对话框）
@@ -72,7 +127,7 @@ set(PPET_PLATFORM_SOURCES
 
 add_library(ppet_platform STATIC ${PPET_PLATFORM_SOURCES})
 target_include_directories(ppet_platform PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(ppet_platform PUBLIC glfw GLEW ${OPENGL_LIBRARIES} X11)
+target_link_libraries(ppet_platform PUBLIC ${PPET_GLFW_TARGET} ${PPET_GLEW_TARGET} ${OPENGL_LIBRARIES} ${PPET_X11_LIBRARIES})
 
 if(UNIX AND NOT APPLE)
     # XShape：Linux 下的点击穿透（输入区域）与托盘图标透明抠图。
@@ -169,7 +224,7 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/render_smoke.cpp)
         src/render/RenderUtils.cpp
     )
     target_include_directories(ppet_render_smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    target_link_libraries(ppet_render_smoke PRIVATE GLEW glfw ${OPENGL_LIBRARIES})
+    target_link_libraries(ppet_render_smoke PRIVATE ${PPET_GLEW_TARGET} ${PPET_GLFW_TARGET} ${OPENGL_LIBRARIES})
 endif()
 
 # 端到端集成测试：真实模型文件 -> 模型后端 -> 渲染层 -> glReadPixels。
@@ -187,7 +242,7 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/render_integration.cpp)
         src/render/RenderUtils.cpp
     )
     target_include_directories(ppet_render_integration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    target_link_libraries(ppet_render_integration PRIVATE GLEW glfw ${OPENGL_LIBRARIES})
+    target_link_libraries(ppet_render_integration PRIVATE ${PPET_GLEW_TARGET} ${PPET_GLFW_TARGET} ${OPENGL_LIBRARIES})
 endif()
 
 if(UNIX AND NOT APPLE)

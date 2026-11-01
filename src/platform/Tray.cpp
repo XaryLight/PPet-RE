@@ -85,6 +85,7 @@ namespace {
 /// @param flat          输出：扁平后的菜单项（subItems 已清空）
 /// @param topLevelIndices 输出：顶层菜单项在扁平列表中的索引
 /// @param childCounts   输出：扁平列表每一项的子菜单项数量（非子菜单项为 0）
+#if defined(__linux__)
 void FlattenMenuTree(const std::vector<TrayMenuItem>& tree, std::vector<TrayMenuItem>* flat,
                      std::vector<int>* topLevelIndices, std::vector<int>* childCounts) {
     flat->clear();
@@ -106,6 +107,7 @@ void FlattenMenuTree(const std::vector<TrayMenuItem>& tree, std::vector<TrayMenu
         };
     walk(tree, true);
 }
+#endif  // __linux__
 
 #if defined(_WIN32) || defined(__APPLE__)
 /// 计算顶层菜单项的扁平索引（子菜单项的索引 = 父索引 + 1 + 位置）。
