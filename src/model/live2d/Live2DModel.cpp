@@ -575,8 +575,8 @@ void Live2DModel::ApplyBreathing(float deltaTime) {
     // 并且写入的是「视线角度 + 呼吸偏移」。
     if (paramAngleY_ >= 0) {
         const float current = cubism::ParameterValue(impl_->model, paramAngleY_);
-        const float minValue = -1.0f;
-        const float maxValue = 1.0f;
+        float minValue = -1.0f;
+        float maxValue = 1.0f;
         float value = current + breath * 1.5f;
         if (cubism::ParameterRange(impl_->model, paramAngleY_, minValue, maxValue)) {
             value = Clamp(value, minValue, maxValue);
@@ -764,6 +764,10 @@ void Live2DModel::DrawDrawable(int index, const Mat4& transform) {
     if (!drawable.visible) return;
     if (drawable.opacity <= 0.0f) return;
     if (!drawable.positions || !drawable.uvs || !drawable.indices) return;
+
+    // transform（模型视图矩阵）在 BuildTransform 中给出，用于把模型放到屏幕位置；
+    // 当前顶点已按画布坐标系上传，绘制暂未显式乘入该矩阵，保留参数以便后续接入。
+    (void)transform;
 
     Impl::DrawableBuffers& buffer = impl_->buffers[static_cast<std::size_t>(index)];
 

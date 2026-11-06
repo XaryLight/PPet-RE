@@ -16,6 +16,16 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "构建类型" FORCE)
 endif()
 
+# ---------------------------------------------------------------------------
+# Live2D Cubism 后端（可选）
+#   - PPET_WITH_CUBISM      ：使用真实 Cubism SDK for Native（需自行下载）
+#   - PPET_WITH_CUBISM_STUB ：使用仓库内置的 Cubism Core 桩（无需 SDK，仅供
+#                             无 SDK 环境下验证 UI / 构建链路，不能加载真实模型）
+#   两者都不开时，加载 Live2D 模型会给出「请启用 Cubism SDK」的友好提示。
+# ---------------------------------------------------------------------------
+option(PPET_WITH_CUBISM "启用 Live2D 后端：需自行下载 Cubism SDK for Native 并放入 third_party/Cubism/Core" OFF)
+option(PPET_WITH_CUBISM_STUB "使用内置 Cubism Core 桩（无需 SDK，仅供测试/验证构建链路）" OFF)
+
 # 统一开启严格警告，尽早暴露问题。
 add_compile_options(-Wall -Wextra)
 
@@ -115,11 +125,73 @@ else()
     list(APPEND PPET_MODEL_SOURCES tools/test_stubs/RendererStub.cpp)
 endif()
 
+# Live2D Cubism 后端：开启真实 SDK 或桩时，把 live2d 源编入模型库。
+if(PPET_WITH_CUBISM OR PPET_WITH_CUBISM_STUB)
+    list(APPEND PPET_MODEL_SOURCES
+        src/model/live2d/Live2DModel.cpp
+        src/model/live2d/Live2DMotion.cpp
+        src/model/live2d/Live2DManifest.cpp
+        src/model/live2d/CubismCoreAdapter.cpp
+    )
+endif()
+if(PPET_WITH_CUBISM_STUB)
+    # 桩实现提供与真实 SDK 同名同签名的 csm* 函数。
+    list(APPEND PPET_MODEL_SOURCES
+        tools/test_stubs/CubismStub/CubismStubCore.cpp)
+endif()
+
 add_library(ppet_model STATIC ${PPET_MODEL_SOURCES})
 target_include_directories(ppet_model PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 # 渲染层直接调用 gl* 入口点，链接关系对外 PUBLIC，
 # 这样测试目标只要链 ppet_model 就自动拿到 GL。
 target_link_libraries(ppet_model PUBLIC ${PPET_GLEW_TARGET} ${OPENGL_LIBRARIES})
+
+# Live2D 后端的头文件目录 / 库 / 编译宏，按所选模式配置。
+if(PPET_WITH_CUBISM AND PPET_WITH_CUBISM_STUB)
+    message(FATAL_ERROR "PPET_WITH_CUBISM 与 PPET_WITH_CUBISM_STUB 不能同时开启")
+endif()
+
+if(PPET_WITH_CUBISM)
+    # 真实 Cubism SDK for Native：third_party/Cubism/Core/{include,lib}
+    find_path(CUBISM_CORE_INCLUDE_DIR
+        NAMES Live2DCubismCore.h
+        PATHS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/Cubism/Core
+        PATH_SUFFIXES include
+        NO_DEFAULT_PATH)
+    if(NOT CUBISM_CORE_INCLUDE_DIR)
+        message(FATAL_ERROR
+            "未找到 Live2DCubismCore.h。请按 README 将 Cubism SDK for Native 的 "
+            "Core 目录放入 third_party/Cubism/Core/（含 include/Live2DCubismCore.h）。")
+    endif()
+
+    if(WIN32)
+        set(_cubism_lib_subdirs windows/x86_64/Release/Static windows/x86_64/Debug/Static)
+    elseif(APPLE)
+        set(_cubism_lib_subdirs macos)
+    else()
+        set(_cubism_lib_subdirs linux/x86_64)
+    endif()
+    find_library(CUBISM_CORE_LIBRARY
+        NAMES Live2DCubismCore
+        PATHS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/Cubism/Core/lib
+        PATH_SUFFIXES ${_cubism_lib_subdirs}
+        NO_DEFAULT_PATH)
+    if(NOT CUBISM_CORE_LIBRARY)
+        message(FATAL_ERROR
+            "未找到 Cubism Core 库（libLive2DCubismCore.a / Live2DCubismCore.lib）。"
+            "请确认 third_party/Cubism/Core/lib 下的平台子目录与你的工具链匹配。")
+    endif()
+
+    target_include_directories(ppet_model PUBLIC ${CUBISM_CORE_INCLUDE_DIR})
+    target_link_libraries(ppet_model PUBLIC ${CUBISM_CORE_LIBRARY})
+    target_compile_definitions(ppet_model PUBLIC PPET_WITH_CUBISM)
+    message(STATUS "Live2D 后端：启用真实 Cubism SDK（${CUBISM_CORE_LIBRARY}）")
+elseif(PPET_WITH_CUBISM_STUB)
+    target_include_directories(ppet_model PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_stubs/CubismStub)
+    target_compile_definitions(ppet_model PUBLIC PPET_WITH_CUBISM_STUB)
+    message(STATUS "Live2D 后端：使用内置 Cubism Core 桩（无需 SDK）")
+endif()
 
 # ---------------------------------------------------------------------------
 # 平台层静态库（窗口 / 托盘 / 开机启动 / 外部链接 / 文件对话框）

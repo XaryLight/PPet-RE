@@ -267,7 +267,7 @@ bool ParseModel3Json(const std::string& model3Path, Live2DManifest& out, std::st
         return false;
     }
 
-    const std::string baseDir = fs::path(model3Path).parent_path().string();
+    std::string baseDir = fs::path(model3Path).parent_path().string();
     if (baseDir.empty()) baseDir = ".";
 
     // --- moc3 ---------------------------------------------------------------

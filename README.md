@@ -88,13 +88,26 @@ cmake --build build -j
 
 ### 启用 Live2D 后端（可选）
 
-Live2D Cubism SDK 为**专有许可软件，不可随本仓库分发**。若要支持 Live2D 模型：
+Live2D Cubism SDK 为**专有许可软件，不可随本仓库分发**。若要支持 Live2D（`.model3.json`）模型，用的是 **Cubism SDK for Native** 的 **Core 层**：
 
-1. 从 <https://www.live2d.com/en/sdk/download/> 下载 **Cubism SDK for Native**；
-2. 将 `Core` 目录放到 `third_party/Cubism/Core/`；
-3. 在 CMake 中开启宏 `PPET_WITH_CUBISM` 后重新构建（Live2D 后端代码已随仓库提供，位于 `src/model/live2d/`）。
+1. 从 <https://www.live2d.com/en/sdk/download/> 下载 **Cubism SDK for Native**（只需其中的 **Core** 目录）；
+2. 把 `Core` 目录放到 `third_party/Cubism/Core/`，最终结构应含：
+   - `third_party/Cubism/Core/include/Live2DCubismCore.h`
+   - `third_party/Cubism/Core/lib/<平台子目录>/libLive2DCubismCore.a`（Linux/macOS）或 `Live2DCubismCore.lib`（Windows）
+3. 配置时开启开关后重新构建：
 
-未启用时，加载 Live2D 模型会给出友好提示，不影响其它功能。
+   ```bash
+   cmake -S . -B build -DCMAKE_PREFIX_PATH=<Qt6 安装路径> -DPPET_WITH_CUBISM=ON
+   cmake --build build
+   ```
+
+> 不下载 SDK 也能先验证构建与 UI 链路：用 `-DPPET_WITH_CUBISM_STUB=ON`，
+> 会启用仓库内置的 Cubism Core **桩**（提供与真实 SDK 同名同签名的 `csm*` 函数），
+> 可编译出带 Live2D 入口的程序，但**不能加载真实模型**。
+>
+> 两个开关都未开启时，加载 Live2D 模型会给出「需要编译 Cubism SDK 后端」的友好提示，不影响其它功能。
+
+注：Live2D 走独立的**二维管线**（按部件网格叠加绘制），与 PMX/VRM 的蒙皮网格 + toon 着色管线不同；两者共用透明置顶窗口与全屏追踪。
 
 ---
 

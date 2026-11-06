@@ -268,21 +268,21 @@ struct CSM_MODEL {
     unsigned int paramCount;
     const char** paramIds;
     float* paramValues;
-    const float* paramDefaults;
-    const float* paramMinimums;
-    const float* paramMaximums;
+    float* paramDefaults;
+    float* paramMinimums;
+    float* paramMaximums;
 
     // --- 部件 ---
     unsigned int drawableCount;
     const char** drawableIds;
-    const csmFlags* constantFlags;
+    csmFlags* constantFlags;
     csmFlags* dynamicFlags;
-    const int* textureIndices;
-    const int* drawOrders;
-    const int* renderOrders;
-    const float* opacities;
-    const int* vertexCounts;
-    const int* indexCounts;
+    int* textureIndices;
+    int* drawOrders;
+    int* renderOrders;
+    float* opacities;
+    int* vertexCounts;
+    int* indexCounts;
 
     // 锯齿数组：第 d 项指向第 d 个部件自己的数据（都在同一块内存内）。
     const csmVector2** vertexPositions;

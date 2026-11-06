@@ -152,7 +152,7 @@ struct DrawableOrder {
 };
 
 /// 按 renderOrder 升序排序（稳定排序，保持同序部件的相对次序）。
-bool CompareOrder(const DrawableOrder& a, const DrawableOrder& b) {
+[[maybe_unused]] bool CompareOrder(const DrawableOrder& a, const DrawableOrder& b) {
     return a.renderOrder < b.renderOrder;
 }
 
