@@ -122,11 +122,13 @@ cmake --build build -j
 Live2D Cubism SDK 为**专有许可软件，不可随本仓库分发**。若要支持 Live2D（`.model3.json`）模型，用的是 **Cubism SDK for Native** 的 **Core 层**：
 
 1. 从 <https://www.live2d.com/en/sdk/download/> 下载 **Cubism SDK for Native**（只需其中的 **Core** 目录）；
-2. 把 **Core 目录**放到 **`src/csdk/`**，最终结构应含：
+2. 把 **Core 目录**放到 **`src/csdk/`**（或 `third_party/Cubism/`，或用 `-DPPET_CUBISM_ROOT=<目录>` 指定），最终结构应含：
    - `src/csdk/Core/include/Live2DCubismCore.h`
    - `src/csdk/Core/lib/linux/x86_64/libLive2DCubismCore.a`（Linux）
    - `src/csdk/Core/lib/macos/libLive2DCubismCore.a`（macOS）
-   - `src/csdk/Core/lib/windows/x86_64/<版本号>/Live2DCubismCore_MT.lib`（Windows）
+   - Windows（见下方「Windows 工具链选择」）：
+     - `src/csdk/Core/dll/windows/x86_64/Live2DCubismCore.dll` + `Live2DCubismCore.lib`（**推荐，MinGW 必用**）
+     - `src/csdk/Core/lib/windows/x86_64/<版本号>/Live2DCubismCore_MD.lib`（MSVC 可用）
 3. 重新配置并构建即可：
 
    ```bash
@@ -145,6 +147,48 @@ Live2D Cubism SDK 为**专有许可软件，不可随本仓库分发**。若要�
 > 不下载 SDK 也能先验证构建与 UI 链路：用 `-DPPET_WITH_CUBISM_STUB=ON`，
 > 会启用仓库内置的 Cubism Core **桩**（提供与真实 SDK 同名同签名的 `csm*` 函数），
 > 可编译出带 Live2D 入口的程序，但**不能加载真实模型**。
+
+#### Windows 工具链选择（重要）
+
+Cubism SDK for Native 只提供 **MSVC 编译**的产物，而不同 Windows 工具链的处理方式差别很大：
+
+| 工具链 | 用哪个库 | 说明 |
+| --- | --- | --- |
+| **MSVC**（Visual Studio） | `lib/windows/.../Live2DCubismCore_MD.lib` | MSVC 链接器能正确处理 `.drectve` 里的 `/DEFAULTLIB` 与 `OLDNAMES` 指令，直接用静态库即可 |
+| **MinGW / llvm-mingw**（CLion 等） | **`dll/windows/x86_64/Live2DCubismCore.dll` + `.lib` 导入库** | **必须用 DLL 方案**，见下 |
+
+**为什么 MinGW 必须用 DLL**：
+
+Cubism 的静态库是用 MSVC 编译的，内部引用了一批 MSVC CRT 专有符号
+（`__security_cookie`、`__GSHandlerCheck`、`__imp___stdio_common_vfprintf` 等），
+并靠 `.drectve` 里的 `/DEFAULTLIB:"MSVCRT"`、`OLDNAMES` 指令告诉链接器如何接 CRT。
+GNU ld / lld 无法完整解析这些指令，会出现两类错误：
+
+1. **undefined reference** —— 缺少 `__security_cookie` 等符号；
+2. **multiple definition** —— SDK 库里同时存在 `PlatformLogger.c` 与 `PlatformLogger_Win.c`
+   两套互斥实现（都定义 `__local_stdio_printf_options`），GNU ld 按需拉取静态库成员时会把两个都拉进来。
+
+动态库方案把整个 Cubism Core 连同它的 MSVC 运行时依赖封进 `Live2DCubismCore.dll`，
+链接时只需要一个干净的导入库，上述问题全部消失。
+CMake 在检测到 MinGW 且存在 DLL 导入库时会**自动选用 DLL 方案**，
+并把 `Live2DCubismCore.dll` 自动拷贝到可执行文件旁边（否则启动时会因找不到 DLL 而失败）。
+
+配置阶段会看到类似输出：
+
+```
+-- Live2D 后端：MinGW —— 使用 Cubism Core 动态库（.../dll/windows/x86_64/Live2DCubismCore.lib）
+-- Live2D 后端：将自动拷贝 .../Live2DCubismCore.dll 到输出目录
+```
+
+> 若 SDK 里没有 `dll/` 目录（部分版本的 SDK 包不含动态库），MinGW 会回退到静态库，
+> 此时会启用 `src/platform/MsvcCrtCompat.cpp` 兼容层补齐缺失符号，
+> 但 `PlatformLogger` 的符号冲突仍可能存在——这种情况下请改用 MSVC 构建，
+> 或自行用 MSVC 编译一份 Cubism Core。
+
+> **Cubism Core 4.x 与 5.x/6.x 的 API 不同**：绘制顺序函数在 4.x 是
+> `csmGetDrawableRenderOrders`、在 5.x+ 是 `csmGetRenderOrders`。
+> CMake 会读取 SDK 头文件自动判断实际提供的是哪个并定义对应宏，
+> 因此两种 SDK 都能编译，无需手工修改源码。
 >
 > 两个开关都未开启时，加载 Live2D 模型会给出「需要编译 Cubism SDK 后端」的友好提示，不影响其它功能。
 

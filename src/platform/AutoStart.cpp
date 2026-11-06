@@ -35,7 +35,11 @@ namespace {
 
 /// 开机启动项的标识（注册表值名 / plist 文件名 / desktop 文件名）。
 constexpr const char* kAutoStartName = "PPet";
+
+#if !defined(_WIN32)
+/// plist / desktop 文件用的标识（Windows 走注册表，不需要）。
 constexpr const char* kAutoStartLabel = "com.ppet.ppet";
+#endif
 
 #if defined(_WIN32)
 

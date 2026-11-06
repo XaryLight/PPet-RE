@@ -433,9 +433,19 @@ bool GetDrawable(const Model* model, int index, Drawable& out) {
     out.opacity = opacities ? opacities[index] : 1.0f;
 
     // --- 渲染顺序 ---
-    // 真实 SDK 提供 csmGetRenderOrders(model) 返回全部部件的渲染顺序数组；
-    // 桩也按同名函数提供，统一通过 index 取第 index 个部件的顺序。
+    // Cubism Core 4.x 与 5.x/6.x 的 API 名字不同：
+    //   旧版 csmGetDrawableRenderOrders(model) / 新版 csmGetRenderOrders(model)
+    // CMake 会读 SDK 头文件判断实际提供的是哪个，并定义对应宏。
+    // 两者语义一致：返回全部部件的渲染顺序数组，按 index 取当前部件的值。
+#if defined(PPET_CUBISM_HAS_RENDER_ORDERS)
     const int* renderOrders = csmGetRenderOrders(model->model_);
+#elif defined(PPET_CUBISM_HAS_DRAWABLE_RENDER_ORDERS)
+    const int* renderOrders = csmGetDrawableRenderOrders(model->model_);
+#else
+    // 未探测到（理论上不会发生：CMake 找不到任一 API 时会直接报错）。
+    // 退回到 DrawOrder，至少能保证绘制次序不乱。
+    const int* renderOrders = csmGetDrawableDrawOrders(model->model_);
+#endif
     out.renderOrder = renderOrders ? renderOrders[index] : index;
 
     // --- 混合模式与双面标志 ---

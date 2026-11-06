@@ -241,19 +241,58 @@ if(PPET_WITH_CUBISM)
     endif()
 
     if(WIN32)
-        # Cubism SDK 5 for Windows 的目录结构是
-        #   lib/windows/x86_64/<VS 版本号>/Live2DCubismCore_{MT,MD}.lib
-        # 其中 MT = 静态多线程运行时（对应 MinGW/静态 CRT 的常见用法），
-        # MD = 动态 CRT。目录名里的数字是 Visual Studio 版本号
-        # （143=VS2022、142=VS2019、141=VS2017），取最高的即可。
-        set(_cubism_lib_subdirs
-            windows/x86_64/143
-            windows/x86_64/142
-            windows/x86_64/141
-            windows/x86_64
-        )
-        # 静态库文件名带 _MT / _MD 后缀，需要单独查找。
-        set(_cubism_lib_names Live2DCubismCore_MT Live2DCubismCore)
+        # Cubism SDK 5 for Windows 提供两套产物：
+        #   静态库 lib/windows/x86_64/<VS版本号>/Live2DCubismCore_{MT,MD}.lib
+        #   动态库 dll/windows/x86_64/Live2DCubismCore.dll + 同名 .lib 导入库
+        #
+        # 【为什么 MinGW 必须优先用 DLL】
+        #   静态库是用 MSVC 编译的，内部引用了一批 MSVC CRT 专有符号
+        #   （__security_cookie / __GSHandlerCheck / __imp___stdio_common_* 等），
+        #   并通过 .drectve 里的 /DEFAULTLIB:"MSVCRT" 与 OLDNAMES 指令
+        #   告诉链接器如何接 CRT。
+        #   GNU ld（mingw-w64 / llvm-mingw 用的是 lld）无法完整解析这些指令，
+        #   会出现两类错误：
+        #     1) 缺少 __security_cookie 等符号 → undefined reference；
+        #     2) SDK 的 lib 里同时存在 PlatformLogger.c 与 PlatformLogger_Win.c
+        #        两套互斥实现（都定义 __local_stdio_printf_options），
+        #        GNU ld 按需拉取静态库成员时会把两个都拉进来 → multiple definition。
+        #   动态库方案把整个 Cubism Core 连同它的 MSVC 运行时依赖封进 DLL，
+        #   链接时只需要一个干净的导入库，上述问题全部消失。
+        #
+        # MSVC 用户用静态库即可（MSVC 链接器能正确处理 .drectve）。
+        if(MINGW)
+            # 先找 DLL 导入库：dll/windows/x86_64/Live2DCubismCore.lib
+            find_library(CUBISM_CORE_LIBRARY
+                NAMES Live2DCubismCore
+                PATHS ${CUBISM_CORE_ROOT}/dll
+                PATH_SUFFIXES windows/x86_64 windows
+                NO_DEFAULT_PATH)
+            if(CUBISM_CORE_LIBRARY)
+                # 记录 DLL 路径，运行时需要把它放到可执行文件旁边。
+                get_filename_component(_cubism_dll_dir "${CUBISM_CORE_LIBRARY}" DIRECTORY)
+                find_file(CUBISM_CORE_DLL
+                    NAMES Live2DCubismCore.dll
+                    PATHS ${_cubism_dll_dir}
+                    NO_DEFAULT_PATH)
+                message(STATUS "Live2D 后端：MinGW —— 使用 Cubism Core 动态库（${CUBISM_CORE_LIBRARY}）")
+            endif()
+        endif()
+
+        if(NOT CUBISM_CORE_LIBRARY)
+            # 回退到静态库（MSVC 走这条路）。
+            # 目录名里的数字是 Visual Studio 版本号
+            # （143=VS2022、142=VS2019、141=VS2017），取最高的即可。
+            set(_cubism_lib_subdirs
+                windows/x86_64/143
+                windows/x86_64/142
+                windows/x86_64/141
+                windows/x86_64
+            )
+            # 静态库文件名带 _MT / _MD 后缀，需要单独查找。
+            #   _MD = 动态 CRT（与 MSVC 运行库一致，最稳）
+            #   _MT = 静态 CRT
+            set(_cubism_lib_names Live2DCubismCore_MD Live2DCubismCore_MT Live2DCubismCore)
+        endif()
     elseif(APPLE)
         set(_cubism_lib_subdirs macos)
         set(_cubism_lib_names Live2DCubismCore)
@@ -261,25 +300,50 @@ if(PPET_WITH_CUBISM)
         set(_cubism_lib_subdirs linux/x86_64)
         set(_cubism_lib_names Live2DCubismCore)
     endif()
-    find_library(CUBISM_CORE_LIBRARY
-        NAMES ${_cubism_lib_names}
-        PATHS ${CUBISM_CORE_ROOT}/lib
-        PATH_SUFFIXES ${_cubism_lib_subdirs}
-        NO_DEFAULT_PATH)
+    if(NOT CUBISM_CORE_LIBRARY)
+        find_library(CUBISM_CORE_LIBRARY
+            NAMES ${_cubism_lib_names}
+            PATHS ${CUBISM_CORE_ROOT}/lib
+            PATH_SUFFIXES ${_cubism_lib_subdirs}
+            NO_DEFAULT_PATH)
+    endif()
     if(NOT CUBISM_CORE_LIBRARY)
         message(FATAL_ERROR
-            "未找到 Cubism Core 库（libLive2DCubismCore.a / Live2DCubismCore_MT.lib）。"
-            "请确认 ${CUBISM_CORE_ROOT}/lib 下的平台子目录与你的工具链匹配。")
+            "未找到 Cubism Core 库（libLive2DCubismCore.a / Live2DCubismCore_MT.lib / "
+            "Live2DCubismCore.lib）。请确认 ${CUBISM_CORE_ROOT}/lib 下的平台子目录"
+            "与你的工具链匹配。")
     endif()
 
     target_include_directories(ppet_model PUBLIC ${CUBISM_CORE_INCLUDE_DIR})
     target_link_libraries(ppet_model PUBLIC ${CUBISM_CORE_LIBRARY})
     target_compile_definitions(ppet_model PUBLIC PPET_WITH_CUBISM)
+
+    # Cubism Core 4.x 与 5.x/6.x 的绘制顺序 API 名字不同：
+    #   旧版：csmGetDrawableRenderOrders(model)
+    #   新版：csmGetRenderOrders(model)
+    # 直接写死任何一个都会在另一种 SDK 上编译失败（undeclared identifier）。
+    # 这里读头文件内容判断实际提供的是哪个，再定义对应的宏。
+    file(READ "${CUBISM_CORE_INCLUDE_DIR}/Live2DCubismCore.h" _cubism_core_header)
+    if(_cubism_core_header MATCHES "csmGetRenderOrders")
+        target_compile_definitions(ppet_model PUBLIC PPET_CUBISM_HAS_RENDER_ORDERS)
+        message(STATUS "Live2D 后端：检测到 Cubism Core 绘制顺序 API = csmGetRenderOrders")
+    elseif(_cubism_core_header MATCHES "csmGetDrawableRenderOrders")
+        target_compile_definitions(ppet_model PUBLIC PPET_CUBISM_HAS_DRAWABLE_RENDER_ORDERS)
+        message(STATUS "Live2D 后端：检测到 Cubism Core 绘制顺序 API = csmGetDrawableRenderOrders（Core 4.x）")
+    else()
+        message(FATAL_ERROR
+            "Cubism Core 头文件中既没有 csmGetRenderOrders 也没有 csmGetDrawableRenderOrders，"
+            "无法确定绘制顺序 API。请使用 Cubism SDK for Native 4.x 及以上版本。")
+    endif()
+
     message(STATUS "Live2D 后端：启用真实 Cubism SDK（${CUBISM_CORE_LIBRARY}）")
 elseif(PPET_WITH_CUBISM_STUB)
     target_include_directories(ppet_model PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_stubs/CubismStub)
     target_compile_definitions(ppet_model PUBLIC PPET_WITH_CUBISM_STUB)
+    # 桩同时提供新旧两个绘制顺序 API，与真实 SDK 6.x 一致，
+    # 因此按新版宏处理。
+    target_compile_definitions(ppet_model PUBLIC PPET_CUBISM_HAS_RENDER_ORDERS)
     message(STATUS "Live2D 后端：使用内置 Cubism Core 桩（无需 SDK）")
 endif()
 
@@ -294,6 +358,21 @@ set(PPET_PLATFORM_SOURCES
     src/platform/FileDialog.cpp
     src/platform/GlobalCursorTracker.cpp
 )
+
+# MSVC CRT 兼容层：仅「MinGW + Cubism 静态库」时需要。
+#
+# Cubism SDK for Native 只提供 MSVC 编译的 .lib，这些库引用了
+# __security_cookie / __security_check_cookie / __GSHandlerCheck /
+# __isa_available 等 MSVC UCRT 专有符号，MinGW 的 CRT 不提供，
+# 直接链接会得到 undefined reference（程序无法启动）。
+#
+# 注意：
+#   - 用动态库（DLL 导入库）时不需要本文件，DLL 内部已解决全部依赖；
+#   - 用 MSVC 编译时也不需要，文件内部有 #error 保护避免与 MSVC CRT 冲突。
+if(MINGW AND PPET_WITH_CUBISM AND NOT CUBISM_CORE_DLL)
+    list(APPEND PPET_PLATFORM_SOURCES src/platform/MsvcCrtCompat.cpp)
+    message(STATUS "Live2D 后端：启用 MSVC CRT 兼容层（MinGW + Cubism 静态库）")
+endif()
 
 add_library(ppet_platform STATIC ${PPET_PLATFORM_SOURCES})
 target_include_directories(ppet_platform PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -378,6 +457,16 @@ add_executable(ppet ${PPET_CORE_SOURCES} src/main.cpp)
 target_link_libraries(ppet PRIVATE ppet_model ppet_platform ppet_zlib Qt6::Widgets)
 set_target_properties(ppet PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+
+# MinGW + Cubism 动态库方案：把 Live2DCubismCore.dll 拷到可执行文件旁边，
+# 否则程序启动时会因找不到 DLL 而失败。
+if(CUBISM_CORE_DLL AND EXISTS "${CUBISM_CORE_DLL}")
+    add_custom_command(TARGET ppet POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CUBISM_CORE_DLL}" "$<TARGET_FILE_DIR:ppet>"
+        COMMENT "拷贝 Cubism Core 动态库到可执行文件目录")
+    message(STATUS "Live2D 后端：将自动拷贝 ${CUBISM_CORE_DLL} 到输出目录")
+endif()
 
 # ---------------------------------------------------------------------------
 # 平台层冒烟测试
