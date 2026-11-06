@@ -12,6 +12,23 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# 在一串候选路径里挑第一个真实存在的文件，结果写回 OUT_VAR（找不到则写空串）。
+#
+# 为什么不用 find_library()/find_file()：
+#   这两个命令受 CMAKE_FIND_ROOT_PATH 影响。交叉编译时若设置了
+#   CMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY，搜索路径会被前缀到 sysroot 下，
+#   于是「SDK 文件明明躺在源码目录里，find_library 却说找不到」。
+#   Cubism SDK 恰恰是用户自己放进源码目录的，必须绕开这层改写。
+function(ppet_pick_first_existing OUT_VAR)
+    foreach(_p IN LISTS ARGN)
+        if(_p AND EXISTS "${_p}")
+            set(${OUT_VAR} "${_p}" PARENT_SCOPE)
+            return()
+        endif()
+    endforeach()
+    set(${OUT_VAR} "" PARENT_SCOPE)
+endfunction()
+
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "构建类型" FORCE)
 endif()
@@ -26,13 +43,35 @@ endif()
 # 自动识别：只要在 src/csdk/（或 third_party/Cubism/Core/）下检测到
 # Live2DCubismCore.h，就自动开启真实 SDK 后端，无需手工传 CMake 选项。
 # ---------------------------------------------------------------------------
+# 区分「用户显式写了 -DPPET_WITH_CUBISM=ON/OFF」与「option() 的默认值 OFF」。
+#
+# 背景：option() 与 -D 传参在 CMakeCache.txt 里长得一模一样（都是 FOO:BOOL=OFF），
+# 所以之前无法判断用户到底有没有明确关闭，只能一律 FORCE 覆盖 —— 结果就是
+# 用户明明在 CLion 的 CMake options 里写了 -DPPET_WITH_CUBISM=OFF，
+# 仍然被自动检测改成 ON，程序照样去链接 Cubism。
+#
+# 办法：在调用 option() 之前先问缓存里有没有这个变量。
+#   - 命令行 -D 会在处理 CMakeLists.txt 之前就写入缓存 → 此时 CACHE{} 已定义；
+#   - 首次 configure 且用户没传 -D → 缓存里没有 → option() 才刚创建默认值。
+#
+# 注意：这一段必须写在 option() 之前。option() 自己也会创建缓存项，
+# 放在它后面判断就永远是「显式指定」了。
+if(DEFINED CACHE{PPET_WITH_CUBISM})
+    set(_ppet_cubism_explicit TRUE)
+else()
+    set(_ppet_cubism_explicit FALSE)
+endif()
+
 option(PPET_WITH_CUBISM "启用 Live2D 后端：需自行下载 Cubism SDK for Native 并放入 src/csdk" OFF)
 option(PPET_WITH_CUBISM_STUB "使用内置 Cubism Core 桩（无需 SDK，仅供测试/验证构建链路）" OFF)
+option(PPET_CUBISM_AUTODETECT "自动检测本机 Cubism SDK 并启用 Live2D 后端（显式设置 PPET_WITH_CUBISM 时以显式值为准）" ON)
 set(PPET_CUBISM_ROOT "" CACHE PATH
     "Cubism SDK Core 目录所在位置（可指向 Core 目录本身或其上层）")
 
 # 自动检测：SDK 已解压到 src/csdk/ 时自动启用，避免用户漏配 CMake 选项。
-if(NOT PPET_WITH_CUBISM AND NOT PPET_WITH_CUBISM_STUB)
+# 用户的显式设置（-DPPET_WITH_CUBISM=OFF/ON）优先级更高，不会被这里覆盖。
+if(NOT PPET_WITH_CUBISM AND NOT PPET_WITH_CUBISM_STUB
+   AND PPET_CUBISM_AUTODETECT AND NOT _ppet_cubism_explicit)
     foreach(_auto_root
             ${PPET_CUBISM_ROOT}
             ${PPET_CUBISM_ROOT}/Core
@@ -45,6 +84,10 @@ if(NOT PPET_WITH_CUBISM AND NOT PPET_WITH_CUBISM_STUB)
             break()
         endif()
     endforeach()
+elseif(NOT PPET_WITH_CUBISM AND _ppet_cubism_explicit)
+    message(STATUS
+        "Live2D 后端：PPET_WITH_CUBISM 被显式设为关闭（命令行 -D 或既有构建缓存），"
+        "已跳过 SDK 自动检测。想开启请传 -DPPET_WITH_CUBISM=ON")
 endif()
 
 # 统一开启严格警告，尽早暴露问题。
@@ -260,47 +303,145 @@ if(PPET_WITH_CUBISM)
         #   链接时只需要一个干净的导入库，上述问题全部消失。
         #
         # MSVC 用户用静态库即可（MSVC 链接器能正确处理 .drectve）。
-        if(MINGW)
-            # 先找 DLL 导入库：dll/windows/x86_64/Live2DCubismCore.lib
-            find_library(CUBISM_CORE_LIBRARY
+        #
+        # DLL 导入库对两种工具链都可用，先把它找出来（存在与否后面再决定用不用）：
+        #   dll/windows/x86_64/Live2DCubismCore.lib  ← 导入库
+        #   dll/windows/x86_64/Live2DCubismCore.dll  ← 运行时真正的实现
+        ppet_pick_first_existing(_cubism_import_library
+            "${CUBISM_CORE_ROOT}/dll/windows/x86_64/Live2DCubismCore.lib"
+            "${CUBISM_CORE_ROOT}/dll/windows/x86_64/liblive2dcubismcore.dll.a"
+            "${CUBISM_CORE_ROOT}/dll/windows/Live2DCubismCore.lib"
+            "${CUBISM_CORE_ROOT}/dll/Live2DCubismCore.lib")
+
+        ppet_pick_first_existing(_cubism_runtime_dll
+            "${CUBISM_CORE_ROOT}/dll/windows/x86_64/Live2DCubismCore.dll"
+            "${CUBISM_CORE_ROOT}/dll/windows/Live2DCubismCore.dll"
+            "${CUBISM_CORE_ROOT}/dll/Live2DCubismCore.dll")
+
+        # 静态库子目录里的数字是 Visual Studio 版本号
+        # （143=VS2022、142=VS2019、141=VS2017），取最高的即可。
+        # 静态库文件名带 _MT / _MD 后缀：
+        #   _MD = 动态 CRT（与 MSVC 运行库一致，最稳）
+        #   _MT = 静态 CRT
+        ppet_pick_first_existing(_cubism_static_library
+            "${CUBISM_CORE_ROOT}/lib/windows/x86_64/143/Live2DCubismCore_MD.lib"
+            "${CUBISM_CORE_ROOT}/lib/windows/x86_64/143/Live2DCubismCore_MT.lib"
+            "${CUBISM_CORE_ROOT}/lib/windows/x86_64/143/Live2DCubismCore.lib"
+            "${CUBISM_CORE_ROOT}/lib/windows/x86_64/142/Live2DCubismCore_MD.lib"
+            "${CUBISM_CORE_ROOT}/lib/windows/x86_64/142/Live2DCubismCore_MT.lib"
+            "${CUBISM_CORE_ROOT}/lib/windows/x86_64/142/Live2DCubismCore.lib"
+            "${CUBISM_CORE_ROOT}/lib/windows/x86_64/141/Live2DCubismCore_MD.lib"
+            "${CUBISM_CORE_ROOT}/lib/windows/x86_64/141/Live2DCubismCore_MT.lib"
+            "${CUBISM_CORE_ROOT}/lib/windows/x86_64/141/Live2DCubismCore.lib"
+            "${CUBISM_CORE_ROOT}/lib/windows/x86_64/Live2DCubismCore_MD.lib"
+            "${CUBISM_CORE_ROOT}/lib/windows/x86_64/Live2DCubismCore_MT.lib"
+            "${CUBISM_CORE_ROOT}/lib/windows/x86_64/Live2DCubismCore.lib")
+
+        # 兼容 find_library 的老式命名（万一 SDK 目录结构有变化）。
+        if(NOT _cubism_import_library)
+            find_library(_cubism_import_library
                 NAMES Live2DCubismCore
                 PATHS ${CUBISM_CORE_ROOT}/dll
                 PATH_SUFFIXES windows/x86_64 windows
                 NO_DEFAULT_PATH)
-            if(CUBISM_CORE_LIBRARY)
-                # 记录 DLL 路径，运行时需要把它放到可执行文件旁边。
-                get_filename_component(_cubism_dll_dir "${CUBISM_CORE_LIBRARY}" DIRECTORY)
-                find_file(CUBISM_CORE_DLL
-                    NAMES Live2DCubismCore.dll
-                    PATHS ${_cubism_dll_dir}
-                    NO_DEFAULT_PATH)
-                message(STATUS "Live2D 后端：MinGW —— 使用 Cubism Core 动态库（${CUBISM_CORE_LIBRARY}）")
-            endif()
+        endif()
+        if(NOT _cubism_static_library)
+            find_library(_cubism_static_library
+                NAMES Live2DCubismCore_MD Live2DCubismCore_MT Live2DCubismCore
+                PATHS ${CUBISM_CORE_ROOT}/lib
+                PATH_SUFFIXES windows/x86_64/143 windows/x86_64/142 windows/x86_64/141 windows/x86_64
+                NO_DEFAULT_PATH)
         endif()
 
-        if(NOT CUBISM_CORE_LIBRARY)
-            # 回退到静态库（MSVC 走这条路）。
-            # 目录名里的数字是 Visual Studio 版本号
-            # （143=VS2022、142=VS2019、141=VS2017），取最高的即可。
-            set(_cubism_lib_subdirs
-                windows/x86_64/143
-                windows/x86_64/142
-                windows/x86_64/141
-                windows/x86_64
-            )
-            # 静态库文件名带 _MT / _MD 后缀，需要单独查找。
-            #   _MD = 动态 CRT（与 MSVC 运行库一致，最稳）
-            #   _MT = 静态 CRT
-            set(_cubism_lib_names Live2DCubismCore_MD Live2DCubismCore_MT Live2DCubismCore)
+        if(MINGW)
+            # MinGW / llvm-mingw：只能用 DLL 导入库。
+            #
+            # 这里绝对不能回退到 MSVC 静态库。用户的构建日志里出现过：
+            #   ld.lld: error: could not open 'libLIBCMT.a': No such file or directory
+            #   ld.lld: error: could not open 'libOLDNAMES.a': No such file or directory
+            # 原因就是链接器拿到了 143/Live2DCubismCore_MT.lib，其 .drectve 里的
+            # /DEFAULTLIB:"LIBCMT" / "OLDNAMES" 指令让 GNU ld 去解析 MSVC 专有库。
+            # 与其让 lld 抛一堆天书，不如在这里直接说清楚怎么改。
+            if(_cubism_import_library)
+                set(CUBISM_CORE_LIBRARY "${_cubism_import_library}")
+                if(NOT _cubism_runtime_dll)
+                    message(FATAL_ERROR
+                        "找到了 Cubism 导入库 ${_cubism_import_library}，"
+                        "但没找到配套的 Live2DCubismCore.dll。\n"
+                        "程序启动时 Windows 会因为找不到 DLL 直接退出，"
+                        "退出码 0xC0000135（STATUS_DLL_NOT_FOUND）。\n"
+                        "请把 ${CUBISM_CORE_ROOT}/dll/windows/x86_64/Live2DCubismCore.dll "
+                        "补齐，或用 -DPPET_CUBISM_ROOT 指向完整的 SDK 目录。")
+                endif()
+                set(CUBISM_CORE_DLL "${_cubism_runtime_dll}")
+                message(STATUS "Live2D 后端：MinGW —— 使用 Cubism Core 动态库导入库（${CUBISM_CORE_LIBRARY}）")
+            else()
+                if(_cubism_static_library)
+                    set(_cubism_hint
+                        "检测到 MSVC 静态库 ${_cubism_static_library}，但 MinGW/llvm-mingw 无法链接它。")
+                else()
+                    set(_cubism_hint "在 ${CUBISM_CORE_ROOT} 下既没找到 DLL 导入库，也没找到静态库。")
+                endif()
+                message(FATAL_ERROR
+                    "${_cubism_hint}\n"
+                    "MinGW/llvm-mingw 必须使用 Cubism SDK 的 DLL 导入库方案。\n"
+                    "原因：SDK 的静态库（Live2DCubismCore_MT.lib / _MD.lib）由 MSVC 编译，"
+                    "内部带有 /DEFAULTLIB:\"LIBCMT\"、/DEFAULTLIB:\"OLDNAMES\" 等链接指令，"
+                    "GNU ld / lld 不认识，会报\n"
+                    "    ld.lld: error: could not open 'libLIBCMT.a': No such file or directory\n"
+                    "    ld.lld: error: could not open 'libOLDNAMES.a': No such file or directory\n"
+                    "解决办法（任选其一）：\n"
+                    "  1) 使用 SDK 自带的动态库：确认以下两个文件存在，"
+                    "CMake 会自动把 DLL 拷到可执行文件旁边：\n"
+                    "       ${CUBISM_CORE_ROOT}/dll/windows/x86_64/Live2DCubismCore.lib\n"
+                    "       ${CUBISM_CORE_ROOT}/dll/windows/x86_64/Live2DCubismCore.dll\n"
+                    "  2) 改用 MSVC 工具链构建（CLion 里换成 Visual Studio 的 generator）；\n"
+                    "  3) 暂时不要 Live2D 后端：加 -DPPET_WITH_CUBISM=OFF"
+                    "（显式关闭后不会再被自动检测覆盖）。")
+            endif()
+        else()
+            # MSVC：优先静态库，链接器能正确处理 .drectve，且不需要额外拷 DLL。
+            if(_cubism_static_library)
+                set(CUBISM_CORE_LIBRARY "${_cubism_static_library}")
+                message(STATUS "Live2D 后端：MSVC —— 使用 Cubism Core 静态库（${CUBISM_CORE_LIBRARY}）")
+            elseif(_cubism_import_library)
+                # 没找到静态库时退回 DLL 导入库（一样可用，只是运行时要带 DLL）。
+                set(CUBISM_CORE_LIBRARY "${_cubism_import_library}")
+                set(CUBISM_CORE_DLL "${_cubism_runtime_dll}")
+                message(STATUS "Live2D 后端：MSVC —— 未找到静态库，改用 DLL 导入库（${CUBISM_CORE_LIBRARY}）")
+            endif()
         endif()
     elseif(APPLE)
-        set(_cubism_lib_subdirs macos)
-        set(_cubism_lib_names Live2DCubismCore)
+        if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)")
+            set(_cubism_arch arm64)
+        else()
+            set(_cubism_arch x86_64)
+        endif()
+        ppet_pick_first_existing(_cubism_static_library
+            "${CUBISM_CORE_ROOT}/lib/macos/${_cubism_arch}/libLive2DCubismCore.a"
+            "${CUBISM_CORE_ROOT}/lib/macos/libLive2DCubismCore.a")
     else()
-        set(_cubism_lib_subdirs linux/x86_64)
-        set(_cubism_lib_names Live2DCubismCore)
+        if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)")
+            set(_cubism_arch aarch64)
+        else()
+            set(_cubism_arch x86_64)
+        endif()
+        ppet_pick_first_existing(_cubism_static_library
+            "${CUBISM_CORE_ROOT}/lib/linux/${_cubism_arch}/libLive2DCubismCore.a"
+            "${CUBISM_CORE_ROOT}/lib/linux/libLive2DCubismCore.a")
     endif()
-    if(NOT CUBISM_CORE_LIBRARY)
+    if(NOT CUBISM_CORE_LIBRARY AND NOT CUBISM_CORE_DLL)
+        # 兜底：SDK 目录结构非标准时，回到 find_library 传统查找。
+        if(WIN32)
+            set(_cubism_lib_names Live2DCubismCore_MD Live2DCubismCore_MT Live2DCubismCore)
+            set(_cubism_lib_subdirs windows/x86_64/143 windows/x86_64/142 windows/x86_64/141 windows/x86_64)
+        elseif(APPLE)
+            set(_cubism_lib_names Live2DCubismCore)
+            set(_cubism_lib_subdirs macos)
+        else()
+            set(_cubism_lib_names Live2DCubismCore)
+            set(_cubism_lib_subdirs linux/x86_64)
+        endif()
         find_library(CUBISM_CORE_LIBRARY
             NAMES ${_cubism_lib_names}
             PATHS ${CUBISM_CORE_ROOT}/lib
@@ -359,12 +500,16 @@ set(PPET_PLATFORM_SOURCES
     src/platform/GlobalCursorTracker.cpp
 )
 
-# MSVC CRT 兼容层：仅「MinGW + Cubism 静态库」时需要。
+# MSVC CRT 兼容层：历史遗留的安全网。
 #
 # Cubism SDK for Native 只提供 MSVC 编译的 .lib，这些库引用了
 # __security_cookie / __security_check_cookie / __GSHandlerCheck /
 # __isa_available 等 MSVC UCRT 专有符号，MinGW 的 CRT 不提供，
 # 直接链接会得到 undefined reference（程序无法启动）。
+#
+# 现在的策略是：MinGW 一律走 DLL 导入库（见上面的 if(MINGW) 分支），
+# 根本不会去链接 MSVC 静态库，所以正常情况下这个文件不会被编译。
+# 保留它是为了在有人手工把静态库塞进链接命令时仍有一层兜底。
 #
 # 注意：
 #   - 用动态库（DLL 导入库）时不需要本文件，DLL 内部已解决全部依赖；
@@ -466,6 +611,48 @@ if(CUBISM_CORE_DLL AND EXISTS "${CUBISM_CORE_DLL}")
                 "${CUBISM_CORE_DLL}" "$<TARGET_FILE_DIR:ppet>"
         COMMENT "拷贝 Cubism Core 动态库到可执行文件目录")
     message(STATUS "Live2D 后端：将自动拷贝 ${CUBISM_CORE_DLL} 到输出目录")
+endif()
+
+# ---------------------------------------------------------------------------
+# MinGW / llvm-mingw 运行时 DLL 部署
+#
+# 现象：程序双击就闪退，CLion 显示
+#   "进程已结束，退出代码为 3221225781 (0xc0000135)"
+# 0xC0000135 = STATUS_DLL_NOT_FOUND，含义是「Windows 加载器找不到某个依赖 DLL」。
+# 这跟 Cubism 无关时，通常是 MinGW 运行库没跟 exe 放在一起：
+#   libgcc_s_seh-1.dll / libstdc++-6.dll / libwinpthread-1.dll
+#
+# 这些 DLL 一般就在编译器（clang++.exe / x86_64-w64-mingw32-g++.exe）旁边，
+# 所以构建后顺手把它们拷到 exe 所在目录，省得用户自己找。
+# ---------------------------------------------------------------------------
+if(MINGW)
+    set(_ppet_mingw_runtime_dlls "")
+    get_filename_component(_ppet_cc_dir "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    get_filename_component(_ppet_c_dir "${CMAKE_C_COMPILER}" DIRECTORY)
+    foreach(_rt_name libgcc_s_seh-1.dll libgcc_s_dw2-1.dll libstdc++-6.dll libwinpthread-1.dll)
+        string(MAKE_C_IDENTIFIER "_ppet_rt_${_rt_name}" _rt_var)
+        find_file(${_rt_var}
+            NAMES ${_rt_name}
+            PATHS ${_ppet_cc_dir} ${_ppet_c_dir}
+            NO_DEFAULT_PATH)
+        if(${_rt_var})
+            list(APPEND _ppet_mingw_runtime_dlls "${${_rt_var}}")
+        endif()
+    endforeach()
+    if(_ppet_mingw_runtime_dlls)
+        foreach(_rt_dll IN LISTS _ppet_mingw_runtime_dlls)
+            add_custom_command(TARGET ppet POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${_rt_dll}" "$<TARGET_FILE_DIR:ppet>"
+                COMMENT "拷贝 MinGW 运行时 DLL（${_rt_dll}）到可执行文件目录")
+        endforeach()
+        message(STATUS "MinGW：运行时 DLL 将随程序一起部署（${_ppet_mingw_runtime_dlls}）")
+    else()
+        message(WARNING
+            "没能在编译器目录找到 MinGW 运行时 DLL（libgcc_s_seh-1.dll / libstdc++-6.dll / "
+            "libwinpthread-1.dll）。若程序启动时报 0xC0000135（STATUS_DLL_NOT_FOUND），"
+            "请把这些 DLL 从工具链 bin 目录拷到 exe 旁边，或改用静态链接。")
+    endif()
 endif()
 
 # ---------------------------------------------------------------------------

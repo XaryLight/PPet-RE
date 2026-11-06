@@ -42,5 +42,9 @@ void Log_Write(const char* level, const char* fmt, ...);
 /// 普通信息日志（自动加 [PPet] 前缀，UTF-8，同时写 ./last.log）。
 #define PPET_LOG(...) ppet::Log_Write("INFO", __VA_ARGS__)
 
+/// 警告日志（同上，LEVEL 标记为 WARN）。
+/// 用于「还能继续跑，但数据/环境有点不对劲」这类情况。
+#define PPET_LOG_WARN(...) ppet::Log_Write("WARN", __VA_ARGS__)
+
 /// 错误日志（同上，LEVEL 标记为 ERR）。
 #define PPET_LOG_ERR(...) ppet::Log_Write("ERR ", __VA_ARGS__)

@@ -142,6 +142,10 @@ Live2D Cubism SDK 为**专有许可软件，不可随本仓库分发**。若要�
 > 也可以把 Core 放在别处，用 `-DPPET_CUBISM_ROOT=<Core 所在目录>` 指定；
 > 或者显式传 `-DPPET_WITH_CUBISM=ON` 强制开启。
 >
+> **显式传 `-DPPET_WITH_CUBISM=OFF` 时，自动检测会被跳过**，Live2D 后端保持关闭。
+> （自动检测只在「用户没有表态」时生效；想让它一直自动生效但临时关掉后端，
+> 可以用 `-DPPET_CUBISM_AUTODETECT=OFF`。）
+>
 > `src/csdk/` 已加入 `.gitignore`，专有 SDK 不会被提交到仓库。
 
 > 不下载 SDK 也能先验证构建与 UI 链路：用 `-DPPET_WITH_CUBISM_STUB=ON`，
@@ -162,10 +166,11 @@ Cubism SDK for Native 只提供 **MSVC 编译**的产物，而不同 Windows 工
 Cubism 的静态库是用 MSVC 编译的，内部引用了一批 MSVC CRT 专有符号
 （`__security_cookie`、`__GSHandlerCheck`、`__imp___stdio_common_vfprintf` 等），
 并靠 `.drectve` 里的 `/DEFAULTLIB:"MSVCRT"`、`OLDNAMES` 指令告诉链接器如何接 CRT。
-GNU ld / lld 无法完整解析这些指令，会出现两类错误：
+GNU ld / lld 无法完整解析这些指令，会出现三类错误：
 
-1. **undefined reference** —— 缺少 `__security_cookie` 等符号；
-2. **multiple definition** —— SDK 库里同时存在 `PlatformLogger.c` 与 `PlatformLogger_Win.c`
+1. **`could not open 'libLIBCMT.a'`** —— lld 去解析 `.drectve` 里的 `/DEFAULTLIB:"LIBCMT"`，MinGW 工具链没有这个库；
+2. **undefined reference** —— 缺少 `__security_cookie` 等符号；
+3. **multiple definition** —— SDK 库里同时存在 `PlatformLogger.c` 与 `PlatformLogger_Win.c`
    两套互斥实现（都定义 `__local_stdio_printf_options`），GNU ld 按需拉取静态库成员时会把两个都拉进来。
 
 动态库方案把整个 Cubism Core 连同它的 MSVC 运行时依赖封进 `Live2DCubismCore.dll`，
@@ -176,14 +181,17 @@ CMake 在检测到 MinGW 且存在 DLL 导入库时会**自动选用 DLL 方案*
 配置阶段会看到类似输出：
 
 ```
--- Live2D 后端：MinGW —— 使用 Cubism Core 动态库（.../dll/windows/x86_64/Live2DCubismCore.lib）
+-- Live2D 后端：MinGW —— 使用 Cubism Core 动态库导入库（.../dll/windows/x86_64/Live2DCubismCore.lib）
 -- Live2D 后端：将自动拷贝 .../Live2DCubismCore.dll 到输出目录
 ```
 
-> 若 SDK 里没有 `dll/` 目录（部分版本的 SDK 包不含动态库），MinGW 会回退到静态库，
-> 此时会启用 `src/platform/MsvcCrtCompat.cpp` 兼容层补齐缺失符号，
-> 但 `PlatformLogger` 的符号冲突仍可能存在——这种情况下请改用 MSVC 构建，
-> 或自行用 MSVC 编译一份 Cubism Core。
+> **MinGW 下不会再回退到静态库。** 如果 SDK 里找不到 `dll/windows/x86_64/Live2DCubismCore.lib`，
+> CMake 会在配置阶段直接报错并给出上面三种解法，而不是等到链接时才抛出
+> `libLIBCMT.a` / `libOLDNAMES.a` 这种天书错误。
+>
+> 另外 CMake 用「显式路径 + 文件存在性判断」而不是 `find_library()` 来定位 SDK 里的库——
+> 因为交叉编译时 `CMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY` 会把搜索路径改写到 sysroot 下，
+> 导致「文件明明在源码目录里，find_library 却说找不到」。
 
 > **Cubism Core 4.x 与 5.x/6.x 的 API 不同**：绘制顺序函数在 4.x 是
 > `csmGetDrawableRenderOrders`、在 5.x+ 是 `csmGetRenderOrders`。
@@ -193,6 +201,15 @@ CMake 在检测到 MinGW 且存在 DLL 导入库时会**自动选用 DLL 方案*
 > 两个开关都未开启时，加载 Live2D 模型会给出「需要编译 Cubism SDK 后端」的友好提示，不影响其它功能。
 
 注：Live2D 走独立的**二维管线**（按部件网格叠加绘制），与 PMX/VRM 的蒙皮网格 + toon 着色管线不同；两者共用透明置顶窗口与全屏追踪。
+
+#### Windows 常见故障排查
+
+| 现象 | 原因 | 处理 |
+| --- | --- | --- |
+| `ld.lld: error: could not open 'libLIBCMT.a'` | 链接到了 MSVC 静态库 `Live2DCubismCore_MT.lib` | 确认 SDK 里有 `dll/windows/x86_64/Live2DCubismCore.lib`，并 `git pull` 最新版 CMakeLists（新版在配置阶段就会拦截这种情况） |
+| 退出码 `3221225781 (0xC0000135)` | `STATUS_DLL_NOT_FOUND`：Windows 加载器找不到依赖 DLL | 多为 `Live2DCubismCore.dll` 或 MinGW 运行时 DLL（`libgcc_s_seh-1.dll` / `libstdc++-6.dll` / `libwinpthread-1.dll`）没跟着 exe 走。CMake 会在构建后自动把能找到的这些 DLL 拷到 `bin/` 目录；若仍缺失，请用 `windeployqt` 部署 Qt 依赖 |
+| 改了 `-DPPET_WITH_CUBISM=OFF` 却仍在链接 Cubism | 旧版 CMake 的自动检测会 `FORCE` 覆盖用户设置 | 升级到当前版本；也可加 `-DPPET_CUBISM_AUTODETECT=OFF` 双保险 |
+| `CMake Error: 未找到 Live2DCubismCore.h` | SDK 目录结构不对 | 确认 `<SDK>/include/Live2DCubismCore.h` 存在，或用 `-DPPET_CUBISM_ROOT=<Core 目录>` 显式指定 |
 
 ---
 

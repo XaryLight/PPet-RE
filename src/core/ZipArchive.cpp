@@ -157,6 +157,27 @@ bool ReadRawEntryData(const std::vector<unsigned char>& archive,
     if (local + 30 > archive.size()) return false;
     if (ReadU32(&archive[local]) != kSignatureLocal) return false;
 
+    // 通用位标记第 3 位（0x0008）表示「CRC 与尺寸写在数据描述符里」，
+    // 这时本地头中的压缩前/后尺寸字段是 0，必须以中央目录的值为准。
+    // 没置位时，本地头与中央目录的尺寸必须一致，否则说明归档被改过或损坏。
+    const std::uint16_t localFlags = ReadU16(&archive[local + 6]);
+    const bool usesDescriptor =
+        (localFlags & kFlagDataDescriptor) || (entry.flags & kFlagDataDescriptor);
+    if (!usesDescriptor) {
+        // 0xFFFFFFFF 是 ZIP64 占位值，同样以中央目录为准，不做校验。
+        const std::uint32_t localCompressed = ReadU32(&archive[local + 18]);
+        const std::uint32_t localUncompressed = ReadU32(&archive[local + 22]);
+        const bool zip64Marker =
+            (localCompressed == 0xFFFFFFFFu) || (localUncompressed == 0xFFFFFFFFu);
+        if (!zip64Marker &&
+            (localCompressed != entry.compressedSize ||
+             localUncompressed != entry.uncompressedSize)) {
+            PPET_LOG_WARN(
+                "ZIP 条目本地头与中央目录的尺寸不一致（归档可能被改写，仍按中央目录处理）：%s\n",
+                entry.name.c_str());
+        }
+    }
+
     const std::uint16_t nameLen = ReadU16(&archive[local + 26]);
     const std::uint16_t extraLen = ReadU16(&archive[local + 28]);
     const std::size_t dataStart = local + 30u + nameLen + extraLen;
