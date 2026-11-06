@@ -13,14 +13,19 @@
 #include <windows.h>
 #endif
 
+#include <QApplication>
+
 #include "app/App.hpp"
 #include "core/Log.hpp"
 
 int main(int argc, char** argv) {
     // 原 Electron 版在 Win7 上禁用硬件加速；此处保留一个通用的兼容开关位，
     // 具体是否需要由 GLFW/驱动自行判断。
-    (void)argc;
-    (void)argv;
+
+    // Qt 必须最先初始化（在任何 QWidget 创建之前）。设置窗口由 Qt 承载，
+    // 关闭设置窗口不应退出整个程序（主窗口是 GLFW 窗口，不在 Qt 的管理范围内）。
+    QApplication qtApp(argc, argv);
+    QApplication::setQuitOnLastWindowClosed(false);
 
 #if defined(_WIN32)
     SetConsoleOutputCP(CP_UTF8);

@@ -49,8 +49,7 @@ else()
     if(PPET_GLFW_LIB)
         set(PPET_GLFW_TARGET ${PPET_GLFW_LIB})
         # find_library 只给出库文件路径，不含头文件目录。
-        # 这里补一次头文件搜索，否则 #include <GLFW/glfw3.h> 可能找不到
-        # （ImGui 的 GLFW 后端同样需要这个头文件）。
+        # 这里补一次头文件搜索，否则 #include <GLFW/glfw3.h> 可能找不到。
         find_path(PPET_GLFW_INCLUDE_DIR NAMES GLFW/glfw3.h)
         if(PPET_GLFW_INCLUDE_DIR)
             include_directories(${PPET_GLFW_INCLUDE_DIR})
@@ -186,34 +185,17 @@ if(APPLE)
 endif()
 
 # ---------------------------------------------------------------------------
-# Dear ImGui（设置界面）
+# Qt 6（设置界面）
 # ---------------------------------------------------------------------------
-# 设置界面是独立窗口 + ImGui 实现的，因此 ImGui 必须是真实参与编译的依赖，
-# 不能只靠 third_party 里的源码「放在那里」。
+# 设置界面改用 Qt 6 Widgets 实现（独立 QDialog 窗口），取代原先的 Dear ImGui。
+# 这样原生控件 / 中文 / 高 DPI 天然支持，且不再需要第二个 GL 上下文。
 #
-# 说明：ImGui 的 OpenGL3 后端自带一套最小化的 GL 加载器（imgl3w），
-# 不依赖 GLEW，也不与主渲染层使用的 GLEW 冲突（两者的函数指针符号互不相同）。
-set(PPET_IMGUI_SOURCES
-    third_party/imgui/imgui.cpp
-    third_party/imgui/imgui_draw.cpp
-    third_party/imgui/imgui_tables.cpp
-    third_party/imgui/imgui_widgets.cpp
-    third_party/imgui/backends/imgui_impl_glfw.cpp
-    third_party/imgui/backends/imgui_impl_opengl3.cpp
-)
-
-add_library(ppet_imgui STATIC ${PPET_IMGUI_SOURCES})
-target_include_directories(ppet_imgui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui)
-target_link_libraries(ppet_imgui PUBLIC ${PPET_GLFW_TARGET} ${OPENGL_LIBRARIES})
-if(OPENGL_INCLUDE_DIR)
-    target_include_directories(ppet_imgui PUBLIC ${OPENGL_INCLUDE_DIR})
-endif()
-# 第三方代码不参与本项目的严格告警，避免大量无关警告淹没真正的编译错误。
-if(MSVC)
-    target_compile_options(ppet_imgui PRIVATE /w)
-else()
-    target_compile_options(ppet_imgui PRIVATE -w)
-endif()
+# 提供 Qt6 安装路径的方式（任选其一）：
+#   - 把 Qt6 的 cmake 目录加进 CMAKE_PREFIX_PATH，例如：
+#       Windows (llvm-mingw): -DCMAKE_PREFIX_PATH="C:/Qt/6.7.2/llvm-mingw_64/lib/cmake"
+#       macOS              : -DCMAKE_PREFIX_PATH="~/Qt/6.7.2/macos/lib/cmake"
+#   - Linux 通常由发行包（qt6-base-dev）提供，无需手动设置。
+find_package(Qt6 REQUIRED COMPONENTS Widgets)
 
 # ---------------------------------------------------------------------------
 # 主程序
@@ -225,10 +207,11 @@ set(PPET_CORE_SOURCES
     src/model/Model.cpp
     src/app/App.cpp
     src/ui/SettingsPanel.cpp
+    src/ui/SettingsPanel.hpp
 )
 
 add_executable(ppet ${PPET_CORE_SOURCES} src/main.cpp)
-target_link_libraries(ppet PRIVATE ppet_model ppet_platform ppet_imgui)
+target_link_libraries(ppet PRIVATE ppet_model ppet_platform Qt6::Widgets)
 set_target_properties(ppet PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
@@ -293,10 +276,11 @@ if(UNIX AND NOT APPLE)
 endif()
 
 # ---------------------------------------------------------------------------
-# 设置界面冒烟测试
+# 设置界面冒烟测试（Qt 6）
 # ---------------------------------------------------------------------------
-# 设置界面是独立窗口 + ImGui，必须在真实 GL 环境下验证：
-# 窗口创建、ImGui 初始化、中文字体合并、连续渲染、可见性切换。
+# 设置界面是独立 Qt 窗口，验证：QApplication 可用、对话框创建成功、
+# Show/Hide/Toggle 可见性切换、PumpEvents/Refresh 不崩溃。
+# 用 offscreen 平台插件运行，无需真实显示；没有该插件时跳过（退出码 2）。
 if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/settings_panel_smoke.cpp)
     add_executable(ppet_settings_panel_smoke
         tools/settings_panel_smoke.cpp
@@ -305,26 +289,19 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/settings_panel_smoke.cpp)
         src/core/Log.cpp
     )
     target_include_directories(ppet_settings_panel_smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    target_link_libraries(ppet_settings_panel_smoke PRIVATE ppet_platform ppet_imgui)
+    target_link_libraries(ppet_settings_panel_smoke PRIVATE Qt6::Widgets)
 endif()
 
-# 设置界面预览工具：把面板渲染成 PNG，便于人工确认界面效果。
-if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/settings_panel_preview.cpp)
-    add_executable(ppet_settings_panel_preview
-        tools/settings_panel_preview.cpp
+# 设置面板截图工具：用真实 Qt 控件渲染并抓取 PNG，用于 README 配图。
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/settings_panel_screenshot.cpp)
+    add_executable(ppet_settings_panel_screenshot
+        tools/settings_panel_screenshot.cpp
         src/ui/SettingsPanel.cpp
         src/core/I18n.cpp
         src/core/Log.cpp
     )
-    target_include_directories(ppet_settings_panel_preview PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/src
-        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb)
-    target_link_libraries(ppet_settings_panel_preview PRIVATE ppet_platform ppet_imgui)
-    # stb_image_write 是第三方代码，其告警不参与本项目的严格告警。
-    if(NOT MSVC)
-        set_source_files_properties(tools/settings_panel_preview.cpp
-                                    PROPERTIES COMPILE_OPTIONS "-w")
-    endif()
+    target_include_directories(ppet_settings_panel_screenshot PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(ppet_settings_panel_screenshot PRIVATE Qt6::Widgets)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -401,16 +378,14 @@ if(TARGET ppet_render_integration)
     set_tests_properties(render_integration PROPERTIES SKIP_RETURN_CODE 2)
 endif()
 
-# 设置界面冒烟测试同样需要真实的 GL 上下文。
+# 设置界面冒烟测试（Qt）：用 offscreen 平台插件运行，无需真实显示。
 if(TARGET ppet_settings_panel_smoke)
-    if(PPET_XVFB_RUN)
-        add_test(NAME settings_panel_smoke
-                 COMMAND ${PPET_XVFB_RUN} -a $<TARGET_FILE:ppet_settings_panel_smoke>
-                 WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
-    else()
-        add_test(NAME settings_panel_smoke
-                 COMMAND ppet_settings_panel_smoke
-                 WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
-    endif()
-    set_tests_properties(settings_panel_smoke PROPERTIES SKIP_RETURN_CODE 2)
+    add_test(NAME settings_panel_smoke
+             COMMAND $<TARGET_FILE:ppet_settings_panel_smoke>
+             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    # QT_QPA_PLATFORM=offscreen：不依赖 X / 显示器；
+    # SKIP_RETURN_CODE 2：offscreen 插件不可用或 QApplication 初始化失败时跳过。
+    set_tests_properties(settings_panel_smoke PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        SKIP_RETURN_CODE 2)
 endif()

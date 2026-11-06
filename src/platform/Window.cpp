@@ -275,7 +275,7 @@ bool Window::Create(const WindowOptions& options, std::string& error) {
     ApplyPlatformOptions(options);
 
     // 把 GL 上下文绑定到当前线程并初始化 GLEW：这是渲染能出图的前提，
-    // 缺了这两步，渲染层 / ImGui 的所有 GL 调用都会因为「无当前上下文」而失败。
+    // 缺了这两步，渲染层的所有 GL 调用都会因为「无当前上下文」而失败。
     if (!InitGL(error)) return false;
 
     ++g_windowCount;

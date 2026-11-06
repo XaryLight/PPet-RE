@@ -17,7 +17,7 @@
   - **Live2D**（可选后端，见下文）
 - **透明置顶窗口**：真·透明叠加层，支持点击穿透、窗口拖动、缩放。
 - **系统托盘菜单**：置顶 / 忽略点击 / 显示工具栏 / 切换模型 / 语言 / 开机启动 / 反馈 / 关于 / 退出。
-- **设置面板（ImGui）**：模型管理、渲染缩放、全屏追踪参数、语言切换。
+- **设置面板（Qt 6）**：模型管理、渲染缩放、全屏追踪参数、语言切换。
 - **中英双语**：界面文案随托盘菜单的语言选项切换。
 - **开机启动**：跨平台注册表 / LaunchAgent / autostart 桌面项。
 - **健壮的解析器**：所有模型文件读取都做了边界检查与索引越界防护，并配套 ASAN 模糊测试。
@@ -44,7 +44,7 @@
 - **编译器**：支持 C++17 的 GCC / Clang / MSVC
 - **构建系统**：CMake ≥ 3.16
 - **图形**：OpenGL（桌面 OpenGL 3.3 核心）、[GLFW](https://www.glfw.org/)、[GLEW](https://glew.sourceforge.net/)
-- **界面**：[Dear ImGui](https://github.com/ocornut/imgui)（源码已随仓库提供，无需另行安装）
+- **界面**：[Qt 6](https://www.qt.io/)（Widgets 模块，设置面板用 `QDialog` 实现，需通过包管理器或 Qt 官方安装器安装）
 
 #### Linux（Ubuntu / Debian）
 
@@ -118,7 +118,7 @@ Live2D Cubism SDK 为**专有许可软件，不可随本仓库分发**。若要�
 
 ### 设置面板
 
-点击托盘菜单「配置」打开 ImGui 设置窗口：
+点击托盘菜单「配置」打开 Qt 设置窗口：
 
 ![设置面板](docs/settings-panel.png)
 
@@ -189,10 +189,10 @@ PPet-RE/
 │   │   ├── live2d/           # Live2D Cubism 后端（可选）
 │   │   └── Model.*           # 模型工厂 / 类型探测
 │   ├── render/               # toon 着色渲染管线、相机、工具
-│   ├── ui/                   # ImGui 设置面板
+│   ├── ui/                   # Qt 6 设置面板
 │   ├── app/                  # 主循环与应用编排
 │   └── main.cpp              # 程序入口
-├── third_party/              # nlohmann/json、stb、imgui（源码随仓库）
+├── third_party/              # nlohmann/json、stb（源码随仓库）
 └── tools/                    # 测试素材生成脚本与测试程序
 ```
 
@@ -213,7 +213,7 @@ ctest --output-on-failure
 - **模糊测试（ASAN）**：截断 / 随机字节 / 畸形 JSON / 越界索引 —— 解析器应返回错误而非崩溃
 - **渲染冒烟测试**：真实 GL 上下文下编译着色器、绘制网格、`glReadPixels` 校验非零像素
 - **端到端集成测试**：真实模型文件 → 后端 → 渲染层 → 截图
-- **设置界面冒烟测试**：独立窗口 + ImGui 初始化、中文字体合并、连续渲染、像素校验、可见性切换
+- **设置界面冒烟测试**：Qt 6 对话框创建、显示/隐藏切换、控件初始化、事件泵处理（offscreen 平台运行）
 
 测试素材由脚本生成：
 
@@ -228,7 +228,7 @@ python3 tools/gen_test_vrm.py
 
 - 原始项目：[zenghongtu/PPet](https://github.com/zenghongtu/PPet)（Electron + Live2D 桌面宠物）
 - [Live2D Cubism SDK](https://www.live2d.com/)（专有许可，可选后端）
-- [Dear ImGui](https://github.com/ocornut/imgui)、[GLFW](https://www.glfw.org/)、[GLEW](https://glew.sourceforge.net/)、[nlohmann/json](https://github.com/nlohmann/json)、[stb](https://github.com/nothings/stb)
+- [Qt 6](https://www.qt.io/)、[GLFW](https://www.glfw.org/)、[GLEW](https://glew.sourceforge.net/)、[nlohmann/json](https://github.com/nlohmann/json)、[stb](https://github.com/nothings/stb)
 
 ---
 

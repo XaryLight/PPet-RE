@@ -10,16 +10,9 @@
 
 #include <GLFW/glfw3.h>
 
-#if defined(_WIN32)
-// glfw3native.h 暴露 glfwGetWin32Window，用于把主窗口 HWND 作为文件对话框的父窗口。
-#define GLFW_EXPOSE_NATIVE_WIN32
-#include <GLFW/glfw3native.h>
-#endif
-
 #include "core/Math.hpp"
 #include "core/Log.hpp"
 #include "platform/AutoStart.hpp"
-#include "platform/FileDialog.hpp"
 #include "platform/OpenExternal.hpp"
 #include "render/RenderUtils.hpp"
 
@@ -147,7 +140,7 @@ bool App::Initialize(std::string& error) {
     ApplyConfig();
     RebuildTrayMenu();
 
-    // --- 设置界面（独立窗口 + ImGui）---
+    // --- 设置界面（独立 Qt 6 窗口）---
     std::string settingsError;
     settingsPanel_.config = &configStore_.config();
     settingsPanel_.strings = &strings_;
@@ -188,12 +181,12 @@ bool App::Initialize(std::string& error) {
         configStore_.config().modelPath = keepModel;
         currentLanguage_ = configStore_.config().language;
         strings_ = GetStrings(currentLanguage_);
-        settingsPanel_.strings = &strings_;
+        settingsPanel_.Refresh();
         SaveConfig();
         ApplyConfig();
         RebuildTrayMenu();
     };
-    if (!settingsPanel_.Initialize(&window_, settingsError)) {
+    if (!settingsPanel_.Initialize(settingsError)) {
         // 设置界面不可用不应阻止启动：记录错误并继续。
         PPET_LOG_ERR("%s: %s\n", strings_.settings.c_str(), settingsError.c_str());
     } else if (firstLaunch) {
@@ -238,8 +231,8 @@ void App::RefreshLanguageIfNeeded() {
     if (configStore_.config().language == currentLanguage_) return;
     currentLanguage_ = configStore_.config().language;
     strings_ = GetStrings(currentLanguage_);
-    // 设置面板持有 strings_ 指针，文案刷新后自动生效。
-    settingsPanel_.strings = &strings_;
+    // 设置面板直接用最新 strings_ 重绘文案。
+    settingsPanel_.Refresh();
     RebuildTrayMenu();
 }
 
@@ -354,42 +347,26 @@ void App::OnTrayItem(const std::string& id, bool checked) {
         cfg.ignoreMouseEvents = checked;
         window_.SetIgnoreMouseEvents(checked);
     } else if (id == kIdSettings) {
-        // 设置界面为独立 ImGui 窗口，直接弹出。
+        // 设置界面为独立 Qt 窗口，直接弹出。
         settingsPanel_.Toggle();
     } else if (id == kIdPrevModel) {
         SwitchModel(-1);
     } else if (id == kIdNextModel) {
         SwitchModel(1);
     } else if (id == kIdImportModel) {
-        // 用系统文件对话框选模型文件（.pmx / .vrm / .json）。
-        std::string path;
-        std::string dlgError;
-        void* owner = nullptr;
-#if defined(_WIN32)
-        // Windows 下把主窗口 HWND 作为父窗口，对话框会正确置顶在桌宠之上。
-        if (window_.Handle()) owner = glfwGetWin32Window(window_.Handle());
-#endif
-        if (OpenFileDialog(strings_.importModel, strings_.importModel,
-                           "*.pmx;*.vrm;*.json", "", owner, path, dlgError)) {
-            std::string err;
-            if (!LoadModel(path, err)) {
-                PPET_LOG_ERR("%s: %s\n", strings_.importFailed.c_str(),
-                             err.c_str());
-            } else {
-                SaveConfig();
-            }
-        } else if (!dlgError.empty()) {
-            PPET_LOG_ERR("%s\n", dlgError.c_str());
-        }
+        // 用 Qt 原生文件对话框选模型文件（.pmx / .vrm / .json）。
+        settingsPanel_.OpenImportDialog();
     } else if (id == kIdLangZh) {
         cfg.language = Language::Chinese;
         currentLanguage_ = Language::Chinese;
         strings_ = GetStrings(currentLanguage_);
+        settingsPanel_.Refresh();
         RebuildTrayMenu();
     } else if (id == kIdLangEn) {
         cfg.language = Language::English;
         currentLanguage_ = Language::English;
         strings_ = GetStrings(currentLanguage_);
+        settingsPanel_.Refresh();
         RebuildTrayMenu();
     } else if (id == kIdReload) {
         // 重新渲染：重新加载当前模型以重置骨骼与表情状态。
@@ -418,7 +395,7 @@ void App::OnTrayItem(const std::string& id, bool checked) {
             PPET_LOG_ERR("%s\n", openError.c_str());
         }
     } else if (id == kIdAbout) {
-        // 「关于」打开设置窗口（面板内含「关于」折叠区）。
+        // 「关于」打开设置窗口（面板内含「关于」标签页）。
         settingsPanel_.Show();
     } else if (id == kIdQuit) {
         running_ = false;
@@ -542,9 +519,9 @@ void App::Run() {
             ClearTransparent();
         }
 
-        // 设置界面是独立窗口，拥有自己的 GL 上下文；
-        // Render() 内部完成上下文切换，结束后会切回主窗口上下文。
-        settingsPanel_.Render();
+        // 设置界面是独立 Qt 窗口；每帧手动驱动 Qt 事件分发，
+        // 与 GLFW 主循环共用同一条主线程（无需独立 Qt 线程）。
+        settingsPanel_.PumpEvents();
 
         window_.SwapBuffers();
     }
