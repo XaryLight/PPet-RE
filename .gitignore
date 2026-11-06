@@ -35,6 +35,12 @@ Thumbs.db
 secrets.*
 deploy_key*
 
+# ===== Cubism SDK（专有许可软件，不可随仓库分发）=====
+# 把 CubismSdkForNative-x.y.z.zip 解压后，把其中的 Core 目录放到
+# src/csdk/Core/ 即可，CMake 会自动识别并启用 Live2D 后端。
+src/csdk/
+third_party/Cubism/
+
 # ===== 大型下载模型样本（可用脚本重新下载，不入库） =====
 tools/testdata/sample_vrm1_twist.vrm
 

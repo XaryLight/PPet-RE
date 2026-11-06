@@ -11,7 +11,9 @@
 #include <GLFW/glfw3.h>
 
 #include "core/Math.hpp"
+#include "core/FileIO.hpp"
 #include "core/Log.hpp"
+#include "core/ModelPackage.hpp"
 #include "platform/AutoStart.hpp"
 #include "platform/OpenExternal.hpp"
 #include "render/RenderUtils.hpp"
@@ -236,6 +238,13 @@ void App::RefreshLanguageIfNeeded() {
     RebuildTrayMenu();
 }
 
+std::string App::ModelCacheDirectory() const {
+    // 与配置文件同级的 models 目录：Windows 下是 %APPDATA%/PPet/models。
+    const std::string configDir = ParentDirectory(configPath_);
+    if (configDir.empty()) return "models";
+    return JoinPath(configDir, "models");
+}
+
 bool App::LoadModel(const std::string& path, std::string& error) {
     if (path.empty()) {
         error = "模型路径为空";
@@ -243,11 +252,23 @@ bool App::LoadModel(const std::string& path, std::string& error) {
     }
 
     // 在线模型地址去掉查询参数后再判断类型（在线地址常带 ?token=xxx）。
-    const std::string cleanPath = StripQuery(path);
+    std::string cleanPath = StripQuery(path);
+
+    // 压缩包导入：先把 zip 解压到缓存目录，再定位其中的模型文件。
+    // 社区里的 Live2D / MMD 模型通常以 zip 形式分发，逐个文件导入体验很差。
+    if (FileExtension(cleanPath) == "zip") {
+        ModelPackage package;
+        std::string packageError;
+        if (!ExtractModelPackage(cleanPath, ModelCacheDirectory(), package, packageError)) {
+            error = packageError;
+            return false;
+        }
+        cleanPath = package.modelPath;
+    }
 
     const ModelType type = DetectModelType(cleanPath);
     if (type == ModelType::Unknown) {
-        error = "无法识别的模型格式（支持 .json / .pmx / .vrm）";
+        error = "无法识别的模型格式（支持 .json / .pmx / .vrm / .zip）";
         return false;
     }
 
@@ -261,7 +282,7 @@ bool App::LoadModel(const std::string& path, std::string& error) {
         return false;
     }
 
-    if (!model->Load(path, error)) {
+    if (!model->Load(cleanPath, error)) {
         return false;
     }
 
@@ -270,10 +291,13 @@ bool App::LoadModel(const std::string& path, std::string& error) {
     model_->OnResize(static_cast<int>(size.x), static_cast<int>(size.y));
 
     auto& cfg = configStore_.config();
-    cfg.modelPath = path;
+    // 保存「实际加载的模型文件」路径：zip 导入时这是解压后的模型文件，
+    // 这样下次启动能直接加载，而不必再走一次解压（缓存目录也会被保留）。
+    cfg.modelPath = cleanPath;
     // 新模型加入列表并置为当前。
-    if (std::find(cfg.modelList.begin(), cfg.modelList.end(), path) == cfg.modelList.end()) {
-        cfg.modelList.push_back(path);
+    if (std::find(cfg.modelList.begin(), cfg.modelList.end(), cleanPath) ==
+        cfg.modelList.end()) {
+        cfg.modelList.push_back(cleanPath);
     }
     return true;
 }
@@ -354,7 +378,8 @@ void App::OnTrayItem(const std::string& id, bool checked) {
     } else if (id == kIdNextModel) {
         SwitchModel(1);
     } else if (id == kIdImportModel) {
-        // 用 Qt 原生文件对话框选模型文件（.pmx / .vrm / .json）。
+        // 用 Qt 原生文件对话框选模型文件（.pmx / .vrm / .json / .zip）。
+        // 压缩包会先解压到缓存目录，再自动定位其中的模型文件。
         settingsPanel_.OpenImportDialog();
     } else if (id == kIdLangZh) {
         cfg.language = Language::Chinese;

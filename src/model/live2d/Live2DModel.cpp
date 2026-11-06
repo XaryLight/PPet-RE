@@ -7,6 +7,9 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <vector>
+
+#include "core/FileIO.hpp"
 
 // stb_image：本文件是 Live2D 后端唯一一处 STB_IMAGE_IMPLEMENTATION。
 //
@@ -211,10 +214,20 @@ GLuint CreateWhiteTexture() {
 ///
 /// @return 成功返回纹理 id；失败返回 0。
 GLuint LoadTexture(const std::string& path) {
+    // 先读进内存再解码：stb_image 的文件接口在 Windows 上打不开
+    // 含中文的模型目录（Live2D 模型常放在中文路径下），会静默丢贴图。
+    std::vector<unsigned char> bytes;
+    if (!ReadFileBytes(path, bytes) || bytes.empty()) {
+        std::fprintf(stderr, "[Live2D] 纹理文件无法读取：%s\n", path.c_str());
+        return 0;
+    }
+
     int width = 0;
     int height = 0;
     int channels = 0;
-    unsigned char* pixels = l2d_stbi_load(path.c_str(), &width, &height, &channels, 4);
+    unsigned char* pixels =
+        l2d_stbi_load_from_memory(bytes.data(), static_cast<int>(bytes.size()),
+                                  &width, &height, &channels, 4);
     if (!pixels) {
         std::fprintf(stderr, "[Live2D] 纹理加载失败：%s（%s）\n", path.c_str(),
                      l2d_stbi_failure_reason());
@@ -649,49 +662,37 @@ void Live2DModel::OnResize(int width, int height) {
 }
 
 Mat4 Live2DModel::BuildTransform(const RenderContext& ctx) const {
-    // Core 的顶点坐标是「模型单位」，换算公式（官方 Core API Reference）：
-    //   X = (localX / PPU) - (origin.X * size.X / PPU)
-    //   Y = (origin.Y * size.Y / PPU) - (localY / PPU)
-    // 换算后得到以模型中心为原点、以像素为单位的坐标。
+    // Cubism Core 的顶点坐标（csmGetDrawableVertexPositions）单位是「模型单位」
+    // （model unit），不是画布像素。以 aidang_2 实测：
+    //   sizeInPixels = (3400, 4100)、pixelsPerUnit = 186.36
+    //   -> 画布尺寸 = sizeInPixels / pixelsPerUnit = (18.24, 22.0) 模型单位
+    //   -> 顶点范围约 (-7.8, -8.9) ~ (5.0, 10.7) 模型单位
+    // 因此换算必须除以 pixelsPerUnit，否则模型会被缩小上百倍（看起来只有一个小点）。
     //
-    // 然后建立正交投影，把模型按比例缩放到窗口中央。
+    // 官方 Framework 的 GetCanvasWidth() 同样是 sizeInPixels / pixelsPerUnit，
+    // 可作为权威依据（CubismModel.cpp）。
+    //
+    // 顶点已以模型原点为中心、Y 轴向上，与 OpenGL 裁剪空间一致，无需翻转。
     const cubism::CanvasInfo& canvas = impl_->canvas;
     const float ppu = canvas.pixelsPerUnit > 0.0f ? canvas.pixelsPerUnit : 1.0f;
+    const float W = canvas.sizeInPixels.x / ppu;  // 模型单位下的画布宽
+    const float H = canvas.sizeInPixels.y / ppu;  // 模型单位下的画布高
 
-    // 模型在「像素单位」下的宽高。
-    const float modelWidth = canvas.sizeInPixels.x;
-    const float modelHeight = canvas.sizeInPixels.y;
+    const float vw = ctx.viewportWidth > 0 ? static_cast<float>(ctx.viewportWidth) : 1.0f;
+    const float vh = ctx.viewportHeight > 0 ? static_cast<float>(ctx.viewportHeight) : 1.0f;
 
-    const int viewportWidth = ctx.viewportWidth > 0 ? ctx.viewportWidth : 1;
-    const int viewportHeight = ctx.viewportHeight > 0 ? ctx.viewportHeight : 1;
+    // 等比适配：模型单位 -> 窗口像素的缩放系数（取较小边铺满，留 5% 边距）。
+    // 顶点以模型原点为中心，因此平移为 0，模型自然居中。
+    const float fit = 0.95f;
+    const float k = std::min(vw / (W > 0.0f ? W : 1.0f),
+                              vh / (H > 0.0f ? H : 1.0f)) * fit * ctx.renderScale;
 
-    // 缩放：让模型按比例填满窗口（留 5% 边距）。
-    float scale = 1.0f;
-    if (modelWidth > 0.0f && modelHeight > 0.0f) {
-        const float scaleX = static_cast<float>(viewportWidth) / modelWidth;
-        const float scaleY = static_cast<float>(viewportHeight) / modelHeight;
-        scale = std::min(scaleX, scaleY) * 0.95f;
-    }
-
-    // 顶点变换：模型像素坐标 -> 裁剪空间（-1..1）。
-    //   modelX = (localX / PPU) - (origin.X * size.X / PPU)
-    //   clipX  = modelX * scale / (viewportWidth / 2)
-    //   clipY  = modelY * scale / (viewportHeight / 2)
-    //
-    // 由于 Y 轴向上而裁剪空间 Y 也向上，无需额外翻转。
-    const float halfWidth = static_cast<float>(viewportWidth) * 0.5f;
-    const float halfHeight = static_cast<float>(viewportHeight) * 0.5f;
-
-    const float sx = (scale / ppu) / halfWidth;
-    const float sy = (scale / ppu) / halfHeight;
-    const float tx = -(canvas.originInPixels.x * canvas.sizeInPixels.x / ppu) * sx;
-    const float ty = (canvas.originInPixels.y * canvas.sizeInPixels.y / ppu) * sy;
+    const float sx = k / (vw * 0.5f);
+    const float sy = k / (vh * 0.5f);
 
     Mat4 m = Mat4::Identity();
     m.At(0, 0) = sx;
     m.At(1, 1) = sy;
-    m.At(0, 3) = tx;
-    m.At(1, 3) = ty;
     return m;
 }
 

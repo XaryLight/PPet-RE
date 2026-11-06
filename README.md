@@ -31,9 +31,23 @@
 | VRM 1.0 | `.vrm` | ✅ 默认支持 | GLB/glTF2.0，含 MToon、humanoid、expressions、springBone |
 | VRM 0.x | `.vrm` | ✅ 默认支持 | `extensions.VRM` 单体扩展，向后兼容 |
 | PMX 2.0/2.1 | `.pmx` | ✅ 默认支持 | 二进制，含骨骼蒙皮、材质、变形、显示帧 |
-| Live2D | `.model3.json` | ⚙️ 可选 | 需自行下载 Cubism SDK 并开启编译开关（专有许可） |
+| Live2D | `.model3.json` | ⚙️ 可选 | 需自行下载 Cubism SDK（专有许可），放入 `src/csdk/` 即自动启用 |
+| 模型压缩包 | `.zip` | ✅ 默认支持 | 自动解压并定位包内模型（`.model3.json` / `.pmx` / `.vrm`） |
 
 > 三种格式在内部统一转换为「蒙皮网格 + toon 着色」表示，共用同一套渲染管线。
+
+### 压缩包导入（.zip）
+
+社区里的 Live2D / MMD 模型通常以 `.zip` 形式分发（一个包内含模型主文件 + 贴图 + 动作）。
+本项目支持直接导入 `.zip`：
+
+- 导入时自动解压到缓存目录（Windows：`%APPDATA%\PPet\models`；Linux/macOS：配置目录同级）；
+- 自动在包内定位模型主文件，优先级：`.model3.json` > `.pmx` > `.vrm`；
+- 贴图、动作等相对路径资源随包一起解压，模型加载时按原目录结构解析；
+- 重复导入同一个包会覆盖旧缓存，不会残留过期文件。
+
+> Cubism 2 的老格式（`.moc` + `.model.json`）**不在支持范围内**——Cubism 5/6 的 Core 只认 `.moc3`。
+> 请先用 Live2D Cubism Converter 把模型转换为 `.moc3` 格式再导入。
 
 ---
 
@@ -91,15 +105,25 @@ cmake --build build -j
 Live2D Cubism SDK 为**专有许可软件，不可随本仓库分发**。若要支持 Live2D（`.model3.json`）模型，用的是 **Cubism SDK for Native** 的 **Core 层**：
 
 1. 从 <https://www.live2d.com/en/sdk/download/> 下载 **Cubism SDK for Native**（只需其中的 **Core** 目录）；
-2. 把 `Core` 目录放到 `third_party/Cubism/Core/`，最终结构应含：
-   - `third_party/Cubism/Core/include/Live2DCubismCore.h`
-   - `third_party/Cubism/Core/lib/<平台子目录>/libLive2DCubismCore.a`（Linux/macOS）或 `Live2DCubismCore.lib`（Windows）
-3. 配置时开启开关后重新构建：
+2. 把 **Core 目录**放到 **`src/csdk/`**，最终结构应含：
+   - `src/csdk/Core/include/Live2DCubismCore.h`
+   - `src/csdk/Core/lib/linux/x86_64/libLive2DCubismCore.a`（Linux）
+   - `src/csdk/Core/lib/macos/libLive2DCubismCore.a`（macOS）
+   - `src/csdk/Core/lib/windows/x86_64/<版本号>/Live2DCubismCore_MT.lib`（Windows）
+3. 重新配置并构建即可：
 
    ```bash
-   cmake -S . -B build -DCMAKE_PREFIX_PATH=<Qt6 安装路径> -DPPET_WITH_CUBISM=ON
+   cmake -S . -B build -DCMAKE_PREFIX_PATH=<Qt6 安装路径>
    cmake --build build
    ```
+
+   **CMake 会自动检测 `src/csdk/` 下的 SDK 并启用 Live2D 后端**，无需手工传 `-DPPET_WITH_CUBISM=ON`。
+   配置阶段会打印 `检测到 Cubism SDK（...），自动启用 Live2D 后端` 以示确认。
+
+> 也可以把 Core 放在别处，用 `-DPPET_CUBISM_ROOT=<Core 所在目录>` 指定；
+> 或者显式传 `-DPPET_WITH_CUBISM=ON` 强制开启。
+>
+> `src/csdk/` 已加入 `.gitignore`，专有 SDK 不会被提交到仓库。
 
 > 不下载 SDK 也能先验证构建与 UI 链路：用 `-DPPET_WITH_CUBISM_STUB=ON`，
 > 会启用仓库内置的 Cubism Core **桩**（提供与真实 SDK 同名同签名的 `csm*` 函数），
@@ -193,7 +217,7 @@ Live2D Cubism SDK 为**专有许可软件，不可随本仓库分发**。若要�
 PPet-RE/
 ├── CMakeLists.txt            # 构建配置（模型层 / 平台层 / 主程序 / 测试）
 ├── src/
-│   ├── core/                 # 数学库、配置、国际化
+│   ├── core/                 # 数学库、配置、国际化、日志、文件读写、ZIP 解压
 │   ├── platform/             # 窗口、托盘、全局光标追踪、开机启动、文件对话框
 │   ├── model/                # 模型抽象 + 各后端
 │   │   ├── SkinnedMesh.*     # 统一蒙皮网格表示
@@ -205,7 +229,8 @@ PPet-RE/
 │   ├── ui/                   # Qt 6 设置面板
 │   ├── app/                  # 主循环与应用编排
 │   └── main.cpp              # 程序入口
-├── third_party/              # nlohmann/json、stb（源码随仓库）
+├── src/csdk/                 # Cubism SDK for Native 的 Core 目录（可选，需自备）
+├── third_party/              # nlohmann/json、stb、zlib（源码随仓库）
 └── tools/                    # 测试素材生成脚本与测试程序
 ```
 
@@ -227,6 +252,8 @@ ctest --output-on-failure
 - **渲染冒烟测试**：真实 GL 上下文下编译着色器、绘制网格、`glReadPixels` 校验非零像素
 - **端到端集成测试**：真实模型文件 → 后端 → 渲染层 → 截图
 - **设置界面冒烟测试**：Qt 6 对话框创建、显示/隐藏切换、控件初始化、事件泵处理（offscreen 平台运行）
+- **ZIP 模型包导入测试**：解压中央目录、定位包内模型、幂等重导入、非法输入处理
+- **Live2D 渲染验证**（需 SDK）：加载真实 `.model3.json`，渲染后统计非透明像素并导出 PNG
 
 测试素材由脚本生成：
 

@@ -394,16 +394,23 @@ void Window::SetTransparent(bool transparent) {
     if (hwnd) {
         LONG_PTR exStyle = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
         if (transparent) {
-            exStyle |= WS_EX_LAYERED;
-            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, exStyle);
-            // 负边距 = 把 DWM 边框扩展到整个客户区，实现逐像素真透明。
-            MARGINS margins = {-1, -1, -1, -1};
-            DwmExtendFrameIntoClientArea(hwnd, &margins);
-        } else {
+            // 不使用 WS_EX_LAYERED：分层窗口由 GDI 合成，会丢弃 OpenGL
+            // 帧缓冲的 alpha 通道（窗口会变成全空白）。
+            // 改用与 GLFW 一致的 DWM 模糊区域方案。
             exStyle &= ~static_cast<LONG_PTR>(WS_EX_LAYERED);
             SetWindowLongPtrW(hwnd, GWL_EXSTYLE, exStyle);
-            MARGINS margins = {0, 0, 0, 0};
-            DwmExtendFrameIntoClientArea(hwnd, &margins);
+            HRGN region = CreateRectRgn(0, 0, -1, -1);
+            DWM_BLURBEHIND bb = {};
+            bb.dwFlags = DWM_BB_ENABLE | DWM_BB_BLURREGION;
+            bb.hRgnBlur = region;
+            bb.fEnable = TRUE;
+            DwmEnableBlurBehindWindow(hwnd, &bb);
+            DeleteObject(region);
+        } else {
+            DWM_BLURBEHIND bb = {};
+            bb.dwFlags = DWM_BB_ENABLE;
+            bb.fEnable = FALSE;
+            DwmEnableBlurBehindWindow(hwnd, &bb);
             SetClassLongPtrW(hwnd, GCLP_HBRBACKGROUND,
                              reinterpret_cast<LONG_PTR>(GetStockObject(BLACK_BRUSH)));
             InvalidateRect(hwnd, nullptr, TRUE);
@@ -526,18 +533,32 @@ void Window::ApplyPlatformOptions(const WindowOptions& options) {
     }
 
     // 扩展样式：
-    //   WS_EX_LAYERED   —— 配合 DWM 扩展边框实现逐像素真透明
     //   WS_EX_TOOLWINDOW—— 不出现在任务栏与 Alt-Tab 列表中
     //   WS_EX_NOACTIVATE—— 点击窗口不会抢走当前应用的输入焦点
+    //
+    // 注意：这里绝对不能加 WS_EX_LAYERED！
+    // 带 WS_EX_LAYERED 的窗口由 GDI 的「分层窗口」合成路径接管，
+    // DWM 不再读取 OpenGL 帧缓冲的 alpha 通道，结果就是
+    // 「窗口存在但完全空白」——这是 Windows 上桌宠看不见的经典原因。
+    // GLFW 自己实现逐像素透明用的是 DwmEnableBlurBehindWindow（见下），
+    // 那条路径才与 OpenGL 帧缓冲兼容。
     LONG_PTR exStyle = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-    exStyle |= WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
+    exStyle |= WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
     if (options.skipTaskbar) exStyle |= WS_EX_TOOLWINDOW;
     SetWindowLongPtrW(hwnd, GWL_EXSTYLE, exStyle);
 
     if (options.transparent) {
-        // 负边距表示把 DWM 边框扩展到整个客户区：窗口的 alpha 通道即为真实透明。
-        MARGINS margins = {-1, -1, -1, -1};
-        DwmExtendFrameIntoClientArea(hwnd, &margins);
+        // 与 GLFW 的 Windows 透明实现保持一致：用空的模糊区域让 DWM
+        // 合成器采用窗口自身的 alpha 通道，实现逐像素真透明。
+        // （GLFW 3.3 的 win32_window.c 里 updateFramebufferTransparency 用的
+        //   就是 DwmEnableBlurBehindWindow + 空 HRGN。）
+        HRGN region = CreateRectRgn(0, 0, -1, -1);
+        DWM_BLURBEHIND bb = {};
+        bb.dwFlags = DWM_BB_ENABLE | DWM_BB_BLURREGION;
+        bb.hRgnBlur = region;
+        bb.fEnable = TRUE;
+        DwmEnableBlurBehindWindow(hwnd, &bb);
+        DeleteObject(region);
     }
 
     // 置顶。

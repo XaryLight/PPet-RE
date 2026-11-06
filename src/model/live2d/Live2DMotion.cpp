@@ -1,11 +1,11 @@
 // PPet - C++ 移植版
 // Live2D 动作（motion3.json）解析与播放实现。
+#include "core/FileIO.hpp"
 #include "model/live2d/Live2DMotion.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
-#include <fstream>
 
 #include <nlohmann/json.hpp>
 
@@ -128,12 +128,13 @@ bool ParseMotionFile(const std::string& path, Motion& out, std::string& error) {
 
     nlohmann::json doc;
     try {
-        std::ifstream file(path);
-        if (!file) {
+        // 走跨平台读取接口：Windows 上窄字符路径打不开含中文的模型目录。
+        std::string text;
+        if (!ReadFileText(path, text)) {
             error = "无法打开动作文件：" + path;
             return false;
         }
-        file >> doc;
+        doc = nlohmann::json::parse(text);
     } catch (const nlohmann::json::exception& e) {
         error = std::string("动作文件不是合法 JSON：") + e.what();
         return false;

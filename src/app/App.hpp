@@ -35,6 +35,9 @@ private:
     /// 加载指定路径的模型。
     bool LoadModel(const std::string& path, std::string& error);
 
+    /// 模型包解压缓存目录（与配置文件同级的 models 子目录）。
+    std::string ModelCacheDirectory() const;
+
     /// 按当前配置重建托盘菜单。
     void RebuildTrayMenu();
 

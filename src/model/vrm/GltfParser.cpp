@@ -13,12 +13,12 @@
 //   glTF 的 matrix 是列主序 16 个浮点数，平移在 [12..14]，
 //   与 core/Math.hpp 中 Mat4（m[col * 4 + row]）的内存布局完全一致，
 //   因此矩阵可以直接拷贝，不需要转置。
+#include "core/FileIO.hpp"
 #include "model/vrm/GltfParser.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
-#include <fstream>
 #include <sstream>
 
 namespace ppet::vrm {
@@ -277,25 +277,13 @@ std::string DirNameOf(const std::string& path) {
 /// 读取整个文件。失败返回 false。
 bool ReadWholeFile(const std::string& path, std::vector<unsigned char>& out,
                    std::string& error) {
-    std::ifstream file(path, std::ios::binary);
-    if (!file) {
+    // 走跨平台读取接口：Windows 上窄字符路径无法打开含中文的文件名。
+    if (!ReadFileBytes(path, out)) {
         error = "无法打开文件：" + path;
         return false;
     }
-    file.seekg(0, std::ios::end);
-    const std::streamoff size = file.tellg();
-    if (size < 0) {
-        error = "无法读取文件大小：" + path;
-        return false;
-    }
-    if (static_cast<std::uint64_t>(size) > kMaxFileSize) {
+    if (out.size() > kMaxFileSize) {
         error = "文件过大（超过 512 MB），已拒绝加载";
-        return false;
-    }
-    file.seekg(0, std::ios::beg);
-    out.resize(static_cast<std::size_t>(size));
-    if (size > 0 && !file.read(reinterpret_cast<char*>(out.data()), size)) {
-        error = "读取文件失败：" + path;
         return false;
     }
     return true;

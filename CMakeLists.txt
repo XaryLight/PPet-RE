@@ -6,7 +6,7 @@
 #     因此对尚未存在的源文件做了存在性判断，缺失时用占位实现顶上，
 #     保证任何阶段都能 configure / build 成功。
 cmake_minimum_required(VERSION 3.16)
-project(PPet LANGUAGES CXX)
+project(PPet LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -22,9 +22,30 @@ endif()
 #   - PPET_WITH_CUBISM_STUB ：使用仓库内置的 Cubism Core 桩（无需 SDK，仅供
 #                             无 SDK 环境下验证 UI / 构建链路，不能加载真实模型）
 #   两者都不开时，加载 Live2D 模型会给出「请启用 Cubism SDK」的友好提示。
+#
+# 自动识别：只要在 src/csdk/（或 third_party/Cubism/Core/）下检测到
+# Live2DCubismCore.h，就自动开启真实 SDK 后端，无需手工传 CMake 选项。
 # ---------------------------------------------------------------------------
-option(PPET_WITH_CUBISM "启用 Live2D 后端：需自行下载 Cubism SDK for Native 并放入 third_party/Cubism/Core" OFF)
+option(PPET_WITH_CUBISM "启用 Live2D 后端：需自行下载 Cubism SDK for Native 并放入 src/csdk" OFF)
 option(PPET_WITH_CUBISM_STUB "使用内置 Cubism Core 桩（无需 SDK，仅供测试/验证构建链路）" OFF)
+set(PPET_CUBISM_ROOT "" CACHE PATH
+    "Cubism SDK Core 目录所在位置（可指向 Core 目录本身或其上层）")
+
+# 自动检测：SDK 已解压到 src/csdk/ 时自动启用，避免用户漏配 CMake 选项。
+if(NOT PPET_WITH_CUBISM AND NOT PPET_WITH_CUBISM_STUB)
+    foreach(_auto_root
+            ${PPET_CUBISM_ROOT}
+            ${PPET_CUBISM_ROOT}/Core
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/csdk/Core
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/csdk
+            ${CMAKE_CURRENT_SOURCE_DIR}/third_party/Cubism/Core)
+        if(_auto_root AND EXISTS "${_auto_root}/include/Live2DCubismCore.h")
+            set(PPET_WITH_CUBISM ON CACHE BOOL "启用 Live2D 后端：需自行下载 Cubism SDK for Native 并放入 src/csdk" FORCE)
+            message(STATUS "检测到 Cubism SDK（${_auto_root}），自动启用 Live2D 后端")
+            break()
+        endif()
+    endforeach()
+endif()
 
 # 统一开启严格警告，尽早暴露问题。
 add_compile_options(-Wall -Wextra)
@@ -105,6 +126,7 @@ endif()
 # 模型后端静态库
 # ---------------------------------------------------------------------------
 set(PPET_MODEL_SOURCES
+    src/core/FileIO.cpp
     src/model/SkinnedMesh.cpp
     src/model/pmx/PmxParser.cpp
     src/model/pmx/PmxModel.cpp
@@ -112,6 +134,36 @@ set(PPET_MODEL_SOURCES
     src/model/vrm/VrmImage.cpp
     src/model/vrm/VrmModel.cpp
 )
+
+# ---------------------------------------------------------------------------
+# zlib（vendored）
+# ---------------------------------------------------------------------------
+# 用于 ZIP 模型包的解压（inflate）。源码随仓库提供（third_party/zlib），
+# 这样 Windows 上无需用户自行安装 zlib 依赖。
+add_library(ppet_zlib STATIC
+    third_party/zlib/adler32.c
+    third_party/zlib/compress.c
+    third_party/zlib/crc32.c
+    third_party/zlib/deflate.c
+    third_party/zlib/gzclose.c
+    third_party/zlib/gzlib.c
+    third_party/zlib/gzread.c
+    third_party/zlib/gzwrite.c
+    third_party/zlib/infback.c
+    third_party/zlib/inffast.c
+    third_party/zlib/inflate.c
+    third_party/zlib/inftrees.c
+    third_party/zlib/trees.c
+    third_party/zlib/uncompr.c
+    third_party/zlib/zutil.c
+)
+target_include_directories(ppet_zlib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/third_party/zlib)
+# 第三方代码不参与本项目的严格告警，避免大量无关警告淹没真正的编译错误。
+if(MSVC)
+    target_compile_options(ppet_zlib PRIVATE /w)
+else()
+    target_compile_options(ppet_zlib PRIVATE -w)
+endif()
 
 # 渲染层实现（主协调者提供）。缺失时用测试桩顶上，保证库仍可链接。
 if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src/render/Renderer.cpp)
@@ -152,34 +204,72 @@ if(PPET_WITH_CUBISM AND PPET_WITH_CUBISM_STUB)
 endif()
 
 if(PPET_WITH_CUBISM)
-    # 真实 Cubism SDK for Native：third_party/Cubism/Core/{include,lib}
-    find_path(CUBISM_CORE_INCLUDE_DIR
-        NAMES Live2DCubismCore.h
-        PATHS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/Cubism/Core
-        PATH_SUFFIXES include
-        NO_DEFAULT_PATH)
+    # 真实 Cubism SDK for Native 的 Core 目录（只含 include/ 与 lib/）。
+    #
+    # 支持多个放置位置，按优先级查找，第一个命中的生效：
+    #   1. src/csdk/Core            —— 推荐：把 SDK 的 Core 目录解压到这里
+    #   2. src/csdk                 —— 直接把 Core 的内容解压到这个目录
+    #   3. third_party/Cubism/Core  —— 旧位置，保持兼容
+    #   4. 外部路径 -DPPET_CUBISM_ROOT=<dir> —— 指向 Core 目录或其上层
+    #
+    # 这样「把 SDK 解压到 src/ 下即可被自动识别」，无需手工配置头文件路径。
+    set(_cubism_root_candidates
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/csdk/Core
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/csdk
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/Cubism/Core
+    )
+    if(PPET_CUBISM_ROOT)
+        list(INSERT _cubism_root_candidates 0 ${PPET_CUBISM_ROOT})
+        list(INSERT _cubism_root_candidates 1 ${PPET_CUBISM_ROOT}/Core)
+    endif()
+
+    set(CUBISM_CORE_INCLUDE_DIR "")
+    set(CUBISM_CORE_ROOT "")
+    foreach(_root IN LISTS _cubism_root_candidates)
+        if(EXISTS "${_root}/include/Live2DCubismCore.h")
+            set(CUBISM_CORE_INCLUDE_DIR "${_root}/include")
+            set(CUBISM_CORE_ROOT "${_root}")
+            break()
+        endif()
+    endforeach()
+
     if(NOT CUBISM_CORE_INCLUDE_DIR)
         message(FATAL_ERROR
-            "未找到 Live2DCubismCore.h。请按 README 将 Cubism SDK for Native 的 "
-            "Core 目录放入 third_party/Cubism/Core/（含 include/Live2DCubismCore.h）。")
+            "未找到 Live2DCubismCore.h。请把 Cubism SDK for Native 解压到 "
+            "src/csdk/（即 src/csdk/Core/include/Live2DCubismCore.h 存在），"
+            "或用 -DPPET_CUBISM_ROOT=<Core 目录> 指定位置。")
     endif()
 
     if(WIN32)
-        set(_cubism_lib_subdirs windows/x86_64/Release/Static windows/x86_64/Debug/Static)
+        # Cubism SDK 5 for Windows 的目录结构是
+        #   lib/windows/x86_64/<VS 版本号>/Live2DCubismCore_{MT,MD}.lib
+        # 其中 MT = 静态多线程运行时（对应 MinGW/静态 CRT 的常见用法），
+        # MD = 动态 CRT。目录名里的数字是 Visual Studio 版本号
+        # （143=VS2022、142=VS2019、141=VS2017），取最高的即可。
+        set(_cubism_lib_subdirs
+            windows/x86_64/143
+            windows/x86_64/142
+            windows/x86_64/141
+            windows/x86_64
+        )
+        # 静态库文件名带 _MT / _MD 后缀，需要单独查找。
+        set(_cubism_lib_names Live2DCubismCore_MT Live2DCubismCore)
     elseif(APPLE)
         set(_cubism_lib_subdirs macos)
+        set(_cubism_lib_names Live2DCubismCore)
     else()
         set(_cubism_lib_subdirs linux/x86_64)
+        set(_cubism_lib_names Live2DCubismCore)
     endif()
     find_library(CUBISM_CORE_LIBRARY
-        NAMES Live2DCubismCore
-        PATHS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/Cubism/Core/lib
+        NAMES ${_cubism_lib_names}
+        PATHS ${CUBISM_CORE_ROOT}/lib
         PATH_SUFFIXES ${_cubism_lib_subdirs}
         NO_DEFAULT_PATH)
     if(NOT CUBISM_CORE_LIBRARY)
         message(FATAL_ERROR
-            "未找到 Cubism Core 库（libLive2DCubismCore.a / Live2DCubismCore.lib）。"
-            "请确认 third_party/Cubism/Core/lib 下的平台子目录与你的工具链匹配。")
+            "未找到 Cubism Core 库（libLive2DCubismCore.a / Live2DCubismCore_MT.lib）。"
+            "请确认 ${CUBISM_CORE_ROOT}/lib 下的平台子目录与你的工具链匹配。")
     endif()
 
     target_include_directories(ppet_model PUBLIC ${CUBISM_CORE_INCLUDE_DIR})
@@ -276,6 +366,8 @@ set(PPET_CORE_SOURCES
     src/core/Config.cpp
     src/core/I18n.cpp
     src/core/Log.cpp
+    src/core/ModelPackage.cpp
+    src/core/ZipArchive.cpp
     src/model/Model.cpp
     src/app/App.cpp
     src/ui/SettingsPanel.cpp
@@ -283,7 +375,7 @@ set(PPET_CORE_SOURCES
 )
 
 add_executable(ppet ${PPET_CORE_SOURCES} src/main.cpp)
-target_link_libraries(ppet PRIVATE ppet_model ppet_platform Qt6::Widgets)
+target_link_libraries(ppet PRIVATE ppet_model ppet_platform ppet_zlib Qt6::Widgets)
 set_target_properties(ppet PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
@@ -315,6 +407,7 @@ set_tests_properties(platform_smoke PROPERTIES SKIP_RETURN_CODE 2)
 if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/render_smoke.cpp)
     add_executable(ppet_render_smoke
         tools/render_smoke.cpp
+        src/core/FileIO.cpp
         src/render/Renderer.cpp
         src/render/Camera.cpp
         src/render/RenderUtils.cpp
@@ -327,6 +420,7 @@ endif()
 if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/render_integration.cpp)
     add_executable(ppet_render_integration
         tools/render_integration.cpp
+        src/core/FileIO.cpp
         src/model/SkinnedMesh.cpp
         src/model/pmx/PmxParser.cpp
         src/model/pmx/PmxModel.cpp
@@ -376,6 +470,26 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/settings_panel_screenshot.cpp)
     target_link_libraries(ppet_settings_panel_screenshot PRIVATE Qt6::Widgets)
 endif()
 
+# Live2D 渲染验证工具：仅真实 Cubism SDK 模式下构建（桩无法加载真实模型）。
+# 用隐藏 GLFW 窗口 + GLEW 渲染一个兼容的 Live2D 模型，读回像素并合成 PNG。
+if(PPET_WITH_CUBISM AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/live2d_verify.cpp)
+    add_executable(ppet_live2d_verify tools/live2d_verify.cpp)
+    # 验证工具自己创建 GLFW 窗口 + GLEW 上下文，因此需要直接链接 GL/GLFW。
+    target_link_libraries(ppet_live2d_verify PRIVATE
+        ppet_model
+        ${PPET_GLEW_TARGET}
+        ${PPET_GLFW_TARGET}
+        ${OPENGL_LIBRARIES})
+    # stb_image_write 用于把渲染结果导出成 PNG 做人工确认。
+    target_include_directories(ppet_live2d_verify PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb)
+    # 第三方头文件的告警不参与本项目的严格告警。
+    if(NOT MSVC)
+        set_source_files_properties(tools/live2d_verify.cpp
+                                    PROPERTIES COMPILE_OPTIONS "-w")
+    endif()
+endif()
+
 # ---------------------------------------------------------------------------
 # 测试
 # ---------------------------------------------------------------------------
@@ -383,6 +497,16 @@ enable_testing()
 
 add_executable(ppet_pmx_test tools/pmx_test.cpp)
 target_link_libraries(ppet_pmx_test PRIVATE ppet_model)
+
+# ZIP 模型包导入测试：解压、定位模型、幂等性与非法输入。
+add_executable(ppet_zip_test
+    tools/zip_test.cpp
+    src/core/FileIO.cpp
+    src/core/Log.cpp
+    src/core/ModelPackage.cpp
+    src/core/ZipArchive.cpp
+)
+target_link_libraries(ppet_zip_test PRIVATE ppet_zlib)
 
 add_executable(ppet_pmx_fuzz tools/pmx_fuzz.cpp src/model/pmx/PmxParser.cpp)
 target_link_libraries(ppet_pmx_fuzz PRIVATE ppet_model)
@@ -460,4 +584,28 @@ if(TARGET ppet_settings_panel_smoke)
     set_tests_properties(settings_panel_smoke PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         SKIP_RETURN_CODE 2)
+endif()
+
+# ZIP 模型包导入测试：需要一个测试用 zip。
+# 测试包由 tools/gen_test_zip.py 生成（含一个最小 PMX 与一张贴图），
+# 生成后再运行导入测试。
+set(PPET_TEST_ZIP ${CMAKE_CURRENT_BINARY_DIR}/testdata/model_package.zip)
+if(TARGET ppet_zip_test)
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND AND
+       EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/gen_test_zip.py)
+        add_test(NAME zip_package_test
+                 COMMAND ${Python3_EXECUTABLE}
+                         ${CMAKE_CURRENT_SOURCE_DIR}/tools/gen_test_zip.py
+                         ${PPET_TEST_ZIP})
+        set_tests_properties(zip_package_test PROPERTIES
+            FIXTURES_SETUP ppet_zip_fixture)
+
+        add_test(NAME zip_import_test
+                 COMMAND $<TARGET_FILE:ppet_zip_test> ${PPET_TEST_ZIP}
+                 WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+        set_tests_properties(zip_import_test PROPERTIES
+            FIXTURES_REQUIRED ppet_zip_fixture
+            SKIP_RETURN_CODE 2)
+    endif()
 endif()

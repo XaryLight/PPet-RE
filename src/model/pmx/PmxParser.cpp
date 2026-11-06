@@ -24,10 +24,11 @@
 
 #include <algorithm>
 #include <cstring>
-#include <fstream>
 #include <limits>
 #include <sstream>
 #include <utility>
+
+#include "core/FileIO.hpp"
 
 namespace ppet::pmx {
 namespace {
@@ -1190,26 +1191,16 @@ bool ParsePmx(const std::string& path, PmxDocument& out, std::string& error) {
     out = PmxDocument{};
     error.clear();
 
-    std::ifstream file(path, std::ios::binary);
-    if (!file) {
+    // 用跨平台读取接口：Windows 上 std::ifstream 的窄字符路径打不开中文路径
+    // （例如 "H:/Downloads/深空之眼…/白衣1.0.pmx"），必须走宽字符 API。
+    std::vector<unsigned char> buffer;
+    if (!ReadFileBytes(path, buffer)) {
         error = "无法打开 PMX 文件：" + path;
         return false;
     }
-    file.seekg(0, std::ios::end);
-    const std::streamoff fileSize = file.tellg();
-    if (fileSize < 0) {
-        error = "无法读取 PMX 文件大小：" + path;
-        return false;
-    }
     // 200 MB 足以容纳任何合法的 PMX 模型。
-    if (fileSize > 200LL * 1024 * 1024) {
+    if (buffer.size() > 200u * 1024u * 1024u) {
         error = "PMX 文件过大（超过 200 MB），已拒绝加载";
-        return false;
-    }
-    file.seekg(0, std::ios::beg);
-    std::vector<unsigned char> buffer(static_cast<std::size_t>(fileSize));
-    if (fileSize > 0 && !file.read(reinterpret_cast<char*>(buffer.data()), fileSize)) {
-        error = "读取 PMX 文件失败：" + path;
         return false;
     }
 

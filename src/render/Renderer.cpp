@@ -22,6 +22,7 @@
 
 #include <GL/glew.h>
 
+#include "core/FileIO.hpp"
 #include "render/RenderUtils.hpp"
 
 // ---------------------------------------------------------------------------
@@ -753,22 +754,31 @@ bool Texture::Create(const unsigned char* pixels, int width, int height, int cha
 }
 
 bool Texture::LoadFromFile(const std::string& path, bool srgb, bool mipmap) {
-    if (path.empty()) return false;
+  if (path.empty()) return false;
 
-    // 统一解码成 RGBA 四通道，渲染层不需要区分原始通道数。
-    int width = 0;
-    int height = 0;
-    int channels = 0;
-    unsigned char* pixels = ppet_stbi_load(path.c_str(), &width, &height, &channels, 4);
-    if (pixels == nullptr) {
-        // 文件不存在或解码失败：不抛异常，调用方回退到纯色。
-        return false;
-    }
+  // 先把文件读进内存再解码：
+  // stb_image 的 stbi_load 走的是窄字符路径，在 Windows 上打不开
+  // 含中文的目录（例如 "H:/Downloads/深空之眼…/tex.png"），
+  // 而贴图缺失是静默回退纯色——这正是「模型加载了但画面空白」的隐形原因。
+  std::vector<unsigned char> bytes;
+  if (!ReadFileBytes(path, bytes) || bytes.empty()) return false;
 
-    const bool ok = Create(pixels, width, height, 4, srgb, mipmap);
-    // 解码出来的内存必须释放，否则每次加载贴图都会泄漏。
-    ppet_stbi_image_free(pixels);
-    return ok;
+  // 统一解码成 RGBA 四通道，渲染层不需要区分原始通道数。
+  int width = 0;
+  int height = 0;
+  int channels = 0;
+  unsigned char* pixels =
+      ppet_stbi_load_from_memory(bytes.data(), static_cast<int>(bytes.size()),
+                                 &width, &height, &channels, 4);
+  if (pixels == nullptr) {
+    // 文件不存在或解码失败：不抛异常，调用方回退到纯色。
+    return false;
+  }
+
+  const bool ok = Create(pixels, width, height, 4, srgb, mipmap);
+  // 解码出来的内存必须释放，否则每次加载贴图都会泄漏。
+  ppet_stbi_image_free(pixels);
+  return ok;
 }
 
 void Texture::Bind(unsigned int unit) const {

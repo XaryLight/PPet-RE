@@ -478,7 +478,7 @@ void SettingsPanel::OpenImportDialog() {
     const Strings& s = strings ? *strings : empty;
     const QString filter = ToQString(
         s.modelFileFilter.empty()
-            ? "Model files (*.json *.pmx *.vrm *.model3.json)"
+            ? "Model files (*.json *.pmx *.vrm *.model3.json *.zip)"
             : s.modelFileFilter);
     const QString path = QFileDialog::getOpenFileName(
         impl_->dialog, ToQString(s.importModel), QString(), filter);

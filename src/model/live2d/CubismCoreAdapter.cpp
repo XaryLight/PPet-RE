@@ -24,6 +24,7 @@
 //
 //   桩与真实 SDK 提供**完全同名同签名**的 csm* 函数，
 //   所以下面的代码在两种情况下是同一份源码，不需要条件编译。
+#include "core/FileIO.hpp"
 #include "model/live2d/CubismCore.hpp"
 
 #include <algorithm>
@@ -31,7 +32,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
-#include <fstream>
 #include <string>
 #include <vector>
 
@@ -79,15 +79,8 @@ void FreeAligned(void* ptr) {
 
 /// 读取整个文件。
 bool ReadWholeFile(const std::string& path, std::vector<unsigned char>& out) {
-    std::ifstream file(path, std::ios::binary);
-    if (!file) return false;
-    file.seekg(0, std::ios::end);
-    const std::streamoff size = file.tellg();
-    if (size <= 0) return false;
-    file.seekg(0, std::ios::beg);
-    out.resize(static_cast<std::size_t>(size));
-    if (!file.read(reinterpret_cast<char*>(out.data()), size)) return false;
-    return true;
+    // 走跨平台读取接口：Windows 上窄字符路径打不开含中文的模型目录。
+    return ReadFileBytes(path, out);
 }
 
 }  // namespace
@@ -440,7 +433,9 @@ bool GetDrawable(const Model* model, int index, Drawable& out) {
     out.opacity = opacities ? opacities[index] : 1.0f;
 
     // --- 渲染顺序 ---
-    const int* renderOrders = csmGetDrawableRenderOrders(model->model_);
+    // 真实 SDK 提供 csmGetRenderOrders(model) 返回全部部件的渲染顺序数组；
+    // 桩也按同名函数提供，统一通过 index 取第 index 个部件的顺序。
+    const int* renderOrders = csmGetRenderOrders(model->model_);
     out.renderOrder = renderOrders ? renderOrders[index] : index;
 
     // --- 混合模式与双面标志 ---

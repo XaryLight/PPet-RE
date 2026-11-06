@@ -1,11 +1,11 @@
 // PPet - C++ 移植版
 // Live2D 模型清单解析实现。
+#include "core/FileIO.hpp"
 #include "model/live2d/Live2DManifest.hpp"
 
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
-#include <fstream>
 #include <system_error>
 
 #include <nlohmann/json.hpp>
@@ -238,12 +238,13 @@ bool ParseModel3Json(const std::string& model3Path, Live2DManifest& out, std::st
 
     nlohmann::json doc;
     try {
-        std::ifstream file(model3Path);
-        if (!file) {
+        // 走跨平台读取接口：Windows 上窄字符路径打不开含中文的模型目录。
+        std::string text;
+        if (!ReadFileText(model3Path, text)) {
             outError = "无法打开模型配置文件：" + model3Path;
             return false;
         }
-        file >> doc;
+        doc = nlohmann::json::parse(text);
     } catch (const nlohmann::json::exception& e) {
         outError = std::string("模型配置文件不是合法 JSON：") + e.what();
         return false;

@@ -4,8 +4,8 @@
 
 #include <cstdlib>
 #include <filesystem>
-#include <fstream>
 
+#include "core/FileIO.hpp"
 #include "nlohmann/json.hpp"
 
 namespace ppet {
@@ -57,15 +57,16 @@ bool ConfigStore::Load(const std::string& path, std::string& error) {
         return true;
     }
 
-    std::ifstream in(path);
-    if (!in) {
+    // 走跨平台读取接口：Windows 上窄字符路径打不开含中文的路径。
+    std::string text;
+    if (!ReadFileText(path, text)) {
         error = "无法打开配置文件：" + path;
         return false;
     }
 
     json j;
     try {
-        in >> j;
+        j = json::parse(text);
     } catch (const json::exception& e) {
         error = std::string("配置文件解析失败：") + e.what();
         return false;
@@ -160,15 +161,9 @@ bool ConfigStore::Save(const std::string& path, std::string& error) const {
     j["trackingRadius"] = config_.trackingRadius;
     j["maxTrackingAngle"] = config_.maxTrackingAngle;
 
-    std::ofstream out(path, std::ios::trunc);
-    if (!out) {
+    // 走跨平台写入接口：Windows 上窄字符路径无法写入含中文的目录。
+    if (!WriteFileText(path, j.dump(4))) {
         error = "无法写入配置文件：" + path;
-        return false;
-    }
-    out << j.dump(4);
-    out.close();
-    if (!out) {
-        error = "配置文件写入过程中出错：" + path;
         return false;
     }
     return true;

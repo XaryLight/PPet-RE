@@ -45,7 +45,7 @@ Strings GetStrings(Language lang) {
         s.modelLoadFailed = "模型加载失败";
         s.selectModelFile = "请选择模型配置文件";
         s.importButton = "导入模型";
-        s.modelFileFilter = "模型文件 (*.json *.pmx *.vrm *.model3.json)";
+        s.modelFileFilter = "模型文件 (*.json *.pmx *.vrm *.model3.json *.zip)";
         s.aboutText = "PPet - 桌面宠物（C++ 移植版）\n支持 Live2D / PMX / VRM 模型";
         s.modelTypeLive2D = "Live2D";
         s.modelTypePmx = "PMX";
@@ -90,7 +90,7 @@ Strings GetStrings(Language lang) {
         s.modelLoadFailed = "Failed to load model";
         s.selectModelFile = "Please select a model configuration file";
         s.importButton = "Import model";
-        s.modelFileFilter = "Model files (*.json *.pmx *.vrm *.model3.json)";
+        s.modelFileFilter = "Model files (*.json *.pmx *.vrm *.model3.json *.zip)";
         s.aboutText = "PPet - Desktop Pet (C++ port)\nSupports Live2D / PMX / VRM models";
         s.modelTypeLive2D = "Live2D";
         s.modelTypePmx = "PMX";
