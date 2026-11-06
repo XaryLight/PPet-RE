@@ -12,10 +12,12 @@
 #include <filesystem>
 #include <vector>
 
-// GLEW 必须排在 GLFW 之前：glfw3.h 会先包含 GL/gl.h，
-// 而 glew.h 要求自己是第一个包含 GL 头的文件，否则报
-// “gl.h included before glew.h”。
-#include <GL/glew.h>
+// ImGui 的 OpenGL3 后端自带最小化加载器 imgl3w（imgui_impl_opengl3.h 内部
+// 在 ImGui_ImplOpenGL3_Init 里调用 imgl3wInit 完成 GL 函数加载），
+// 不需要也不应该使用 GLEW：GLEW 是全局单例，在「第二个」GL 上下文里重新
+// glewInit() 既可能失败（导致本函数返回 false、设置窗口永远打不开），
+// 又会覆盖主窗口 GLEW 的全局函数指针，破坏主窗口渲染。
+// 因此在设置窗口里完全不碰 GLEW，只依赖 imgl3w 加载的 GL 入口。
 #include <GLFW/glfw3.h>
 
 #include "imgui.h"
@@ -25,6 +27,7 @@
 
 #include "core/Config.hpp"
 #include "core/I18n.hpp"
+#include "core/Log.hpp"
 #include "platform/FileDialog.hpp"
 #include "platform/Window.hpp"
 
@@ -83,6 +86,12 @@ bool SettingsPanel::Initialize(Window* mainWindow, std::string& error) {
     // GLFW 已由主窗口初始化；不要再次 glfwInit/glfwTerminate，否则会破坏主窗口。
     impl_->mainWindow = mainWindow ? mainWindow->Handle() : nullptr;
 
+    // 关键：主窗口创建时设置过一批 GLFW 窗口提示（无边框 / 隐藏 / 透明 / 置顶 /
+    // 不抢焦点……），这些提示是「全局态」会遗留到下一次 glfwCreateWindow。
+    // 必须先重置为默认，否则设置窗口会继承「无边框」「隐藏」等属性，
+    // 看起来像坏掉的窗口，甚至在某些情况下创建失败。
+    glfwDefaultWindowHints();
+
     // 与主窗口一致的 3.3 Core 上下文，保证 ImGui 的 GL3 后端可用。
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
@@ -90,22 +99,23 @@ bool SettingsPanel::Initialize(Window* mainWindow, std::string& error) {
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
     glfwWindowHint(GLFW_TRANSPARENT_FRAMEBUFFER, GLFW_FALSE);
     glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
+    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);  // 先隐藏，Show() 时再显示，避免闪一下
     glfwWindowHint(GLFW_FLOATING, GLFW_TRUE);  // 设置窗口默认置顶
 
-    GLFWwindow* w = glfwCreateWindow(800, 600, "PPet", nullptr, nullptr);
+    GLFWwindow* w = glfwCreateWindow(800, 600, "PPet 设置", nullptr, nullptr);
     if (!w) {
-        error = "无法创建设置窗口";
+        const char* glfwErr = nullptr;
+        glfwGetError(&glfwErr);  // GLFW 3.3+ 提供，拿到具体失败原因
+        error = std::string("无法创建设置窗口（") +
+                (glfwErr ? glfwErr : "未知原因") + "）";
         return false;
     }
     impl_->window = w;
 
-    // 新窗口拥有独立 GL 上下文，必须在此上下文里初始化 GLEW 与 ImGui 后端。
+    // 新窗口拥有独立 GL 上下文，ImGui 后端需要在此上下文里初始化。
+    // 注意：这里 **不要** 调用 glewInit()（见文件顶部说明）。GL 函数由
+    // ImGui 自带的 imgl3w 加载器在 ImGui_ImplOpenGL3_Init 内部完成加载。
     glfwMakeContextCurrent(w);
-    glewExperimental = GL_TRUE;
-    if (glewInit() != GLEW_OK) {
-        error = "设置窗口 GLEW 初始化失败";
-        return false;
-    }
 
     // ImGui 全局唯一上下文。
     ImGui::CreateContext();
@@ -115,12 +125,15 @@ bool SettingsPanel::Initialize(Window* mainWindow, std::string& error) {
     io.IniFilename = nullptr;
 
     // 默认字体不含中文，合并一个 CJK 字体使界面中文可见。
+    // 找不到字体只影响中文显示（界面变 ASCII），不阻断窗口创建。
     io.Fonts->AddFontDefault();
     if (const char* cjk = FindCjkFont()) {
         ImFontConfig cfg;
         cfg.MergeMode = true;
         io.Fonts->AddFontFromFileTTF(cjk, 16.0f, &cfg,
                                      io.Fonts->GetGlyphRangesChineseFull());
+    } else {
+        PPET_LOG("未找到系统中文字体，设置界面将不显示中文（仍可正常使用）");
     }
 
     // GLFW 后端绑定到设置窗口。
@@ -216,7 +229,7 @@ void SettingsPanel::BuildUi() {
                               path, dlgError)) {
                 if (onImportModel) onImportModel(path);
             } else if (!dlgError.empty()) {
-                std::fprintf(stderr, "[PPet] %s\n", dlgError.c_str());
+                PPET_LOG_ERR("%s", dlgError.c_str());
             }
         }
         ImGui::SameLine();

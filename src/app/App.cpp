@@ -17,6 +17,7 @@
 #endif
 
 #include "core/Math.hpp"
+#include "core/Log.hpp"
 #include "platform/AutoStart.hpp"
 #include "platform/FileDialog.hpp"
 #include "platform/OpenExternal.hpp"
@@ -61,7 +62,7 @@ bool App::Initialize(std::string& error) {
     const bool firstLaunch = !std::filesystem::exists(configPath_);
     if (!configStore_.Load(configPath_, error)) {
         // 配置损坏不应阻止启动：记录错误并使用默认配置继续。
-        std::fprintf(stderr, "[PPet] %s\n", error.c_str());
+        PPET_LOG_ERR("%s\n", error.c_str());
         error.clear();
     }
     strings_ = GetStrings(configStore_.config().language);
@@ -128,7 +129,7 @@ bool App::Initialize(std::string& error) {
         std::string cursorError;
         if (!cursorTracker_.Start(cursorError)) {
             // 追踪失败不应阻止启动，降级为窗口内追踪。
-            std::fprintf(stderr, "[PPet] 全局鼠标追踪不可用：%s\n", cursorError.c_str());
+            PPET_LOG_ERR("全局鼠标追踪不可用：%s\n", cursorError.c_str());
             configStore_.config().fullscreenTracking = false;
         }
     }
@@ -137,7 +138,7 @@ bool App::Initialize(std::string& error) {
     std::string trayError;
     if (!tray_.Create(trayError)) {
         // Linux 下没有托盘宿主是正常情况，程序继续运行。
-        std::fprintf(stderr, "[PPet] %s\n", trayError.c_str());
+        PPET_LOG_ERR("%s\n", trayError.c_str());
     }
     tray_.SetItemCallback([this](const std::string& id, bool checked) {
         OnTrayItem(id, checked);
@@ -158,7 +159,7 @@ bool App::Initialize(std::string& error) {
     settingsPanel_.onImportModel = [this](const std::string& path) {
         std::string err;
         if (!LoadModel(path, err)) {
-            std::fprintf(stderr, "[PPet] %s: %s\n", strings_.importFailed.c_str(), err.c_str());
+            PPET_LOG_ERR("%s: %s\n", strings_.importFailed.c_str(), err.c_str());
         } else {
             SaveConfig();
         }
@@ -175,7 +176,7 @@ bool App::Initialize(std::string& error) {
         if (index >= 0 && index < static_cast<int>(list.size())) {
             std::string err;
             if (!LoadModel(list[index], err)) {
-                std::fprintf(stderr, "[PPet] %s: %s\n", strings_.modelLoadFailed.c_str(),
+                PPET_LOG_ERR("%s: %s\n", strings_.modelLoadFailed.c_str(),
                              err.c_str());
             }
         }
@@ -194,7 +195,7 @@ bool App::Initialize(std::string& error) {
     };
     if (!settingsPanel_.Initialize(&window_, settingsError)) {
         // 设置界面不可用不应阻止启动：记录错误并继续。
-        std::fprintf(stderr, "[PPet] %s: %s\n", strings_.settings.c_str(), settingsError.c_str());
+        PPET_LOG_ERR("%s: %s\n", strings_.settings.c_str(), settingsError.c_str());
     } else if (firstLaunch) {
         settingsPanel_.Show();
     }
@@ -204,9 +205,16 @@ bool App::Initialize(std::string& error) {
     if (!cfg.modelPath.empty()) {
         std::string modelError;
         if (!LoadModel(cfg.modelPath, modelError)) {
-            std::fprintf(stderr, "[PPet] %s: %s\n", strings_.modelLoadFailed.c_str(),
+            PPET_LOG_ERR("%s: %s\n", strings_.modelLoadFailed.c_str(),
                          modelError.c_str());
         }
+    }
+
+    // 没有任何模型可渲染时，透明主窗口在桌面上完全不可见。
+    // 为避免「程序启动了却什么都没有」的困惑，这里保证设置窗口可见，
+    // 让用户有入口去导入模型。设置面板初始化失败时 Show() 会自动 no-op，安全。
+    if (configStore_.config().modelPath.empty()) {
+        settingsPanel_.Show();
     }
 
     running_ = true;
@@ -365,13 +373,13 @@ void App::OnTrayItem(const std::string& id, bool checked) {
                            "*.pmx;*.vrm;*.json", "", owner, path, dlgError)) {
             std::string err;
             if (!LoadModel(path, err)) {
-                std::fprintf(stderr, "[PPet] %s: %s\n", strings_.importFailed.c_str(),
+                PPET_LOG_ERR("%s: %s\n", strings_.importFailed.c_str(),
                              err.c_str());
             } else {
                 SaveConfig();
             }
         } else if (!dlgError.empty()) {
-            std::fprintf(stderr, "[PPet] %s\n", dlgError.c_str());
+            PPET_LOG_ERR("%s\n", dlgError.c_str());
         }
     } else if (id == kIdLangZh) {
         cfg.language = Language::Chinese;
@@ -388,11 +396,11 @@ void App::OnTrayItem(const std::string& id, bool checked) {
         if (!cfg.modelPath.empty()) {
             std::string err;
             if (!LoadModel(cfg.modelPath, err)) {
-                std::fprintf(stderr, "[PPet] %s\n", err.c_str());
+                PPET_LOG_ERR("%s\n", err.c_str());
             }
         }
     } else if (id == kIdDebug) {
-        std::printf("[PPet] Debug: desktop=%dx%d+%d+%d, tracker=%d, model=%s\n",
+        PPET_LOG("Debug: desktop=%dx%d+%d+%d, tracker=%d, model=%s\n",
                     cursorTracker_.Desktop().width, cursorTracker_.Desktop().height,
                     cursorTracker_.Desktop().x, cursorTracker_.Desktop().y,
                     static_cast<int>(cursorTracker_.IsRunning()),
@@ -401,13 +409,13 @@ void App::OnTrayItem(const std::string& id, bool checked) {
         cfg.openAtLogin = checked;
         std::string err;
         if (!SetAutoStart(checked, err)) {
-            std::fprintf(stderr, "[PPet] %s\n", err.c_str());
+            PPET_LOG_ERR("%s\n", err.c_str());
             cfg.openAtLogin = !checked;  // 设置失败则回滚勾选状态
         }
     } else if (id == kIdFeedback) {
         std::string openError;
         if (!OpenExternalUrl("https://github.com/zenghongtu/PPet/issues", openError)) {
-            std::fprintf(stderr, "[PPet] %s\n", openError.c_str());
+            PPET_LOG_ERR("%s\n", openError.c_str());
         }
     } else if (id == kIdAbout) {
         // 「关于」打开设置窗口（面板内含「关于」折叠区）。
@@ -442,7 +450,7 @@ void App::SwitchModel(int delta) {
     const std::string path = cfg.modelList[static_cast<std::size_t>(idx)];
     std::string err;
     if (!LoadModel(path, err)) {
-        std::fprintf(stderr, "[PPet] %s\n", err.c_str());
+        PPET_LOG_ERR("%s\n", err.c_str());
         return;
     }
     SaveConfig();
@@ -459,7 +467,7 @@ void App::SaveConfig() {
 
     std::string err;
     if (!configStore_.Save(configPath_, err)) {
-        std::fprintf(stderr, "[PPet] %s\n", err.c_str());
+        PPET_LOG_ERR("%s\n", err.c_str());
     }
 }
 

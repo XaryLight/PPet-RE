@@ -221,6 +221,7 @@ endif()
 set(PPET_CORE_SOURCES
     src/core/Config.cpp
     src/core/I18n.cpp
+    src/core/Log.cpp
     src/model/Model.cpp
     src/app/App.cpp
     src/ui/SettingsPanel.cpp
@@ -301,6 +302,7 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/settings_panel_smoke.cpp)
         tools/settings_panel_smoke.cpp
         src/ui/SettingsPanel.cpp
         src/core/I18n.cpp
+        src/core/Log.cpp
     )
     target_include_directories(ppet_settings_panel_smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_link_libraries(ppet_settings_panel_smoke PRIVATE ppet_platform ppet_imgui)
@@ -312,6 +314,7 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/settings_panel_preview.cpp)
         tools/settings_panel_preview.cpp
         src/ui/SettingsPanel.cpp
         src/core/I18n.cpp
+        src/core/Log.cpp
     )
     target_include_directories(ppet_settings_panel_preview PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src

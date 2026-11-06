@@ -14,6 +14,7 @@
 #endif
 
 #include "app/App.hpp"
+#include "core/Log.hpp"
 
 int main(int argc, char** argv) {
     // 原 Electron 版在 Win7 上禁用硬件加速；此处保留一个通用的兼容开关位，
@@ -26,15 +27,20 @@ int main(int argc, char** argv) {
     SetConsoleCP(CP_UTF8);
 #endif
 
+    // 调试日志落地到 ./last.log（UTF-8 + BOM，避免中文被当成 GBK 显示成乱码）。
+    ppet::Logger::Init("last.log");
+
     ppet::App app;
 
     std::string error;
     if (!app.Initialize(error)) {
-        std::fprintf(stderr, "[PPet] 启动失败：%s\n", error.c_str());
+        PPET_LOG_ERR("启动失败：%s\n", error.c_str());
         return 1;
     }
 
     app.Run();
     app.Shutdown();
+
+    ppet::Logger::Shutdown();
     return 0;
 }
