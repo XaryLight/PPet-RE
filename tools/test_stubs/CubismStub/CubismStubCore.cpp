@@ -9,7 +9,7 @@
 //     因此适配层「释放模型 = 释放内存块」的约定对桩与真 SDK 都成立；
 //   - 同样的锯齿数组语义（每个 drawable 拥有独立的顶点/UV/索引数组，
 //     索引空间按 drawable 独立）；
-//   - 同样的绘制顺序语义（csmGetDrawableRenderOrders 给出实际渲染顺序）。
+//   - 同样的绘制顺序语义（csmGetRenderOrders 给出实际渲染顺序）。
 //
 // 差异仅在数据内容：真实 SDK 解析二进制 .moc3，本桩解析本项目自定义的
 // 二进制桩格式（格式说明见 CubismStubCore.h 顶部注释）。
@@ -667,9 +667,13 @@ const int* csmGetDrawableDrawOrders(const csmModel* model) {
     return model->drawOrders;
 }
 
-const int* csmGetDrawableRenderOrders(const csmModel* model) {
+const int* csmGetRenderOrders(const csmModel* model) {
     if (!model || model->drawableCount == 0) return nullptr;
     return model->renderOrders;
+}
+
+const int* csmGetDrawableRenderOrders(const csmModel* model) {
+    return csmGetRenderOrders(model);
 }
 
 const float* csmGetDrawableOpacities(const csmModel* model) {

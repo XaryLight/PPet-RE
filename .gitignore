@@ -50,3 +50,6 @@ screenshots/
 
 # ImGui 运行时产生的布局文件（已通过 io.IniFilename = nullptr 禁用）
 imgui.ini
+
+# 运行时调试日志（程序自动写入当前工作目录）
+last.log

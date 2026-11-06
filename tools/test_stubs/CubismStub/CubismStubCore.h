@@ -226,6 +226,12 @@ const int* csmGetDrawableTextureIndices(const csmModel* model);
 const int* csmGetDrawableDrawOrders(const csmModel* model);
 
 /// 部件 RenderOrder 数组。
+///
+/// 对应真实 SDK 6.x 的 csmGetRenderOrders。
+/// 历史版本曾用 csmGetDrawableRenderOrders，这里保留同名别名以便旧代码继续编译。
+const int* csmGetRenderOrders(const csmModel* model);
+
+/// csmGetRenderOrders 的旧别名。
 const int* csmGetDrawableRenderOrders(const csmModel* model);
 
 /// 部件不透明度数组。

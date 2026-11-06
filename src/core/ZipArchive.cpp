@@ -205,10 +205,74 @@ bool CheckSize(const CentralEntry& entry, std::size_t actual) {
 /// 把条目名里的反斜杠统一成 '/',并拒绝路径穿越。
 std::string NormalizeEntryName(const std::string& raw) {
     std::string name = raw;
-    for (char& c : name) {
-        if (c == '\\') c = '/';
-    }
+    for (char& c : name) c = (c == '\\') ? '/' : c;
     return name;
+}
+
+/// 判断一段字节是否是合法的 UTF-8。
+bool IsValidUtf8(const std::string& s) {
+    const auto* p = reinterpret_cast<const unsigned char*>(s.data());
+    const std::size_t n = s.size();
+    std::size_t i = 0;
+    while (i < n) {
+        const unsigned char c = p[i];
+        std::size_t extra = 0;
+        unsigned int code = 0;
+        if (c < 0x80) {
+            ++i;
+            continue;
+        } else if ((c & 0xE0) == 0xC0) {
+            extra = 1;
+            code = c & 0x1Fu;
+        } else if ((c & 0xF0) == 0xE0) {
+            extra = 2;
+            code = c & 0x0Fu;
+        } else if ((c & 0xF8) == 0xF0) {
+            extra = 3;
+            code = c & 0x07u;
+        } else {
+            return false;  // 0x80..0xBF 是孤立续字节，0xF8+ 非法。
+        }
+        if (i + extra >= n) return false;
+        for (std::size_t k = 1; k <= extra; ++k) {
+            const unsigned char cc = p[i + k];
+            if ((cc & 0xC0) != 0x80) return false;
+            code = (code << 6) | (cc & 0x3Fu);
+        }
+        // 拒绝过长编码与代理区，避免解码出非法码点。
+        if (extra == 1 && code < 0x80) return false;
+        if (extra == 2 && code < 0x800) return false;
+        if (extra == 3 && code < 0x10000) return false;
+        if (code > 0x10FFFF) return false;
+        if (code >= 0xD800 && code <= 0xDFFF) return false;
+        i += extra + 1;
+    }
+    return true;
+}
+
+/// 条目名的编码归一化：统一成 UTF-8。
+///
+/// ZIP 规范里，通用位标志 bit 11（0x0800）为 1 时文件名是 UTF-8；
+/// 为 0 时按传统解释（CP437 或本地代码页）。
+/// 但现实中很多 Windows 压缩工具（尤其是中文版 WinRAR / 资源管理器）
+/// 会把文件名按 GBK/ANSI 存进去却不置该标志位，
+/// 直接当 UTF-8 用会让中文条目名变成乱码。
+///
+/// 处理策略：
+///   - 置了 UTF-8 标志位：按 UTF-8 用；
+///   - 没置标志位但字节本身是合法 UTF-8：也按 UTF-8 用（兼容性最好）；
+///   - 没置标志位且不是合法 UTF-8：按当前系统的 ANSI 代码页解码后再转 UTF-8。
+std::string DecodeEntryName(const std::string& raw, std::uint16_t flags) {
+    constexpr std::uint16_t kFlagUtf8Names = 0x0800;
+    if (flags & kFlagUtf8Names) return raw;
+    if (IsValidUtf8(raw)) return raw;
+
+#if defined(_WIN32)
+    // 用系统 ANSI 代码页（中文系统即 GBK/936）解码，再转成 UTF-8。
+    const std::string decoded = DecodeAnsiToUtf8(raw);
+    if (!decoded.empty()) return decoded;
+#endif
+    return raw;
 }
 
 /// 判断条目是否是目录。
@@ -251,7 +315,7 @@ bool ListZipEntries(const std::string& zipPath, std::vector<ZipEntry>& entries) 
     for (const CentralEntry& entry : central) {
         if (IsDirectoryEntry(entry)) continue;
         ZipEntry item;
-        item.name = NormalizeEntryName(entry.name);
+        item.name = NormalizeEntryName(DecodeEntryName(entry.name, entry.flags));
         item.size = static_cast<std::size_t>(entry.uncompressedSize);
         entries.push_back(std::move(item));
     }
@@ -267,7 +331,7 @@ bool ReadZipEntry(const std::string& zipPath, const std::string& name,
 
     const std::string wanted = NormalizeEntryName(name);
     for (const CentralEntry& entry : central) {
-        if (NormalizeEntryName(entry.name) != wanted) continue;
+        if (NormalizeEntryName(DecodeEntryName(entry.name, entry.flags)) != wanted) continue;
         if (!DecodeEntry(archive, entry, out)) return false;
         return CheckSize(entry, out.size());
     }
@@ -290,21 +354,21 @@ bool ExtractZipToDirectory(const std::string& zipPath, const std::string& destDi
     }
 
     std::error_code ec;
-    fs::create_directories(fs::path(destDir), ec);
+    fs::create_directories(ToFsPath(destDir), ec);
     if (ec) {
         error = "无法创建解压目录：" + destDir;
         return false;
     }
 
     for (const CentralEntry& entry : central) {
-        const std::string name = NormalizeEntryName(entry.name);
+        const std::string name = NormalizeEntryName(DecodeEntryName(entry.name, entry.flags));
         if (name.empty()) continue;
         if (!IsSafeRelativePath(name)) {
             error = "ZIP 包含非法路径，已拒绝解压：" + entry.name;
             return false;
         }
 
-        const fs::path target = fs::path(destDir) / fs::path(name);
+        const fs::path target = ToFsPath(destDir) / ToFsPath(name);
         if (IsDirectoryEntry(entry)) {
             fs::create_directories(target, ec);
             continue;
@@ -315,7 +379,7 @@ bool ExtractZipToDirectory(const std::string& zipPath, const std::string& destDi
         if (!parent.empty()) {
             fs::create_directories(parent, ec);
             if (ec) {
-                error = "无法创建目录：" + parent.string();
+                error = "无法创建目录：" + FromFsPath(parent);
                 return false;
             }
         }
@@ -329,8 +393,9 @@ bool ExtractZipToDirectory(const std::string& zipPath, const std::string& destDi
             error = "条目大小校验失败：" + name;
             return false;
         }
-        if (!WriteFileBytes(target.string(), data)) {
-            error = "无法写入文件：" + target.string();
+        const std::string targetUtf8 = FromFsPath(target);
+        if (!WriteFileBytes(targetUtf8, data)) {
+            error = "无法写入文件：" + targetUtf8;
             return false;
         }
     }

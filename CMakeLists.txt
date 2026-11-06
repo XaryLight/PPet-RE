@@ -508,6 +508,17 @@ add_executable(ppet_zip_test
 )
 target_link_libraries(ppet_zip_test PRIVATE ppet_zlib)
 
+# 中文路径处理测试：验证 UTF-8 路径在文件读写、目录遍历、解压定位各层都不被
+# 系统 ANSI 代码页破坏（Windows 上尤其关键）。
+add_executable(ppet_unicode_path_test
+    tools/unicode_path_test.cpp
+    src/core/FileIO.cpp
+    src/core/Log.cpp
+    src/core/ModelPackage.cpp
+    src/core/ZipArchive.cpp
+)
+target_link_libraries(ppet_unicode_path_test PRIVATE ppet_zlib)
+
 add_executable(ppet_pmx_fuzz tools/pmx_fuzz.cpp src/model/pmx/PmxParser.cpp)
 target_link_libraries(ppet_pmx_fuzz PRIVATE ppet_model)
 
@@ -608,4 +619,11 @@ if(TARGET ppet_zip_test)
             FIXTURES_REQUIRED ppet_zip_fixture
             SKIP_RETURN_CODE 2)
     endif()
+endif()
+
+# 中文路径测试：无需外部素材，可直接运行。
+if(TARGET ppet_unicode_path_test)
+    add_test(NAME unicode_path_test
+             COMMAND $<TARGET_FILE:ppet_unicode_path_test>
+             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 endif()

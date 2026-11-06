@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 
 #if defined(_WIN32)
@@ -34,9 +35,98 @@ std::wstring Utf8ToWide(const std::string& utf8) {
     return wide;
 }
 
+/// UTF-16 → UTF-8。
+std::string WideToUtf8(const std::wstring& wide) {
+    if (wide.empty()) return std::string();
+    const int needed = WideCharToMultiByte(CP_UTF8, 0, wide.c_str(),
+                                            static_cast<int>(wide.size()), nullptr, 0,
+                                            nullptr, nullptr);
+    if (needed <= 0) return std::string();
+    std::string utf8(static_cast<std::size_t>(needed), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, wide.c_str(), static_cast<int>(wide.size()),
+                        utf8.data(), needed, nullptr, nullptr);
+    return utf8;
+}
+
 #endif  // _WIN32
 
 }  // namespace
+
+std::string DecodeAnsiToUtf8(const std::string& ansi) {
+    if (ansi.empty()) return std::string();
+#if defined(_WIN32)
+    // CP_ACP = 系统当前 ANSI 代码页（中文系统通常是 GBK/936）。
+    const int needed = MultiByteToWideChar(CP_ACP, 0, ansi.c_str(),
+                                            static_cast<int>(ansi.size()), nullptr, 0);
+    if (needed <= 0) return std::string();
+    std::wstring wide(static_cast<std::size_t>(needed), L'\0');
+    MultiByteToWideChar(CP_ACP, 0, ansi.c_str(), static_cast<int>(ansi.size()),
+                        wide.data(), needed);
+    return WideToUtf8(wide);
+#else
+    // 其它平台的字节串本身即 UTF-8（POSIX 文件名不做转码）。
+    return ansi;
+#endif
+}
+
+std::string GetEnvVar(const char* name) {
+    if (name == nullptr || *name == '\0') return std::string();
+#if defined(_WIN32)
+    // 宽字符 API：拿到的是 UTF-16，转成 UTF-8 后与项目内部表示一致。
+    const std::wstring wideName = Utf8ToWide(name);
+    if (wideName.empty()) return std::string();
+
+    // 首次调用只查询所需长度。
+    SetLastError(ERROR_SUCCESS);
+    const DWORD needed = GetEnvironmentVariableW(wideName.c_str(), nullptr, 0);
+    if (needed == 0) return std::string();
+
+    std::wstring value(needed, L'\0');
+    const DWORD written = GetEnvironmentVariableW(wideName.c_str(), value.data(), needed);
+    if (written == 0 || written >= needed) {
+        // 环境变量在两次调用之间发生了变化，重试一次。
+        SetLastError(ERROR_SUCCESS);
+        const DWORD again = GetEnvironmentVariableW(wideName.c_str(), nullptr, 0);
+        if (again == 0) return std::string();
+        value.assign(again, L'\0');
+        if (GetEnvironmentVariableW(wideName.c_str(), value.data(), again) == 0) {
+            return std::string();
+        }
+    }
+    // 结尾的 NUL 不算内容。
+    if (!value.empty() && value.back() == L'\0') value.pop_back();
+    return WideToUtf8(value);
+#else
+    const char* value = std::getenv(name);
+    return value != nullptr ? std::string(value) : std::string();
+#endif
+}
+
+std::filesystem::path ToFsPath(const std::string& utf8Path) {
+#if defined(_WIN32)
+    // 显式走 UTF-8 -> UTF-16，避免 MSVC 按 ANSI 代码页解释窄字符串。
+    const std::wstring widePath = Utf8ToWide(utf8Path);
+    if (widePath.empty()) return std::filesystem::path();
+    return std::filesystem::path(widePath);
+#else
+    return std::filesystem::path(utf8Path);
+#endif
+}
+
+std::string FromFsPath(const std::filesystem::path& path) {
+#if defined(_WIN32)
+    // 显式走 UTF-16 -> UTF-8，避免 path::string() 按 ANSI 代码页转换。
+    return WideToUtf8(path.wstring());
+#else
+    return path.string();
+#endif
+}
+
+std::string FromFsPathGeneric(const std::filesystem::path& path) {
+    std::string s = FromFsPath(path);
+    std::replace(s.begin(), s.end(), '\\', '/');
+    return s;
+}
 
 bool ReadFileBytes(const std::string& path, std::vector<std::uint8_t>& out) {
     if (path.empty()) return false;

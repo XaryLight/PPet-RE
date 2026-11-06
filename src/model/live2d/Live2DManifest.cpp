@@ -47,9 +47,9 @@ bool IsModel3FileName(const std::string& name) {
 /// 把路径规范化成绝对路径（不要求文件存在）。
 std::string AbsolutePath(const std::string& path) {
     std::error_code ec;
-    fs::path p = fs::absolute(fs::path(path), ec);
-    if (ec) return fs::path(path).string();
-    return p.lexically_normal().string();
+    fs::path p = fs::absolute(ToFsPath(path), ec);
+    if (ec) return FromFsPath(ToFsPath(path));
+    return FromFsPath(p.lexically_normal());
 }
 
 /// 判断 child 是否位于 base 之内（按路径分量比较，避免 "/a/bc" 被 "/a/b" 误判为子路径）。
@@ -74,8 +74,8 @@ std::string FindModel3InDir(const fs::path& dir) {
     for (const auto& entry : it) {
         std::error_code entryEc;
         if (!entry.is_regular_file(entryEc)) continue;
-        const std::string name = entry.path().filename().string();
-        if (IsModel3FileName(name)) candidates.push_back(entry.path().string());
+        const std::string name = FromFsPath(entry.path().filename());
+        if (IsModel3FileName(name)) candidates.push_back(FromFsPath(entry.path()));
     }
     if (candidates.empty()) return "";
     // 排序后取第一个，保证结果稳定可复现。
@@ -137,22 +137,22 @@ bool ResolveInsideBase(const std::string& baseDir, const std::string& relative,
     if (relative.empty()) return false;
 
     // 绝对路径直接拒绝：模型里的引用必须是相对路径。
-    const fs::path rel(relative);
+    const fs::path rel = ToFsPath(relative);
     if (rel.is_absolute() || rel.has_root_name() || rel.has_root_directory()) return false;
 
     // 含盘符的路径（如 "C:\\xxx"）在 Windows 上也是绝对路径。
     if (relative.size() >= 2 && relative[1] == ':') return false;
 
     std::error_code ec;
-    const fs::path base = fs::weakly_canonical(fs::path(baseDir), ec);
-    const fs::path baseForCompare = ec ? fs::path(baseDir).lexically_normal() : base;
+    const fs::path base = fs::weakly_canonical(ToFsPath(baseDir), ec);
+    const fs::path baseForCompare = ec ? ToFsPath(baseDir).lexically_normal() : base;
 
     const fs::path child = fs::weakly_canonical(baseForCompare / rel, ec);
     const fs::path childForCompare = ec ? (baseForCompare / rel).lexically_normal() : child;
 
     if (!IsInside(baseForCompare, childForCompare)) return false;
 
-    out = childForCompare.string();
+    out = FromFsPath(childForCompare);
     return true;
 }
 
@@ -167,13 +167,13 @@ bool LocateModel3Json(const std::string& path, std::string& outModel3, std::stri
     }
 
     std::error_code ec;
-    const fs::path input(path);
+    const fs::path input = ToFsPath(path);
 
     // 1) 目录：在目录里找 *.model3.json。
     if (fs::is_directory(input, ec)) {
         const std::string found = FindModel3InDir(input);
         if (found.empty()) {
-            outError = "目录 " + input.string() + " 里没有找到 .model3.json 文件";
+            outError = "目录 " + FromFsPath(input) + " 里没有找到 .model3.json 文件";
             return false;
         }
         outModel3 = found;
@@ -216,7 +216,7 @@ bool LocateModel3Json(const std::string& path, std::string& outModel3, std::stri
             outModel3 = found;
             return true;
         }
-        outError = "只找到 " + input.filename().string() +
+        outError = "只找到 " + FromFsPath(input.filename()) +
                    "，但同目录下没有对应的 .model3.json，无法确定纹理与动作";
         return false;
     }
@@ -231,7 +231,7 @@ bool LocateModel3Json(const std::string& path, std::string& outModel3, std::stri
 
 bool ParseModel3Json(const std::string& model3Path, Live2DManifest& out, std::string& outError) {
     std::error_code ec;
-    if (!fs::is_regular_file(fs::path(model3Path), ec)) {
+    if (!fs::is_regular_file(ToFsPath(model3Path), ec)) {
         outError = "模型配置文件不存在：" + model3Path;
         return false;
     }
@@ -268,7 +268,7 @@ bool ParseModel3Json(const std::string& model3Path, Live2DManifest& out, std::st
         return false;
     }
 
-    std::string baseDir = fs::path(model3Path).parent_path().string();
+    std::string baseDir = FromFsPath(ToFsPath(model3Path).parent_path());
     if (baseDir.empty()) baseDir = ".";
 
     // --- moc3 ---------------------------------------------------------------
@@ -282,7 +282,7 @@ bool ParseModel3Json(const std::string& model3Path, Live2DManifest& out, std::st
         outError = "模型引用的 moc 文件路径非法（越出模型目录）：" + mocRelative;
         return false;
     }
-    if (!fs::is_regular_file(fs::path(mocPath), ec)) {
+    if (!fs::is_regular_file(ToFsPath(mocPath), ec)) {
         outError = "moc 文件不存在：" + mocPath;
         return false;
     }
@@ -348,7 +348,7 @@ bool ParseModel3Json(const std::string& model3Path, Live2DManifest& out, std::st
     if (name.empty()) name = JsonString(doc, "name");
     if (name.empty()) {
         // 退回到文件名（去掉 ".model3.json" 后缀）。
-        std::string fileName = fs::path(model3Path).filename().string();
+        std::string fileName = FromFsPath(ToFsPath(model3Path).filename());
         const std::size_t dot = fileName.find_last_of('.');
         if (dot != std::string::npos && dot > 0) fileName = fileName.substr(0, dot);
         name = fileName;

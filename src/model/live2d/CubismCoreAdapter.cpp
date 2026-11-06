@@ -117,8 +117,8 @@ public:
             mocMemory_ = nullptr;
         }
         moc_ = nullptr;
-#endif
         mocSize_ = 0;
+#endif
     }
 
 #if defined(PPET_WITH_CUBISM) || defined(PPET_WITH_CUBISM_STUB)

@@ -29,17 +29,19 @@ std::string ConfigStore::DefaultConfigPath() {
 
 #if defined(_WIN32)
     // Windows 配置目录优先使用 %APPDATA%。
-    if (const char* appData = std::getenv("APPDATA")) {
-        return (fs::path(appData) / "PPet" / "config.json").string();
+    const std::string appData = GetEnvVar("APPDATA");
+    if (!appData.empty()) {
+        return FromFsPath(ToFsPath(appData) / "PPet" / "config.json");
     }
 #else
-    if (const char* home = std::getenv("HOME")) {
+    const std::string home = GetEnvVar("HOME");
+    if (!home.empty()) {
 #if defined(__APPLE__)
-        return (fs::path(home) / "Library" / "Application Support" / "PPet" / "config.json").string();
+        return FromFsPath(ToFsPath(home) / "Library" / "Application Support" / "PPet" / "config.json");
 #else
-        const char* xdg = std::getenv("XDG_CONFIG_HOME");
-        if (xdg && *xdg) return (fs::path(xdg) / "PPet" / "config.json").string();
-        return (fs::path(home) / ".config" / "PPet" / "config.json").string();
+        const std::string xdg = GetEnvVar("XDG_CONFIG_HOME");
+        if (!xdg.empty()) return FromFsPath(ToFsPath(xdg) / "PPet" / "config.json");
+        return FromFsPath(ToFsPath(home) / ".config" / "PPet" / "config.json");
 #endif
     }
 #endif
@@ -52,7 +54,7 @@ bool ConfigStore::Load(const std::string& path, std::string& error) {
     namespace fs = std::filesystem;
 
     std::error_code ec;
-    if (!fs::exists(path, ec)) {
+    if (!fs::exists(ToFsPath(path), ec)) {
         // 首次运行，使用默认值即可，不视为错误。
         return true;
     }
@@ -134,11 +136,11 @@ bool ConfigStore::Save(const std::string& path, std::string& error) const {
     namespace fs = std::filesystem;
 
     std::error_code ec;
-    const fs::path p(path);
+    const fs::path p = ToFsPath(path);
     if (p.has_parent_path()) {
         fs::create_directories(p.parent_path(), ec);
         if (ec) {
-            error = "无法创建配置目录：" + p.parent_path().string() + "（" + ec.message() + "）";
+            error = "无法创建配置目录：" + FromFsPath(p.parent_path()) + "（" + ec.message() + "）";
             return false;
         }
     }

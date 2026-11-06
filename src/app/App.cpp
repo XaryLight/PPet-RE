@@ -54,7 +54,7 @@ bool App::Initialize(std::string& error) {
     configPath_ = ConfigStore::DefaultConfigPath();
     // 首次启动（配置文件不存在）时自动弹出设置面板，
     // 否则新用户面对的是一个透明的空窗口，不知道该做什么。
-    const bool firstLaunch = !std::filesystem::exists(configPath_);
+    const bool firstLaunch = !std::filesystem::exists(ToFsPath(configPath_));
     if (!configStore_.Load(configPath_, error)) {
         // 配置损坏不应阻止启动：记录错误并使用默认配置继续。
         PPET_LOG_ERR("%s\n", error.c_str());

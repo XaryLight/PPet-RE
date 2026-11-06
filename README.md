@@ -49,6 +49,23 @@
 > Cubism 2 的老格式（`.moc` + `.model.json`）**不在支持范围内**——Cubism 5/6 的 Core 只认 `.moc3`。
 > 请先用 Live2D Cubism Converter 把模型转换为 `.moc3` 格式再导入。
 
+### 中文路径支持
+
+Windows 上模型的路径经常带中文（下载目录、模型包名都可能是中文）。
+这里对路径处理做了统一加固，Windows / Linux / macOS 行为一致：
+
+| 环节 | 处理方式 |
+| --- | --- |
+| 文件读写 | Windows 走 `CreateFileW` 宽字符 API（不经过 ANSI 代码页），Linux/macOS 直接用窄字符 |
+| 目录遍历 / 建目录 | `std::filesystem::path` 统一由 `ToFsPath()` 从 UTF-8 构造，Windows 上显式转 UTF-16 |
+| 路径回写（存配置、日志） | 统一由 `FromFsPath()` 转回 UTF-8，避免「读得到、存回去变乱码」 |
+| 环境变量（`%APPDATA%` / `$HOME`） | Windows 用 `GetEnvironmentVariableW` 宽字符接口，再转 UTF-8 |
+| ZIP 条目名 | 按 UTF-8 标志位（bit 11）判定；未置位但字节本身是合法 UTF-8 时也按 UTF-8 解析，否则按系统 ANSI 代码页解码 |
+
+> MSVC 的 `std::filesystem::path` 从窄字符串构造时按 **ANSI 代码页**（中文系统即 GBK）解释字节，
+> 与 MinGW 行为不同。本项目不直接用 `fs::path(std::string)`，而是通过上表的辅助函数显式转换，
+> 因此两种编译器表现一致。
+
 ---
 
 ## 构建
@@ -253,6 +270,7 @@ ctest --output-on-failure
 - **端到端集成测试**：真实模型文件 → 后端 → 渲染层 → 截图
 - **设置界面冒烟测试**：Qt 6 对话框创建、显示/隐藏切换、控件初始化、事件泵处理（offscreen 平台运行）
 - **ZIP 模型包导入测试**：解压中央目录、定位包内模型、幂等重导入、非法输入处理
+- **中文路径测试**：含中文的目录/文件名读写、目录遍历、相对路径转换、环境变量读取、ZIP 条目名编码归一化
 - **Live2D 渲染验证**（需 SDK）：加载真实 `.model3.json`，渲染后统计非透明像素并导出 PNG
 
 测试素材由脚本生成：

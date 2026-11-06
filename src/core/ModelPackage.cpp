@@ -29,9 +29,8 @@ void CollectFiles(const fs::path& root, const fs::path& current,
         }
         fs::path relative = fs::relative(entry, root, ec);
         if (ec) continue;
-        std::string rel = relative.generic_string();
-        std::replace(rel.begin(), rel.end(), '\\', '/');
-        out.push_back(rel);
+        // 相对路径统一用 '/' 分隔；转 UTF-8 以免中文路径在 Windows 上乱码。
+        out.push_back(FromFsPathGeneric(relative));
     }
 }
 
@@ -97,10 +96,11 @@ std::string MakeCacheDirName(const std::string& zipPath) {
 bool FindModelInDirectory(const std::string& directory, std::string& out) {
     out.clear();
     std::error_code ec;
-    if (!fs::is_directory(fs::path(directory), ec)) return false;
+    const fs::path root = ToFsPath(directory);
+    if (!fs::is_directory(root, ec)) return false;
 
     std::vector<std::string> files;
-    CollectFiles(fs::path(directory), fs::path(directory), files);
+    CollectFiles(root, root, files);
     if (files.empty()) return false;
 
     // 逐个文件判断类型，优先级：Live2D(model3.json) > PMX > VRM。
@@ -135,7 +135,7 @@ bool ExtractModelPackage(const std::string& zipPath, const std::string& cacheRoo
     error.clear();
 
     std::error_code ec;
-    fs::create_directories(fs::path(cacheRoot), ec);
+    fs::create_directories(ToFsPath(cacheRoot), ec);
     if (ec) {
         error = "无法创建缓存目录：" + cacheRoot;
         return false;
@@ -145,7 +145,7 @@ bool ExtractModelPackage(const std::string& zipPath, const std::string& cacheRoo
     const std::string destDir = JoinPath(cacheRoot, dirName);
 
     // 每次导入都重新解压：模型包可能被用户更新过。
-    fs::remove_all(fs::path(destDir), ec);
+    fs::remove_all(ToFsPath(destDir), ec);
     if (!ExtractZipToDirectory(zipPath, destDir, error)) return false;
 
     std::string modelPath;

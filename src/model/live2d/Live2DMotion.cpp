@@ -121,7 +121,7 @@ void Motion::Sample(float time, std::vector<float>& values) const {
 
 bool ParseMotionFile(const std::string& path, Motion& out, std::string& error) {
     std::error_code ec;
-    if (!std::filesystem::is_regular_file(std::filesystem::path(path), ec)) {
+    if (!std::filesystem::is_regular_file(ToFsPath(path), ec)) {
         error = "动作文件不存在：" + path;
         return false;
     }
