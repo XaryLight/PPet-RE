@@ -476,9 +476,10 @@ void SettingsPanel::OpenImportDialog() {
     if (!impl_->dialog) return;
     const Strings empty;
     const Strings& s = strings ? *strings : empty;
+    // 过滤器把 .zip 放在首位：PMX 不内嵌贴图，整包导入才是能正常显示的方式。
     const QString filter = ToQString(
         s.modelFileFilter.empty()
-            ? "Model files (*.json *.pmx *.vrm *.model3.json *.zip)"
+            ? "PMX model package (*.zip);;Model files (*.pmx *.vrm *.json *.model3.json);;All files (*.*)"
             : s.modelFileFilter);
     const QString path = QFileDialog::getOpenFileName(
         impl_->dialog, ToQString(s.importModel), QString(), filter);

@@ -34,6 +34,7 @@ constexpr const char* kIdLangZh = "lang.zh";
 constexpr const char* kIdLangEn = "lang.en";
 constexpr const char* kIdReload = "reload";
 constexpr const char* kIdDebug = "debug";
+constexpr const char* kIdDebugPanel = "debugPanel";
 constexpr const char* kIdOpenAtLogin = "openAtLogin";
 constexpr const char* kIdFeedback = "feedback";
 constexpr const char* kIdAbout = "about";
@@ -195,6 +196,15 @@ bool App::Initialize(std::string& error) {
         settingsPanel_.Show();
     }
 
+    // --- 模型调试/诊断面板（独立 Qt 6 窗口）---
+    // 与设置面板共用同一个 QApplication 和主循环事件泵，不额外开线程。
+    std::string debugError;
+    debugPanel_.strings = &strings_;
+    if (!debugPanel_.Initialize(debugError)) {
+        // 诊断界面不可用也不应阻止启动。
+        PPET_LOG_WARN("%s: %s\n", strings_.debugPanel.c_str(), debugError.c_str());
+    }
+
     // --- 模型 ---
     const auto& cfg = configStore_.config();
     if (!cfg.modelPath.empty()) {
@@ -233,8 +243,9 @@ void App::RefreshLanguageIfNeeded() {
     if (configStore_.config().language == currentLanguage_) return;
     currentLanguage_ = configStore_.config().language;
     strings_ = GetStrings(currentLanguage_);
-    // 设置面板直接用最新 strings_ 重绘文案。
+    // 设置面板与诊断面板直接用最新 strings_ 重绘文案。
     settingsPanel_.Refresh();
+    debugPanel_.Refresh();
     RebuildTrayMenu();
 }
 
@@ -253,22 +264,34 @@ bool App::LoadModel(const std::string& path, std::string& error) {
 
     // 在线模型地址去掉查询参数后再判断类型（在线地址常带 ?token=xxx）。
     std::string cleanPath = StripQuery(path);
+    PPET_LOG_TAG_DEBUG("MODEL", "请求加载模型：%s", path.c_str());
 
     // 压缩包导入：先把 zip 解压到缓存目录，再定位其中的模型文件。
-    // 社区里的 Live2D / MMD 模型通常以 zip 形式分发，逐个文件导入体验很差。
+    // PMX 尤其需要这一步 —— .pmx 只记录贴图路径，不内嵌图形数据，
+    // 整包解压保留原目录结构后贴图才能被找到。
     if (FileExtension(cleanPath) == "zip") {
         ModelPackage package;
         std::string packageError;
         if (!ExtractModelPackage(cleanPath, ModelCacheDirectory(), package, packageError)) {
             error = packageError;
+            PPET_LOG_TAG_ERR("MODEL", "模型包导入失败：%s", error.c_str());
             return false;
         }
         cleanPath = package.modelPath;
+        lastPackage_ = package;
+        lastFromZip_ = true;
+        PPET_LOG_TAG("MODEL", "模型来自 ZIP 包：%s（%s / %zu 条目 / %zu 张贴图）",
+                     package.sourceArchive.c_str(), PackageModelKindName(package.kind),
+                     package.entryCount, package.textureCount);
+    } else {
+        lastPackage_ = ModelPackage();
+        lastFromZip_ = false;
     }
 
     const ModelType type = DetectModelType(cleanPath);
     if (type == ModelType::Unknown) {
         error = "无法识别的模型格式（支持 .json / .pmx / .vrm / .zip）";
+        PPET_LOG_TAG_ERR("MODEL", "%s：%s", error.c_str(), cleanPath.c_str());
         return false;
     }
 
@@ -279,11 +302,47 @@ bool App::LoadModel(const std::string& path, std::string& error) {
         } else {
             error = "该模型类型的后端不可用";
         }
+        PPET_LOG_TAG_ERR("MODEL", "%s", error.c_str());
         return false;
     }
 
+    const auto loadStarted = std::chrono::steady_clock::now();
     if (!model->Load(cleanPath, error)) {
+        PPET_LOG_TAG_ERR("MODEL", "模型加载失败：%s：%s", cleanPath.c_str(), error.c_str());
         return false;
+    }
+    const double loadMs =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - loadStarted)
+            .count();
+
+    const ModelDebugInfo info = model->DebugInfo();
+    PPET_LOG_TAG("MODEL", "模型加载成功：%s（%s / %s / %.1f ms）",
+                 info.displayName.c_str(), ModelTypeName(info.type),
+                 info.formatVersion.c_str(), loadMs);
+    PPET_LOG_TAG_DEBUG("MODEL", "规模：顶点 %zu / 三角形 %zu / 骨骼 %zu / 材质 %zu / 子网格 %zu",
+                       info.vertexCount, info.triangleCount, info.boneCount,
+                       info.materialCount, info.subMeshCount);
+
+    // 引用了但磁盘上不存在的资源：PMX 单独导入时几乎必然触发。
+    // 这里给出可操作的建议，而不是让用户面对一个「能加载但全身纯色」的黑盒。
+    const std::vector<std::string> missing = model->MissingResources();
+    if (!missing.empty()) {
+        PPET_LOG_TAG_WARN("MODEL", "模型引用了 %zu 个不存在的资源文件：", missing.size());
+        const std::size_t shown = std::min<std::size_t>(missing.size(), 5);
+        for (std::size_t i = 0; i < shown; ++i) {
+            PPET_LOG_TAG_WARN("MODEL", "  [%zu/%zu] %s", i + 1, missing.size(),
+                              missing[i].c_str());
+        }
+        if (missing.size() > shown) {
+            PPET_LOG_TAG_WARN("MODEL", "  ... 其余 %zu 个可在「模型诊断」面板查看",
+                              missing.size() - shown);
+        }
+        if (type == ModelType::Pmx) {
+            PPET_LOG_TAG_WARN(
+                "MODEL",
+                "PMX 文件本身不包含图形数据，只记录贴图路径。请把 .pmx 与 tex/ 等贴图目录"
+                "一起打包成 .zip 后从「导入模型」选择该压缩包，贴图才能正确显示。");
+        }
     }
 
     model_ = model;
@@ -345,6 +404,9 @@ void App::RebuildTrayMenu() {
                      "Ctrl+R"});
     items.push_back({Item::Type::Action, strings_.debug, kIdDebug, false, true, {},
                      "Ctrl+D"});
+    // 「模型诊断」：打开 Qt 调试面板，显示模型部分/参数/性质/渲染状态。
+    items.push_back({Item::Type::Action, strings_.debugPanel, kIdDebugPanel, false, true, {},
+                     "Ctrl+Shift+D"});
     items.push_back({Item::Type::Separator, "", "", false, true, {}, ""});
     items.push_back({Item::Type::Action, strings_.openAtLogin, kIdOpenAtLogin,
                      cfg.openAtLogin, true, {}, ""});
@@ -386,12 +448,14 @@ void App::OnTrayItem(const std::string& id, bool checked) {
         currentLanguage_ = Language::Chinese;
         strings_ = GetStrings(currentLanguage_);
         settingsPanel_.Refresh();
+        debugPanel_.Refresh();
         RebuildTrayMenu();
     } else if (id == kIdLangEn) {
         cfg.language = Language::English;
         currentLanguage_ = Language::English;
         strings_ = GetStrings(currentLanguage_);
         settingsPanel_.Refresh();
+        debugPanel_.Refresh();
         RebuildTrayMenu();
     } else if (id == kIdReload) {
         // 重新渲染：重新加载当前模型以重置骨骼与表情状态。
@@ -402,11 +466,33 @@ void App::OnTrayItem(const std::string& id, bool checked) {
             }
         }
     } else if (id == kIdDebug) {
-        PPET_LOG("Debug: desktop=%dx%d+%d+%d, tracker=%d, model=%s\n",
-                    cursorTracker_.Desktop().width, cursorTracker_.Desktop().height,
-                    cursorTracker_.Desktop().x, cursorTracker_.Desktop().y,
-                    static_cast<int>(cursorTracker_.IsRunning()),
-                    model_ ? model_->DisplayName().c_str() : strings_.noModel.c_str());
+        const auto desktop = cursorTracker_.Desktop();
+        PPET_LOG_TAG("DEBUG",
+                     "桌面 %dx%d+%d+%d | 全屏追踪 %s | 视口 %dx%d | 渲染缩放 %.2f | "
+                     "帧数 %llu | FPS %.1f | 当前模型 %s",
+                     desktop.width, desktop.height, desktop.x, desktop.y,
+                     cursorTracker_.IsRunning() ? "运行中" : "关闭",
+                     static_cast<int>(window_.Size().x), static_cast<int>(window_.Size().y),
+                     static_cast<double>(configStore_.config().renderScale),
+                     static_cast<unsigned long long>(frameCount_),
+                     static_cast<double>(frameMsSmoothed_ > 0.0f ? 1000.0f / frameMsSmoothed_
+                                                                 : 0.0f),
+                     model_ ? model_->DisplayName().c_str() : strings_.noModel.c_str());
+        if (model_) {
+            const ModelDebugInfo info = model_->DebugInfo();
+            PPET_LOG_TAG("DEBUG",
+                         "模型诊断：%s | %s | 顶点 %zu / 三角形 %zu / 贴图 %zu(已加载 %zu) | "
+                         "缺失资源 %zu | %s",
+                         info.formatVersion.c_str(), info.renderStatus.c_str(),
+                         info.vertexCount, info.triangleCount, info.textureReferenced,
+                         info.textureLoaded, info.missingResources.size(),
+                         info.path.c_str());
+        }
+    } else if (id == kIdDebugPanel) {
+        // 打开 Qt 诊断面板：模型的部分、参数、性质与是否正常渲染一目了然。
+        debugPanel_.Toggle();
+        PPET_LOG_TAG_DEBUG("DEBUG", "模型诊断面板：%s",
+                           debugPanel_.IsVisible() ? "已打开" : "已关闭");
     } else if (id == kIdOpenAtLogin) {
         cfg.openAtLogin = checked;
         std::string err;
@@ -526,6 +612,13 @@ void App::Run() {
         // 限制 dt 上限，避免窗口被拖动/挂起后出现跳变。
         const float deltaTime = std::min(dt, 0.1f);
 
+        // 帧统计用真实 dt（不 clamp），指数平滑后给诊断面板算 FPS / 帧时。
+        const float frameMs = dt * 1000.0f;
+        frameMsSmoothed_ = frameMsSmoothed_ <= 0.0f
+                               ? frameMs
+                               : frameMsSmoothed_ * 0.9f + frameMs * 0.1f;
+        ++frameCount_;
+
         window_.PollEvents();
         // 维持置顶：在独占全屏游戏中窗口会被压到后面，需要周期性提升。
         window_.UpdatePlatformState();
@@ -548,12 +641,48 @@ void App::Run() {
         // 与 GLFW 主循环共用同一条主线程（无需独立 Qt 线程）。
         settingsPanel_.PumpEvents();
 
+        // 诊断面板：只有在可见且到达刷新时刻（200 ms）时才采集快照。
+        // IModel::DebugInfo() 会检查贴图文件是否存在，每帧做会有不必要的 IO。
+        if (debugPanel_.ShouldRefresh()) {
+            RuntimeStats stats;
+            stats.fps = frameMsSmoothed_ > 0.0f ? 1000.0f / frameMsSmoothed_ : 0.0f;
+            stats.frameMs = frameMsSmoothed_;
+            stats.deltaTime = deltaTime;
+            stats.frameCount = frameCount_;
+            stats.viewportWidth = ctx.viewportWidth;
+            stats.viewportHeight = ctx.viewportHeight;
+            stats.renderScale = ctx.renderScale;
+            stats.globalCursor = ctx.globalCursor;
+            stats.localCursor = ctx.localCursor;
+            stats.hasGlobalCursor = ctx.hasGlobalCursor;
+            stats.trackerRunning = cursorTracker_.IsRunning();
+            const auto desktop = cursorTracker_.Desktop();
+            stats.desktopWidth = desktop.width;
+            stats.desktopHeight = desktop.height;
+            stats.logPath = Logger::Path();
+            // 消费 GL 错误队列：0 表示本帧区间内没有 GL 错误。
+            stats.glError = ConsumeGlErrors();
+
+            ModelDebugInfo info = model_ ? model_->DebugInfo() : ModelDebugInfo();
+            info.sourceArchive = lastFromZip_ ? lastPackage_.sourceArchive : std::string();
+            info.glError = stats.glError;
+            if (stats.glError != 0 && model_) {
+                info.renderingOk = false;
+                char buf[64];
+                std::snprintf(buf, sizeof(buf), "GL 错误码 %u", stats.glError);
+                info.renderStatus = buf;
+            }
+            debugPanel_.Update(info, stats);
+        }
+        debugPanel_.PumpEvents();
+
         window_.SwapBuffers();
     }
 }
 
 void App::Shutdown() {
     cursorTracker_.Stop();
+    debugPanel_.Shutdown();
     settingsPanel_.Shutdown();
     tray_.Destroy();
     window_.Destroy();

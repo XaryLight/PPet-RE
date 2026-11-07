@@ -57,6 +57,25 @@ struct Strings {
     std::string modelTypeVrm;
     std::string noModel;
     std::string trackingHint;
+
+    // 模型调试/诊断面板（DebugPanel）
+    std::string debugPanel;
+    std::string debugTitle;
+    std::string debugTabOverview;
+    std::string debugTabParams;
+    std::string debugTabParts;
+    std::string debugTabResources;
+    std::string debugNoModel;
+    std::string debugStatusOk;
+    std::string debugStatusWarn;
+    std::string debugStatusError;
+    std::string debugCopy;
+    std::string debugCopied;
+    std::string debugLogHint;
+    std::string debugAutoRefresh;
+    std::string debugMissingNone;
+    std::string debugMissingHint;
+    std::string debugGroupMissing;
 };
 
 /// 按语言取文案。

@@ -61,4 +61,14 @@ void PrintGlError(const char* context) {
     }
 }
 
+unsigned int ConsumeGlErrors() {
+    GLenum last = GL_NO_ERROR;
+    for (int guard = 0; guard < 32; ++guard) {
+        const GLenum err = glGetError();
+        if (err == GL_NO_ERROR) break;
+        last = err;
+    }
+    return static_cast<unsigned int>(last);
+}
+
 }  // namespace ppet

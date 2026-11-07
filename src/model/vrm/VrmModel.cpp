@@ -2247,4 +2247,48 @@ void VrmModel::SampleChannel(const AnimChannel& channel, float time, float* out)
     }
 }
 
+ModelDebugInfo VrmModel::DebugInfo() const {
+    ModelDebugInfo info;
+    info.displayName = DisplayName();
+    info.path = path_;
+    info.type = ModelType::Vrm;
+    info.loaded = loaded_;
+
+    FillMeshDebugInfo(info, mesh_);
+
+    info.formatVersion = vrmVersion_ == 1   ? "VRM 1.0"
+                         : vrmVersion_ == 0 ? "VRM 0.x"
+                                            : "glTF 2.0（未识别 VRM 扩展）";
+    info.textEncoding = "内嵌（glTF JSON / UTF-8）";
+    info.textureReferenced = textureBytes_.size();
+    info.textureLoaded = textures_.size();
+    info.gpuReady = gpuReady_;
+    info.drawCalls = mesh_.subMeshes.size();
+
+    info.properties.push_back("坐标系=glTF 右手系（VRM 0.x 载入时绕 Y 旋转 180°）");
+    info.properties.push_back("渲染管线=蒙皮网格 + MToon/toon 着色（与 PMX 共用）");
+    info.properties.push_back("图形数据=内嵌于 .vrm（不依赖外部贴图文件）");
+    info.properties.push_back("表情组=" + std::to_string(mesh_.expressions.size()));
+    info.properties.push_back("弹簧骨=" + std::to_string(mesh_.springBones.size()));
+    info.properties.push_back("视线控制骨=头 " +
+                              std::string(mesh_.headBoneIndex >= 0 ? "命中" : "未找到") +
+                              " / 左眼 " + (mesh_.leftEyeBoneIndex >= 0 ? "命中" : "未找到") +
+                              " / 右眼 " + (mesh_.rightEyeBoneIndex >= 0 ? "命中" : "未找到"));
+
+    const bool meshOk = !mesh_.indices.empty() && !mesh_.materials.empty();
+    info.renderingOk = loaded_ && gpuReady_ && meshOk && info.glError == 0;
+    if (!loaded_) {
+        info.renderStatus = "未加载模型";
+    } else if (!gpuReady_) {
+        info.renderStatus = "等待首次渲染建立 GPU 资源";
+    } else if (!meshOk) {
+        info.renderStatus = "网格为空，无法渲染";
+    } else if (info.glError != 0) {
+        info.renderStatus = "GL 错误码 " + std::to_string(info.glError);
+    } else {
+        info.renderStatus = "正常渲染";
+    }
+    return info;
+}
+
 }  // namespace ppet::vrm

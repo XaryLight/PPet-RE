@@ -13,8 +13,14 @@
 #include "model/pmx/PmxModel.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <cstdio>
+#include <filesystem>
 #include <sstream>
+#include <unordered_map>
+
+#include "core/FileIO.hpp"
 
 namespace ppet::pmx {
 namespace {
@@ -93,12 +99,86 @@ std::string DirNameOf(const std::string& path) {
 }
 
 /// 把 PMX 里的贴图路径（通常用反斜杠）转换成当前平台可用的路径。
+/// PMX 里的贴图路径是「相对于 .pmx 所在目录」的 Windows 风格路径：
+///   tex\\body.png / .\\tex\\body.png / ..\\shared\\toon.bmp / D:\\tex\\a.png
+/// 统一成 '/' 分隔并去掉开头的 "./"，Linux 上才能正确拼接。
 std::string NormalizeTexturePath(const std::string& raw) {
     std::string out = raw;
     for (char& c : out) {
         if (c == '\\') c = '/';
     }
+    while (out.size() >= 2 && out[0] == '.' && out[1] == '/') out.erase(0, 2);
     return out;
+}
+
+std::string LowerAscii(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return s;
+}
+
+bool IsAbsoluteTexturePath(const std::string& path) {
+    if (!path.empty() && path[0] == '/') return true;
+    return path.size() >= 2 && path[1] == ':';
+}
+
+/// 预建「模型目录下所有文件」的索引，用于贴图路径的大小写/目录容错。
+///
+/// 社区 PMX 包里贴图的实际大小写、所在子目录经常与 .pmx 里记录的不一致
+/// （Windows 不区分大小写且作者常改目录结构）。MMD 在 Windows 上能显示，
+/// 换到 Linux 就全变纯色。这里建两份索引：
+///   byRelative —— 小写相对路径 -> 实际路径（精确匹配，大小写不敏感）
+///   byName     —— 小写文件名   -> 实际路径（目录不对时按文件名兜底）
+/// 只在 Load() 时遍历一次目录，避免每张贴图都递归扫描。
+struct TextureFileIndex {
+    std::unordered_map<std::string, std::string> byRelative;
+    std::unordered_map<std::string, std::string> byName;
+};
+
+TextureFileIndex BuildTextureFileIndex(const std::string& root) {
+    namespace fs = std::filesystem;
+    TextureFileIndex index;
+    if (root.empty()) return index;
+
+    std::error_code ec;
+    const fs::path rootPath = ToFsPath(root);
+    if (!fs::is_directory(rootPath, ec)) return index;
+
+    for (fs::recursive_directory_iterator it(rootPath, ec), end; it != end && !ec;
+         it.increment(ec)) {
+        if (ec) break;
+        if (!fs::is_regular_file(it->path(), ec)) continue;
+        const fs::path relFs = fs::relative(it->path(), rootPath, ec);
+        if (ec) {
+            ec.clear();
+            continue;
+        }
+        const std::string rel = FromFsPathGeneric(relFs);
+        const std::string full = FromFsPathGeneric(it->path());
+        index.byRelative.emplace(LowerAscii(rel), full);
+        index.byName.emplace(LowerAscii(FileName(rel)), full);
+    }
+    return index;
+}
+
+/// 把 PMX 记录的贴图路径解析成磁盘上的真实路径。
+/// 找不到时仍返回拼接出的路径（调用方据此报告「缺失资源」）。
+std::string ResolveTexturePath(const std::string& baseDir, const std::string& raw,
+                               const TextureFileIndex& index) {
+    const std::string rel = NormalizeTexturePath(raw);
+    if (rel.empty()) return std::string();
+    if (IsAbsoluteTexturePath(rel)) return rel;
+
+    const std::string direct = baseDir.empty() ? rel : JoinPath(baseDir, rel);
+    if (FileExists(direct)) return direct;  // 绝大多数情况走这里
+
+    if (auto it = index.byRelative.find(LowerAscii(rel)); it != index.byRelative.end()) {
+        return it->second;  // 大小写不一致
+    }
+    if (auto it = index.byName.find(LowerAscii(FileName(rel))); it != index.byName.end()) {
+        return it->second;  // 目录层级不一致，按文件名兜底
+    }
+    return direct;
 }
 
 /// 归一化权重：把 weights 缩放到总和为 1（全 0 时退化为第一个骨骼权重 1）。
@@ -209,6 +289,8 @@ constexpr std::uint32_t kInvalidVertexIndex = 0xFFFFFFFFu;
 bool PmxModel::Load(const std::string& path, std::string& error) {
     loaded_ = false;
     gpuReady_ = false;
+    textureLoaded_ = 0;
+    drawCalls_ = 0;
     error.clear();
 
     PmxDocument doc;
@@ -489,15 +571,72 @@ void PmxModel::BuildMesh() {
 void PmxModel::PrepareTexturePaths(const std::string& baseDir) {
     texturePaths_.clear();
     texturePaths_.reserve(doc_.textures.size());
+    // 建一次目录索引，供所有贴图做大小写/目录容错（PMX 包常见）。
+    const TextureFileIndex index = BuildTextureFileIndex(baseDir);
     for (const std::string& raw : doc_.textures) {
-        const std::string rel = NormalizeTexturePath(raw);
-        if (rel.empty()) {
-            texturePaths_.push_back(rel);
-            continue;
-        }
-        const bool absolute = rel[0] == '/';
-        texturePaths_.push_back(absolute || baseDir.empty() ? rel : baseDir + "/" + rel);
+        texturePaths_.push_back(ResolveTexturePath(baseDir, raw, index));
     }
+}
+
+ModelDebugInfo PmxModel::DebugInfo() const {
+    ModelDebugInfo info;
+    info.displayName = DisplayName();
+    info.path = path_;
+    info.type = ModelType::Pmx;
+    info.loaded = loaded_;
+
+    FillMeshDebugInfo(info, mesh_);
+
+    char version[32];
+    std::snprintf(version, sizeof(version), "PMX %.1f", static_cast<double>(doc_.version));
+    info.formatVersion = version;
+    info.textEncoding = doc_.utf16 ? "UTF-16LE" : "UTF-8";
+    info.hasOutline = hasOutline_;
+    info.textureReferenced = texturePaths_.size();
+    info.textureLoaded = textureLoaded_;
+    info.drawCalls = drawCalls_;
+    info.gpuReady = gpuReady_;
+    info.missingResources = MissingResources();
+
+    info.properties.push_back("坐标系=PMX 左手系 → OpenGL 右手系（z 取反 + 反转绕序）");
+    info.properties.push_back("渲染管线=蒙皮网格 + toon 着色（与 VRM 共用）");
+    info.properties.push_back(std::string("顶点色=") + (hasVertexColor_ ? "启用" : "未启用"));
+    info.properties.push_back("控制骨骼=头 " + std::string(headBone_ >= 0 ? "命中" : "未找到") +
+                              " / 左眼 " + (leftEyeBone_ >= 0 ? "命中" : "未找到") +
+                              " / 右眼 " + (rightEyeBone_ >= 0 ? "命中" : "未找到") +
+                              " / 躯干 " + (bodyBone_ >= 0 ? "命中" : "未找到"));
+    info.properties.push_back("原始骨骼=" + std::to_string(doc_.bones.size()) +
+                              "（已拓扑排序为父在前）");
+    info.properties.push_back("三角形丢弃=" + std::to_string(doc_.droppedFaces) +
+                              "（索引越界）");
+
+    const bool meshOk = !mesh_.indices.empty() && !mesh_.materials.empty();
+    info.renderingOk = loaded_ && gpuReady_ && meshOk && info.glError == 0;
+    if (!loaded_) {
+        info.renderStatus = "未加载模型";
+    } else if (!gpuReady_) {
+        info.renderStatus = "等待首次渲染建立 GPU 资源";
+    } else if (!meshOk) {
+        info.renderStatus = "网格为空，无法渲染";
+    } else if (info.glError != 0) {
+        char err[64];
+        std::snprintf(err, sizeof(err), "GL 错误 0x%04x", info.glError);
+        info.renderStatus = err;
+    } else if (!info.missingResources.empty()) {
+        info.renderStatus = "可出图，但缺 " + std::to_string(info.missingResources.size()) +
+                            " 张贴图（可能白模）";
+    } else {
+        info.renderStatus = "正常渲染";
+    }
+    return info;
+}
+
+std::vector<std::string> PmxModel::MissingResources() const {
+    std::vector<std::string> missing;
+    for (const std::string& path : texturePaths_) {
+        if (!path.empty() && !FileExists(path)) missing.push_back(path);
+    }
+    return missing;
 }
 
 // ---------------------------------------------------------------------------
@@ -646,6 +785,7 @@ void PmxModel::UpdateSkinningMatrices() {
 // ---------------------------------------------------------------------------
 
 void PmxModel::Render(const RenderContext& ctx) {
+    drawCalls_ = 0;
     if (!loaded_) return;
     // 材质为空或索引为空时直接返回，避免渲染层拿到空网格。
     if (mesh_.materials.empty() || mesh_.indices.empty()) return;
@@ -663,15 +803,18 @@ void PmxModel::Render(const RenderContext& ctx) {
 
     const Mat4 viewProj = ComputeViewProjection(width, height, ctx.renderScale);
     renderer_.Draw(viewProj, skinningMatrices_, kLightDir);
+    drawCalls_ += mesh_.subMeshes.size();
     if (hasOutline_) {
         // widthScale=1：描边宽度已经在材质里换算成世界单位。
         renderer_.DrawOutline(viewProj, skinningMatrices_, kLightDir, 1.0f);
+        drawCalls_ += mesh_.subMeshes.size();
     }
 }
 
 void PmxModel::EnsureGpuResources() {
     if (gpuReady_) return;
     gpuReady_ = true;
+    textureLoaded_ = 0;
 
     renderer_.Upload(mesh_);
 
@@ -683,8 +826,9 @@ void PmxModel::EnsureGpuResources() {
             textures_.push_back(std::move(tex));
             continue;
         }
-        // 贴图缺失时保留无效纹理，渲染层会回退到纯色。
-        tex.LoadFromFile(path);
+        // 贴图缺失时保留无效纹理，渲染层会回退到纯色；
+        // 成功数用于调试面板判断「是不是白模」。
+        if (tex.LoadFromFile(path)) ++textureLoaded_;
         textures_.push_back(std::move(tex));
     }
     renderer_.SetTextures(std::move(textures_));

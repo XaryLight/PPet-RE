@@ -45,10 +45,16 @@ ModelType DetectModelType(const std::string& path) {
                            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
             return s;
         }();
+#if defined(__cpp_lib_string_contains)
+        if (lower.contains(".model3.json") || lower.contains(".model.json")) {
+            return ModelType::Live2D;
+        }
+#else
         if (lower.find(".model3.json") != std::string::npos ||
             lower.find(".model.json") != std::string::npos) {
             return ModelType::Live2D;
         }
+#endif
         // 其它 .json 交由 Live2D 后端尝试解析（其加载器会校验字段）。
         return ModelType::Live2D;
     }

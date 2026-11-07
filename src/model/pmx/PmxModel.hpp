@@ -69,8 +69,19 @@ public:
 
     bool IsLoaded() const override { return loaded_; }
 
+    /// 诊断快照（调试面板）：规模参数、PMX 性质、贴图命中情况、渲染状态。
+    ModelDebugInfo DebugInfo() const override;
+
+    /// PMX 引用但磁盘上找不到的贴图路径。
+    /// PMX 本身不内嵌图形数据，单独导入 .pmx 时这里通常非空 ——
+    /// App 会据此提示「把 .pmx 与贴图一起打包成 .zip」。
+    std::vector<std::string> MissingResources() const override;
+
     /// 供测试与调试使用的只读访问。
     const SkinnedMesh& Mesh() const { return mesh_; }
+
+    /// 解析后的贴图路径（与 doc_.textures 一一对应），供测试与诊断。
+    const std::vector<std::string>& TexturePaths() const { return texturePaths_; }
 
 private:
     /// PMX 文档 -> SkinnedMesh。
@@ -143,6 +154,11 @@ private:
     /// 最近一次 OnResize 的窗口尺寸。
     int viewportWidth_ = 0;
     int viewportHeight_ = 0;
+
+    /// 成功解码并上传 GPU 的贴图数（EnsureGpuResources 中统计）。
+    std::size_t textureLoaded_ = 0;
+    /// 最近一帧的 draw call 数（主 pass + 描边 pass 的子网格数）。
+    std::size_t drawCalls_ = 0;
 
     bool loaded_ = false;
     bool gpuReady_ = false;

@@ -5,12 +5,42 @@
 #   - 本 CMakeLists 聚焦「模型后端」这一层，渲染层与窗口层的实现由主协调者提供，
 #     因此对尚未存在的源文件做了存在性判断，缺失时用占位实现顶上，
 #     保证任何阶段都能 configure / build 成功。
-cmake_minimum_required(VERSION 3.16)
+#
+# 【C++23】cmake_minimum_required 从 3.16 提到 3.20：CMake 从 3.20 才认识
+# CXX_STANDARD=23 / cxx_std_23（3.16 只到 20）。CLion 自带 CMake 与主流发行版
+# 均 ≥3.20，升级无感。
+cmake_minimum_required(VERSION 3.20)
 project(PPet LANGUAGES C CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+# ---------------------------------------------------------------------------
+# C++23 标准
+#
+# 为什么升级（不只是改个数字，代码里确实用到了 C++23/20 的现代设施）：
+#   - std::source_location  —— 日志自动带上「文件:行号:函数」，无需手写 __FILE__；
+#   - std::string::contains —— 替代 find(...) != npos，语义直白；
+#   - std::to_underlying    —— 枚举转底层类型，不再 static_cast<int> 猜类型；
+#   - std::unreachable      —— 标记逻辑上不可能到达的分支，帮助优化器与静态分析；
+#   - std::expected / std::span 等按编译器可用性可选启用。
+#
+# 编译器下限：GCC 11 / Clang 14 / MSVC 19.32（VS 2022 17.2+）/ llvm-mingw clang 17+。
+# 注意 libstdc++ 的差异：std::format 在 GCC 13 才落地、std::ranges::to 在 GCC 14，
+# 为保证「Linux GCC 11 + Windows llvm-mingw(libc++)」都能一次编译通过，
+# 跨平台代码只用上面这批广泛实现的特性，不依赖 <format> / <expected>。
+# ---------------------------------------------------------------------------
+if(NOT "cxx_std_23" IN_LIST CMAKE_CXX_COMPILE_FEATURES)
+    message(FATAL_ERROR
+        "当前编译器（${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}）"
+        "或 CMake（${CMAKE_VERSION}）不支持 C++23。\n"
+        "本项目要求 C++23：请升级到 GCC 11+ / Clang 14+ / MSVC 19.32+ / "
+        "llvm-mingw clang 17+，并使用 CMake 3.20+。")
+endif()
+
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+# 每个目标显式声明所需标准，避免第三方子目录/工具目标自带较低标准时反向降级。
+add_compile_definitions(PPET_CXX_STANDARD=23)
+message(STATUS "PPet：使用 C++23（编译器 ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}）")
 
 # 在一串候选路径里挑第一个真实存在的文件，结果写回 OUT_VAR（找不到则写空串）。
 #
@@ -100,6 +130,9 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 # 所以它所在的 ppet_model 目标得自己链接，不能依赖平台层间接传递。
 find_package(OpenGL REQUIRED)
 find_package(Threads REQUIRED)
+# Log.cpp 用 std::mutex / std::this_thread::get_id 保证多线程日志整行原子写出。
+# 全局链接 Threads，让所有编译了 Log.cpp 的目标（主程序与各个测试程序）都拿到线程库。
+link_libraries(Threads::Threads)
 
 # ---------------------------------------------------------------------------
 # 跨平台依赖解析：GLFW / GLEW / X11
@@ -651,6 +684,8 @@ set(PPET_CORE_SOURCES
     src/app/App.cpp
     src/ui/SettingsPanel.cpp
     src/ui/SettingsPanel.hpp
+    src/ui/DebugPanel.cpp
+    src/ui/DebugPanel.hpp
 )
 
 add_executable(ppet ${PPET_CORE_SOURCES} src/main.cpp)
@@ -790,6 +825,19 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/settings_panel_smoke.cpp)
     target_link_libraries(ppet_settings_panel_smoke PRIVATE Qt6::Widgets)
 endif()
 
+# 模型调试/诊断面板冒烟测试（Qt 6）：验证窗口生命周期、伪造诊断快照刷新、
+# 200 ms 节流、语言切换重绘、复制摘要按钮。同样用 offscreen 插件运行。
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/debug_panel_smoke.cpp)
+    add_executable(ppet_debug_panel_smoke
+        tools/debug_panel_smoke.cpp
+        src/ui/DebugPanel.cpp
+        src/core/I18n.cpp
+        src/core/Log.cpp
+    )
+    target_include_directories(ppet_debug_panel_smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(ppet_debug_panel_smoke PRIVATE Qt6::Widgets)
+endif()
+
 # 设置面板截图工具：用真实 Qt 控件渲染并抓取 PNG，用于 README 配图。
 if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/settings_panel_screenshot.cpp)
     add_executable(ppet_settings_panel_screenshot
@@ -888,6 +936,15 @@ add_test(NAME vrm_unit
          COMMAND ppet_vrm_test
          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
+# 结构化日志测试：时间精度、字段完整性、级别阈值、UTF-8、多线程原子写出。
+add_executable(ppet_log_test
+    tools/log_test.cpp
+    src/core/Log.cpp
+)
+add_test(NAME log_unit
+         COMMAND ppet_log_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
 # ---------------------------------------------------------------------------
 # 文案翻译器（Compiler/i18n_gen）的单元测试
 # ---------------------------------------------------------------------------
@@ -954,6 +1011,15 @@ if(TARGET ppet_settings_panel_smoke)
         SKIP_RETURN_CODE 2)
 endif()
 
+if(TARGET ppet_debug_panel_smoke)
+    add_test(NAME debug_panel_smoke
+             COMMAND $<TARGET_FILE:ppet_debug_panel_smoke>
+             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    set_tests_properties(debug_panel_smoke PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        SKIP_RETURN_CODE 2)
+endif()
+
 # ZIP 模型包导入测试：需要一个测试用 zip。
 # 测试包由 tools/gen_test_zip.py 生成（含一个最小 PMX 与一张贴图），
 # 生成后再运行导入测试。
@@ -976,6 +1042,36 @@ if(TARGET ppet_zip_test)
             FIXTURES_REQUIRED ppet_zip_fixture
             SKIP_RETURN_CODE 2)
     endif()
+endif()
+
+# PMX 模型包（.zip）专项测试
+#
+# PMX 文件不内嵌图形数据，只记录贴图路径，因此 .zip 是它的一等公民导入方式。
+# 测试覆盖：完整包 / 缺贴图诊断 / 贴图大小写不一致 / 贴图在子目录。
+add_executable(ppet_pmx_package_test
+    tools/pmx_package_test.cpp
+    src/core/ModelPackage.cpp
+    src/core/ZipArchive.cpp
+    src/core/Log.cpp
+)
+target_link_libraries(ppet_pmx_package_test PRIVATE ppet_model ppet_zlib)
+
+find_package(Python3 COMPONENTS Interpreter QUIET)
+set(PPET_PMX_ZIP_DIR ${CMAKE_CURRENT_BINARY_DIR}/testdata/pmx_zip)
+if(Python3_Interpreter_FOUND AND
+   EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/gen_test_pmx_zip.py)
+    add_test(NAME pmx_package_gen
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tools/gen_test_pmx_zip.py
+                     ${PPET_PMX_ZIP_DIR})
+    set_tests_properties(pmx_package_gen PROPERTIES
+        FIXTURES_SETUP ppet_pmx_zip_fixture)
+
+    add_test(NAME pmx_package_test
+             COMMAND $<TARGET_FILE:ppet_pmx_package_test> ${PPET_PMX_ZIP_DIR})
+    set_tests_properties(pmx_package_test PROPERTIES
+        FIXTURES_REQUIRED ppet_pmx_zip_fixture
+        SKIP_RETURN_CODE 2)
 endif()
 
 # 中文路径测试：无需外部素材，可直接运行。

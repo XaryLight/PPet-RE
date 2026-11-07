@@ -28,6 +28,11 @@ bool CheckGlError(const char* file, int line);
 /// 打印 OpenGL 错误但不改变程序流程（供调试使用）。
 void PrintGlError(const char* context);
 
+/// 清空 OpenGL 错误队列并返回最后一个错误码（0 = GL_NO_ERROR）。
+/// 供调试面板判定「本帧是否正常渲染」；不打印日志，也不会干扰正常渲染路径。
+/// 最多消费 32 个错误，避免驱动异常时死循环。
+unsigned int ConsumeGlErrors();
+
 }  // namespace ppet
 
 /// 错误检查宏：出错时打印文件与行号。

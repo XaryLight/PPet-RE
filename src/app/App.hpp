@@ -2,16 +2,19 @@
 // 应用主控制器：管理窗口、托盘、模型生命周期与主循环。
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include "core/Config.hpp"
 #include "core/I18n.hpp"
+#include "core/ModelPackage.hpp"
 #include "model/Model.hpp"
 #include "platform/GlobalCursorTracker.hpp"
 #include "platform/Tray.hpp"
 #include "platform/Window.hpp"
+#include "ui/DebugPanel.hpp"
 #include "ui/SettingsPanel.hpp"
 
 namespace ppet {
@@ -75,7 +78,17 @@ private:
     bool showTool_ = true;
     Language currentLanguage_ = Language::Chinese;
     SettingsPanel settingsPanel_;
+    /// 模型调试/诊断面板（托盘菜单「模型诊断」打开）。
+    DebugPanel debugPanel_;
     float lastFrameTime_ = 0.0f;
+
+    /// 最近一次导入的模型包信息（单文件导入时为空），供诊断面板显示「来源」。
+    ModelPackage lastPackage_;
+    bool lastFromZip_ = false;
+
+    /// 帧统计（供诊断面板的 FPS / 帧时）。
+    std::uint64_t frameCount_ = 0;
+    float frameMsSmoothed_ = 0.0f;
 
     // 拖动状态：记录鼠标按下时的偏移，避免窗口跳动。
     bool dragging_ = false;

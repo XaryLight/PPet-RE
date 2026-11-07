@@ -64,6 +64,9 @@ public:
 
     bool IsLoaded() const override { return loaded_; }
 
+    /// 诊断快照（调试面板）：网格规模、VRM 版本、内嵌贴图数、渲染状态。
+    ModelDebugInfo DebugInfo() const override;
+
     /// 供测试与调试使用的只读访问。
     const SkinnedMesh& Mesh() const { return mesh_; }
 

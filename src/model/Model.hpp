@@ -2,11 +2,14 @@
 // 模型抽象接口：Live2D / PMX / VRM 三种后端统一由此驱动。
 #pragma once
 
+#include <cstddef>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "core/Math.hpp"
+#include "model/SkinnedMesh.hpp"
 
 namespace ppet {
 
@@ -16,6 +19,18 @@ enum class ModelType {
     Pmx,     ///< .pmx
     Vrm,     ///< .vrm
 };
+
+/// 模型类型可读名（"PMX" / "VRM" / "Live2D" / "未知"）。
+/// 定义在头文件里：调试面板等轻量目标只需要这个名字，不必链接整个模型层。
+inline const char* ModelTypeName(ModelType type) {
+    switch (type) {
+        case ModelType::Live2D:  return "Live2D";
+        case ModelType::Pmx:     return "PMX";
+        case ModelType::Vrm:     return "VRM";
+        case ModelType::Unknown: break;
+    }
+    return "未知";
+}
 
 /// 由文件后缀推断模型类型。
 ModelType DetectModelType(const std::string& path);
@@ -50,6 +65,61 @@ struct RenderContext {
     float renderScale = 1.0f;
 };
 
+/// 模型诊断快照：调试面板显示的全部内容都来自这里。
+///
+/// 分成四组，对应调试面板的四个区域：
+///   概览 / 参数（规模）/ 性质（格式特征）/ 渲染状态。
+/// 由各后端在 DebugInfo() 里填充；后端不提供的字段保持默认值，
+/// 因此新增模型格式时调试面板不会崩，只是信息少一些。
+struct ModelDebugInfo {
+    // --- 概览 ---
+    std::string displayName;      ///< 模型显示名
+    std::string path;             ///< 实际加载的文件路径
+    std::string sourceArchive;    ///< 由 zip 包导入时的原始压缩包路径（否则为空）
+    ModelType type = ModelType::Unknown;
+    bool loaded = false;
+
+    // --- 参数（规模）---
+    std::size_t vertexCount = 0;
+    std::size_t indexCount = 0;
+    std::size_t triangleCount = 0;
+    std::size_t boneCount = 0;
+    std::size_t materialCount = 0;
+    std::size_t subMeshCount = 0;
+    std::size_t morphCount = 0;
+    std::size_t textureReferenced = 0;  ///< 模型引用的贴图总数
+    std::size_t textureLoaded = 0;      ///< 成功解码/上传的贴图数
+    std::size_t drawCalls = 0;          ///< 最近一帧的 draw call 数
+    Vec3 boundsMin{0.0f, 0.0f, 0.0f};
+    Vec3 boundsMax{0.0f, 0.0f, 0.0f};
+    float modelHeight = 0.0f;
+
+    // --- 性质 ---
+    std::string formatVersion;   ///< "PMX 2.0" / "VRM 1.0" ...
+    std::string textEncoding;    ///< "UTF-16LE" / "UTF-8" / "内嵌(glTF)"
+    bool doubleSided = false;
+    bool hasOutline = false;
+    bool isSkinned = false;
+    /// 额外的「键=值」性质（如坐标系、渲染管线、控制骨骼命中情况）。
+    std::vector<std::string> properties;
+    /// 模型引用但磁盘上找不到的资源（PMX 贴图最常见）。
+    std::vector<std::string> missingResources;
+    /// 模型的「部分」清单（材质/子网格，调试面板的列表来源）。
+    struct Part {
+        std::string name;
+        std::size_t indexCount = 0;
+        int materialIndex = -1;
+        std::string detail;
+    };
+    std::vector<Part> parts;
+
+    // --- 渲染状态 ---
+    bool gpuReady = false;        ///< GPU 资源是否已建立
+    bool renderingOk = false;     ///< 综合判定：能否正常出图
+    unsigned int glError = 0;     ///< 最近一次 GL 错误码（0 = 无错误）
+    std::string renderStatus;     ///< 可读结论，例如「正常渲染」「贴图缺失 3 张，可能白模」
+};
+
 /// 模型后端接口。
 class IModel {
 public:
@@ -75,11 +145,73 @@ public:
 
     /// 是否成功加载。
     virtual bool IsLoaded() const = 0;
+
+    /// 诊断快照（供调试面板）。默认实现只填概览，各后端可重写补充细节。
+    /// 内联在头文件里：ppet_model 的很多测试目标并不编译 Model.cpp，
+    /// 放在 .cpp 会导致 undefined reference / typeinfo for IModel。
+    virtual ModelDebugInfo DebugInfo() const {
+        ModelDebugInfo info;
+        info.displayName = DisplayName();
+        info.type = Type();
+        info.loaded = IsLoaded();
+        info.renderingOk = info.loaded;
+        info.renderStatus = info.loaded ? "已加载（后端未提供详细诊断）" : "未加载模型";
+        return info;
+    }
+
+    /// 模型引用但不存在的资源路径列表（供日志与诊断）。
+    /// PMX 用它报告缺失贴图，并给出「请打包成 .zip」的建议。
+    /// 默认返回空（VRM/Live2D 的图形数据内嵌在文件里）。
+    virtual std::vector<std::string> MissingResources() const { return {}; }
 };
 
 using ModelPtr = std::shared_ptr<IModel>;
 
 /// 创建对应类型的模型实例。未找到后端时返回 nullptr。
 ModelPtr CreateModel(ModelType type);
+
+/// 从统一的 SkinnedMesh 填充诊断信息的「参数」部分（各后端复用）。
+/// 同样内联，理由见 IModel::DebugInfo。
+inline void FillMeshDebugInfo(ModelDebugInfo& info, const SkinnedMesh& mesh) {
+    info.vertexCount = mesh.vertices.size();
+    info.indexCount = mesh.indices.size();
+    info.triangleCount = mesh.indices.size() / 3;
+    info.boneCount = mesh.bones.size();
+    info.materialCount = mesh.materials.size();
+    info.subMeshCount = mesh.subMeshes.size();
+    info.morphCount = mesh.morphs.size();
+    info.boundsMin = mesh.boundsMin;
+    info.boundsMax = mesh.boundsMax;
+    info.modelHeight = mesh.modelHeight;
+    info.isSkinned = mesh.isSkinned;
+
+    for (const Material& material : mesh.materials) {
+        if (material.doubleSided) info.doubleSided = true;
+        if (material.outlineWidth > 0.0f || material.edgeScale > 0.0f) info.hasOutline = true;
+    }
+
+    info.parts.clear();
+    info.parts.reserve(mesh.subMeshes.size());
+    for (const SkinnedMesh::SubMesh& sub : mesh.subMeshes) {
+        ModelDebugInfo::Part part;
+        part.indexCount = sub.indexCount;
+        part.materialIndex = sub.materialIndex;
+        if (sub.materialIndex >= 0 &&
+            static_cast<std::size_t>(sub.materialIndex) < mesh.materials.size()) {
+            const Material& material = mesh.materials[static_cast<std::size_t>(sub.materialIndex)];
+            part.name = material.name.empty()
+                            ? "材质 #" + std::to_string(sub.materialIndex)
+                            : material.name;
+            part.detail = "三角形 " + std::to_string(sub.indexCount / 3) +
+                          " / 贴图 " + std::to_string(material.baseColorTex) +
+                          (material.doubleSided ? " / 双面" : " / 单面") +
+                          (material.outlineWidth > 0.0f ? " / 描边" : "");
+        } else {
+            part.name = "子网格 #" + std::to_string(info.parts.size());
+            part.detail = "三角形 " + std::to_string(sub.indexCount / 3);
+        }
+        info.parts.push_back(std::move(part));
+    }
+}
 
 }  // namespace ppet
