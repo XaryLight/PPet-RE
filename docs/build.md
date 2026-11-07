@@ -233,6 +233,26 @@ powershell -ExecutionPolicy Bypass -File tools\check_sync.ps1 -Fix
 
 > 提示：新版已支持 `-DPPET_WITH_CUBISM=OFF` 真正生效（不再被自动检测 `FORCE` 覆盖），**不需要再手改 `CMakeLists.txt`**——这正是过去反复产生本地改动、导致 `git pull` 不生效的根源。
 
+### 运行期：诊断面板全绿，屏幕却看不到模型
+
+**现象**：诊断面板显示「正常渲染」、GPU 就绪、GL 错误 0、Draw calls 62、贴图 11/11/0、FPS 58、帧数持续增长，但桌面上就是没有模型（`Win+Tab` 里也未必看得到）。
+
+**根因**：主循环有模型时只调 `Update/Render`，**漏了每帧 `glClear`**。双缓冲交换后 back buffer 内容按 GL 规范未定义，深度缓冲又残留上一帧的值，第二帧起所有片元因深度相等被 `GL_LESS` 剔除——draw calls 照发、GL 不报错、FPS 正常，帧缓冲却一个非透明像素都没有。另一半原因是旧版 `renderingOk` 只看「网格非空 + GPU 就绪 + GL 错误为 0」，这些全是间接指标，证明不了有像素。
+
+**已修复**：主循环每帧渲染前无条件调用 `ClearTransparent()`，且该函数显式复位 `glColorMask` / `glDepthMask`（半透明材质会把 `glDepthMask` 留成 `GL_FALSE`，不清掉的话 `glClear(GL_DEPTH_BUFFER_BIT)` 等于没执行）。同时诊断结论改为以**帧缓冲读回的非透明像素覆盖率**为最终裁决，面板「渲染状态」第一行显示 `实际出图 Pixels`，为 `0.00% ← 未出图` 时状态灯转红。
+
+**判定与复现**（`git pull` 后应自动恢复）：
+
+```bash
+# 正确主循环：每帧清屏 + 交换，覆盖率应稳定 > 0
+ppet_render_verify --model model.pmx --frames 8 --swap-each-frame --report clear.json
+
+# 复现旧 bug：漏清屏，覆盖率应为 0%，但 rendering_ok 仍是 true
+ppet_render_verify --model model.pmx --frames 8 --no-clear --swap-each-frame --report noclear.json
+```
+
+对照两份报告的 `render.coverage_percent` 与 `render.rendering_ok`。CTest 的 `render_verify_clear_contract` 已把这条契约固化为回归测试。详见 [调试与日志](debugging.md#模型诊断面板)。
+
 ---
 
 ## 渲染验证与真机验收

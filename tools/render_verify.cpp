@@ -60,6 +60,10 @@ struct Options {
     int height = 640;
     int frames = 30;
     double minCoverage = 0.2;  // 非透明像素占比下限（百分比）
+    // 诊断开关：模拟「调用方未清屏 + 每帧交换缓冲」的错误主循环，
+    // 用来暴露「诊断指标全绿但画面为空」这类问题。默认关闭（保持验收语义）。
+    bool noClear = false;
+    bool swapEachFrame = false;
 };
 
 void Usage(const char* argv0) {
@@ -70,6 +74,8 @@ void Usage(const char* argv0) {
                  "  --width/--height <n>  视口尺寸（默认 480x640）\n"
                  "  --frames <n>          渲染帧数（默认 30）\n"
                  "  --min-coverage <pct>  非透明像素占比下限（默认 0.2%%）\n"
+                 "  --no-clear            诊断用：渲染前不清屏（模拟错误主循环）\n"
+                 "  --swap-each-frame     诊断用：每帧交换缓冲并逐帧记录覆盖率\n"
                  "支持：.vrm / .pmx / .zip / .model3.json / .moc3 / 目录\n",
                  argv0);
 }
@@ -88,6 +94,8 @@ bool ParseArgs(int argc, char** argv, Options& opt) {
         else if (a == "--height") opt.height = std::atoi(next().c_str());
         else if (a == "--frames") opt.frames = std::atoi(next().c_str());
         else if (a == "--min-coverage") opt.minCoverage = std::atof(next().c_str());
+        else if (a == "--no-clear") opt.noClear = true;
+        else if (a == "--swap-each-frame") opt.swapEachFrame = true;
         else if (a == "--help" || a == "-h") { Usage(argv[0]); return false; }
         else {
             std::fprintf(stderr, "未知参数：%s\n", a.c_str());
@@ -305,22 +313,47 @@ int main(int argc, char** argv) {
     ctx.localCursor = ppet::Vec2(0.2f, 0.1f);
     model->OnResize(opt.width, opt.height);
 
+    std::vector<unsigned char> pixels(
+        static_cast<std::size_t>(opt.width) * opt.height * 4, 0);
+    ppet::api::Json frameCoverage = ppet::api::Json::array();
+
     for (int f = 0; f < opt.frames; ++f) {
-        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-        glClearDepth(1.0);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        if (!opt.noClear) {
+            glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+            glClearDepth(1.0);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        }
         model->Update(ctx);
         model->Render(ctx);
+
+        if (opt.swapEachFrame) {
+            // 与真实主循环一致：在交换之前读回本帧 back buffer，
+            // 然后交换（交换后 back buffer 内容按 GL 规范未定义）。
+            glPixelStorei(GL_PACK_ALIGNMENT, 1);
+            glReadPixels(0, 0, opt.width, opt.height, GL_RGBA, GL_UNSIGNED_BYTE,
+                         pixels.data());
+            long long frameCovered = 0;
+            for (std::size_t i = 0; i < pixels.size(); i += 4) {
+                if (pixels[i + 3] > 10) ++frameCovered;
+            }
+            frameCoverage.push_back(
+                std::round(10000.0 * static_cast<double>(frameCovered) /
+                           static_cast<double>(opt.width * opt.height)) /
+                100.0);
+            while (glGetError() != GL_NO_ERROR) {
+            }
+            glfwSwapBuffers(window);
+        }
     }
     glFinish();
     // 渲染后再取一次诊断快照：Load() 刚结束时 gpuReady 还是 false，
     // 用渲染后的状态才能给出「是否正常渲染」的准确结论。
     const ppet::ModelDebugInfo renderedInfo = model->DebugInfo();
 
-    std::vector<unsigned char> pixels(
-        static_cast<std::size_t>(opt.width) * opt.height * 4, 0);
-    glPixelStorei(GL_PACK_ALIGNMENT, 1);
-    glReadPixels(0, 0, opt.width, opt.height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+    if (!opt.swapEachFrame) {
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        glReadPixels(0, 0, opt.width, opt.height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+    }
     const unsigned int glError = ppet::ConsumeGlErrors();
 
     long long covered = 0;
@@ -343,6 +376,9 @@ int main(int argc, char** argv) {
     report["render"]["model_status"] = renderedInfo.renderStatus;
     report["render"]["gpu_ready"] = renderedInfo.gpuReady;
     report["render"]["rendering_ok"] = renderedInfo.renderingOk;
+    report["render"]["clear_per_frame"] = !opt.noClear;
+    report["render"]["swap_each_frame"] = opt.swapEachFrame;
+    if (opt.swapEachFrame) report["render"]["frame_coverage"] = frameCoverage;
 
     // 截图（合成到棋盘背景，透明区域可见）
     CompositeForPreview(pixels, opt.width, opt.height);

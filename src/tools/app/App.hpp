@@ -12,6 +12,7 @@
 #include <src/tools/core/ModelPackage.hpp>
 #include <src/tools/model/Model.hpp>
 #include <src/tools/model/ModelError.hpp>
+#include <src/tools/render/FrameCapture.hpp>
 #include <src/tools/platform/GlobalCursorTracker.hpp>
 #include <src/tools/platform/Tray.hpp>
 #include <src/tools/platform/Window.hpp>
@@ -83,6 +84,12 @@ private:
     /// 构建本帧的渲染上下文。
     RenderContext BuildRenderContext(float deltaTime) const;
 
+    /// 读回当前帧缓冲，更新「像素证据」成员。
+    /// @param wantPreview 是否同时把当前帧写成 PNG 供诊断面板预览。
+    /// 面板可见时每 200 ms 调一次；不可见时每 120 帧调一次做运行时自检，
+    /// 这样即使不打开面板也能在日志里发现「draw calls 正常但画面全空」。
+    void CollectFrameEvidence(bool wantPreview);
+
     /// 每帧处理输入事件。
     void ProcessInput();
 
@@ -113,6 +120,15 @@ private:
     /// 帧统计（供诊断面板的 FPS / 帧时）。
     std::uint64_t frameCount_ = 0;
     float frameMsSmoothed_ = 0.0f;
+
+    /// 帧缓冲像素证据：判断「是否真的出图」，不靠 draw calls / GL 错误猜。
+    bool hasFrameEvidence_ = false;
+    FramePixelStats lastFrameStats_;
+    std::uint64_t lastEvidenceFrame_ = 0;
+    /// 上一次写日志时的健康状态，用于只在状态翻转时记一条，避免刷日志。
+    bool lastEvidenceLoggedHealthy_ = true;
+    std::string lastPreviewPath_;
+    std::string lastEvidenceError_;
 
     // 拖动状态：用「抓取点偏移」做绝对定位，避免增量算法的正反馈漂移。
     //

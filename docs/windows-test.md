@@ -52,7 +52,8 @@ GPU 型号、驱动、Qt 平台插件、DLL 部署这些必须在真机上确认
 2. **build** — 全量编译，含 `ppet.exe` 与 `ppet_render_verify.exe`；
 3. **windeployqt** — 部署 Qt 运行时与 `platforms/qwindows.dll`，并核对 `Live2DCubismCore.dll` / MinGW 运行时 DLL；
 4. **试运行** — 启动 `ppet.exe` 数秒，检查是否闪退，并扫描 `last.log` 的 ERROR/FATAL；
-5. **渲染验证** — 三类模型各跑一次 `ppet_render_verify.exe`，产出 PNG + JSON。
+5. **渲染验证** — 三类模型各跑一次 `ppet_render_verify.exe`，产出 PNG + JSON；
+6. **附加验收：清屏契约回归** — 用其中一个模型跑「每帧清屏 / 漏清屏」两次，期望前者覆盖率 > 1% 且 PASS、后者覆盖率 0% 且 FAIL，结果写入 `summary.json` 的 `clear_contract`。
 
 参数：
 
@@ -108,6 +109,9 @@ cmake --build cmake-build-verify --parallel
 | `render.gl_error` | `0` |
 | `render.gpu_ready` / `rendering_ok` | `true` |
 | `render.model_status` | 「正常渲染」 |
+| `render.clear_per_frame` | `true`（验收工具固定每帧清屏） |
+| `render.frame_coverage` | 用 `--swap-each-frame` 时逐帧覆盖率应稳定，不能出现某一帧掉到 0 |
+| 清屏契约检查 | 脚本会用同一模型跑一次 `--no-clear --swap-each-frame`，期望覆盖率 0% 且 `result=FAIL`；若变成 PASS 说明复现失效，需复核 |
 | `model.bones` | PMX/VRM > 0；Live2D 为 0（二维部件管线，属正常） |
 | `model.missing_resources` | 空；非空会进 `warnings`（PMX 常见白模原因） |
 | `platform.gl_renderer` | 应显示 NVIDIA 显卡，用于确认走的是独显而非 llvmpipe/软件渲染 |
@@ -124,13 +128,14 @@ cmake --build cmake-build-verify --parallel
 | `0xC0000135` 但 DLL 都在 | ABI 混用（MSVC 版 Qt + llvm-mingw 编译器） | Qt 必须选 `llvm-mingw_64` 套件 |
 | `-DPPET_WITH_CUBISM=OFF` 仍启用 Live2D | 旧版本被自动检测 `FORCE` 覆盖 | 已修复：显式设置优先；`git pull` 后删除 `cmake-build-*` 重新 configure |
 | 模型能加载但白模 | PMX 单文件导入，贴图没跟上 | 把 `.pmx` 与 `tex/` 一起打包成 `.zip` 再导入；`missing_resources` 会列出缺哪些 |
+| 诊断面板「正常渲染」、GL 错误 0、Draw calls 正常，但屏幕没模型 | 主循环漏了每帧清屏，深度缓冲残留导致片元全被剔除 | `git pull` 到最新版（已修复）；打开诊断面板看「实际出图 Pixels」是否为 `0.00% ← 未出图`；见 [build.md](build.md#运行期诊断面板全绿屏幕却看不到模型) |
 | 弹「Live2D 后端未启用」 | 没开 `PPET_WITH_CUBISM` | 检查 configure 输出有无「启用真实 Cubism SDK」 |
 | `GL_RENDERER` 显示 llvmpipe / Microsoft Basic Render | 用了软件渲染 | NVIDIA 控制面板里把 `ppet.exe` 指定为高性能 GPU |
 
 ## 6. 手动 UI 验证清单（自动化覆盖不到的部分）
 
 1. 托盘右键 → **模型诊断**（`Ctrl+Shift+D`），确认六个页签都有内容：
-   - 概览与渲染（模型 ID、状态灯、FPS、GL 错误）
+   - 概览与渲染（模型 ID、状态灯、FPS、GL 错误）——**重点核对「实际出图 Pixels」> 0 且状态灯为绿**；这一行是帧缓冲读回的真实像素证据，比 draw calls / GL 错误更能说明「真的画出来了」
    - 参数（顶点/三角形/骨骼/贴图）
    - **骨架信息**：逐根骨骼 ID、名称、父级、层级、属性
    - **图片渲染**：贴图缩略图 + 当前渲染帧实时预览

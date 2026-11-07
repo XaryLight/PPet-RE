@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    PPet Windows 11 真机验收（T1）：全编译 -> 试运行 -> 三类模型加载 -> 渲染截图 -> JSON 报告。
+    PPet Windows 11 真机验收（T1）：全编译 -> 试运行 -> 三类模型加载 -> 渲染截图 -> 清屏契约回归 -> JSON 报告。
 
 .DESCRIPTION
     面向的环境：
@@ -14,6 +14,8 @@
       4. 试运行：启动 ppet.exe 数秒，检查是否闪退（0xC0000135 等）与 last.log 有无 FATAL
       5. 渲染验证：对 VRM / PMX(.zip) / moc3 各跑一次 ppet_render_verify.exe，
          产出 PNG 截图 + JSON 报告，最后汇总成 summary.json
+      6. 清屏契约回归：同一模型跑「每帧清屏 / 漏清屏」两次，确认漏清屏时
+         帧缓冲零像素、但后端仍误报「正常渲染」，把该 bug 钉死在真机上
 
     详细手册见 docs/windows-test.md。
 
@@ -247,6 +249,65 @@ foreach ($c in $cases) {
         gl_error = if ($detail) { $detail.render.gl_error } else { $null }
         gl_renderer = if ($detail) { $detail.platform.gl_renderer } else { $null }
         exit_code = $code
+    }
+}
+
+# ---------------------------------------------------------------------------
+# 附加验收：主循环清屏契约回归
+#
+# 真实 bug：主循环漏了每帧清屏时，draw calls / GL 错误 / 贴图 / FPS 全部正常，
+# 但帧缓冲零像素、屏幕看不到模型，后端还报「正常渲染」。这里用同一模型跑
+# 两次（清屏 / 漏清屏）把这个契约钉死，确保 Windows 真机上也复现得到。
+# ---------------------------------------------------------------------------
+Write-Step "附加验收：主循环清屏契约回归"
+$contractModel = $null
+foreach ($c in $cases) {
+    if (-not [string]::IsNullOrWhiteSpace($c.Path) -and (Test-Path $c.Path)) {
+        $contractModel = $c.Path
+        break
+    }
+}
+if (-not $contractModel) {
+    Write-Warn "没有可用模型，跳过清屏契约回归"
+    $summary.steps.clear_contract = "SKIPPED"
+} else {
+    $okReport = Join-Path $OutFull "clear_contract_ok.json"
+    $skipReport = Join-Path $OutFull "clear_contract_skip.json"
+    # 不加 2>&1：PowerShell 5.1 在 ErrorActionPreference=Stop 下对 native
+    # stderr 重定向会抛 NativeCommandError，反而让验收脚本自己中断。
+    & $verifyExe "--model" $contractModel "--shot" (Join-Path $OutFull "clear_contract_ok.png") `
+                 "--report" $okReport "--width" "320" "--height" "400" `
+                 "--frames" "6" "--swap-each-frame" | Out-Null
+    $okCode = $LASTEXITCODE
+    & $verifyExe "--model" $contractModel "--shot" (Join-Path $OutFull "clear_contract_skip.png") `
+                 "--report" $skipReport "--width" "320" "--height" "400" `
+                 "--frames" "6" "--no-clear" "--swap-each-frame" | Out-Null
+    $skipCode = $LASTEXITCODE
+
+    $okDetail = $null
+    $skipDetail = $null
+    if (Test-Path $okReport) { $okDetail = Get-Content $okReport -Raw -Encoding UTF8 | ConvertFrom-Json }
+    if (Test-Path $skipReport) { $skipDetail = Get-Content $skipReport -Raw -Encoding UTF8 | ConvertFrom-Json }
+    $okCov = if ($okDetail) { [double]$okDetail.render.coverage_percent } else { -1 }
+    $skipCov = if ($skipDetail) { [double]$skipDetail.render.coverage_percent } else { -1 }
+
+    $contractOk = ($okCode -eq 0) -and ($okCov -gt 1) -and
+                  ($skipCode -ne 0) -and ([math]::Abs($skipCov) -lt 0.001)
+    $summary.steps.clear_contract = if ($contractOk) { "PASS" } else { "FAIL" }
+    $summary.clear_contract = [ordered]@{
+        model = $contractModel
+        cleared_coverage_percent = $okCov
+        skipped_coverage_percent = $skipCov
+        skipped_rendering_ok = if ($skipDetail) { $skipDetail.render.rendering_ok } else { $null }
+        skipped_model_status = if ($skipDetail) { $skipDetail.render.model_status } else { $null }
+        result = if ($contractOk) { "PASS" } else { "FAIL" }
+    }
+    if ($contractOk) {
+        Write-Ok "清屏组 $okCov%（PASS） / 漏清屏组 $skipCov%（FAIL）"
+        Write-Ok "  漏清屏时后端仍报 rendering_ok=$($skipDetail.render.rendering_ok) / $($skipDetail.render.model_status) —— 印证必须用像素证据兜底"
+    } else {
+        Write-Fail "清屏契约复现失效：清屏组 $okCov%（rc=$okCode）/ 漏清屏组 $skipCov%（rc=$skipCode）"
+        $allPass = $false
     }
 }
 

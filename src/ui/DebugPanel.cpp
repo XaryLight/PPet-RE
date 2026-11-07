@@ -476,7 +476,10 @@ void DebugPanel::Update(const ModelDebugInfo& model, const RuntimeStats& runtime
     State state = State::Idle;
     if (!model.loaded) {
         state = State::Idle;
-    } else if (!model.renderingOk || runtime.glError != 0) {
+    } else if (!model.renderingOk || runtime.glError != 0 ||
+               (runtime.hasFrameEvidence && runtime.frameCoveragePercent <= 0.0)) {
+        // 帧缓冲一个非透明像素都没有 = 没出图。模型后端的 renderingOk
+        // 只看网格/GPU/GL 错误，必须再用真实像素证据兜一次底。
         state = State::Error;
     } else if (!model.missingResources.empty() ||
                (model.textureReferenced > 0 && model.textureLoaded < model.textureReferenced)) {
@@ -512,6 +515,18 @@ void DebugPanel::Update(const ModelDebugInfo& model, const RuntimeStats& runtime
         rows.emplace_back("结论 Status", model.renderStatus.empty() ? "-" : model.renderStatus);
 
         std::vector<std::pair<std::string, std::string>> renderRows;
+        // 放在第一行：这是唯一能证明「真的出图」的证据，优先级高于
+        // draw calls / GL 错误 / FPS 这些间接指标。
+        if (runtime.hasFrameEvidence) {
+            char cov[128];
+            std::snprintf(cov, sizeof(cov), "%.2f%%（%lld / %lld 像素）%s",
+                          runtime.frameCoveragePercent, runtime.frameNonTransparent,
+                          runtime.frameTotalPixels,
+                          runtime.frameCoveragePercent <= 0.0 ? " ← 未出图" : "");
+            renderRows.emplace_back("实际出图 Pixels", cov);
+        } else {
+            renderRows.emplace_back("实际出图 Pixels", "未采集");
+        }
         renderRows.emplace_back("GPU 就绪", model.gpuReady ? "是" : "否（等待首帧）");
         renderRows.emplace_back("GL 错误", runtime.glError == 0
                                               ? "0（无）"

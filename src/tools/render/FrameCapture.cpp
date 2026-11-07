@@ -37,7 +37,11 @@
 namespace ppet {
 
 bool CaptureRenderFrame(const std::string& pngPath, int& outWidth, int& outHeight,
-                        std::string& error) {
+                        std::string& error, FramePixelStats* outStats) {
+    if (outStats) *outStats = FramePixelStats{};
+    outWidth = 0;
+    outHeight = 0;
+
     GLint viewport[4] = {0, 0, 0, 0};
     glGetIntegerv(GL_VIEWPORT, viewport);
     const int w = viewport[2];
@@ -54,17 +58,22 @@ bool CaptureRenderFrame(const std::string& pngPath, int& outWidth, int& outHeigh
     while (glGetError() != GL_NO_ERROR) {
     }
 
-    std::vector<unsigned char> flipped(raw.size(), 0);
-    const std::size_t stride = static_cast<std::size_t>(w) * 4;
-    for (int y = 0; y < h; ++y) {
-        std::memcpy(flipped.data() + static_cast<std::size_t>(y) * stride,
-                    raw.data() + static_cast<std::size_t>(h - 1 - y) * stride, stride);
-    }
+    // 读回一次，统计与写图共用这份数据：面板可见时顺带得到像素证据，
+    // 不额外增加 glReadPixels 开销。
+    if (outStats) *outStats = AnalyzeFramePixels(raw.data(), w, h);
 
-    if (stbi_write_png(pngPath.c_str(), w, h, 4, flipped.data(),
-                       static_cast<int>(stride)) == 0) {
-        error = "写 PNG 失败：" + pngPath;
-        return false;
+    if (!pngPath.empty()) {
+        std::vector<unsigned char> flipped(raw.size(), 0);
+        const std::size_t stride = static_cast<std::size_t>(w) * 4;
+        for (int y = 0; y < h; ++y) {
+            std::memcpy(flipped.data() + static_cast<std::size_t>(y) * stride,
+                        raw.data() + static_cast<std::size_t>(h - 1 - y) * stride, stride);
+        }
+        if (stbi_write_png(pngPath.c_str(), w, h, 4, flipped.data(),
+                           static_cast<int>(stride)) == 0) {
+            error = "写 PNG 失败：" + pngPath;
+            return false;
+        }
     }
     outWidth = w;
     outHeight = h;

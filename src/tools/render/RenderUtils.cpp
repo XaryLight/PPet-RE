@@ -35,9 +35,18 @@ Vec3 LinearToSrgb(const Vec3& c) {
 }
 
 void ClearTransparent() {
+    // glClear 受 colorMask / depthMask 影响。绘制半透明材质时
+    // SkinnedMeshRenderer::ApplyMaterial 会把 glDepthMask 置成 GL_FALSE
+    // （避免透明部件挡住后面的部件），这个状态会一直留到下一帧。
+    // 若不在清屏前复位，glClear(GL_DEPTH_BUFFER_BIT) 等于没执行：
+    // 深度缓冲残留，下一帧所有片元因深度相等被 GL_LESS 剔除 ——
+    // 表现是 draw calls / FPS / GL 错误全部正常，画面却全空。
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glDepthMask(GL_TRUE);
     // 桌宠需要真透明背景：清成 (0,0,0,0)，
     // 配合开启了 alpha 混合的合成阶段，窗口才能透出桌面。
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    glClearDepth(1.0);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 }
 

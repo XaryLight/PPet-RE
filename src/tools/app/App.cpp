@@ -44,6 +44,10 @@ constexpr const char* kIdFeedback = "feedback";
 constexpr const char* kIdAbout = "about";
 constexpr const char* kIdQuit = "quit";
 
+/// 不打开诊断面板时，每隔多少帧做一次「帧缓冲是否有像素」的轻量自检。
+/// 60 FPS 下约 2 秒一次；每次只读回一帧 RGBA，开销远小于一次贴图上传。
+constexpr std::uint64_t kEvidenceProbeFrames = 120;
+
 /// 从 URL 字符串中提取模型路径（去掉查询参数）。
 std::string StripQuery(const std::string& url) {
     const std::size_t q = url.find('?');
@@ -753,6 +757,46 @@ RenderContext App::BuildRenderContext(float deltaTime) const {
     return ctx;
 }
 
+void App::CollectFrameEvidence(bool wantPreview) {
+    std::string shotPath;
+    if (wantPreview) {
+        shotPath =
+            (std::filesystem::temp_directory_path() / "ppet_render_preview.png").string();
+    }
+    int width = 0;
+    int height = 0;
+    std::string error;
+    FramePixelStats stats;
+    // pngPath 为空时只统计不写图；抓帧内部会清掉 glReadPixels 自身产生的
+    // GL 错误，本帧真正的错误已在调用前由 ConsumeGlErrors() 采集完毕。
+    if (!CaptureRenderFrame(shotPath, width, height, error, &stats)) {
+        lastEvidenceError_ = error;
+        if (wantPreview) lastPreviewPath_.clear();
+        PPET_LOG_TAG_DEBUG("RENDER", "帧像素证据采集失败：%s", error.c_str());
+        return;
+    }
+
+    lastEvidenceFrame_ = frameCount_;
+    hasFrameEvidence_ = true;
+    lastFrameStats_ = stats;
+    lastEvidenceError_.clear();
+    if (wantPreview) lastPreviewPath_ = shotPath;
+
+    // 只在健康状态翻转时记一条，避免每 2 秒刷一行日志。
+    const bool healthy = stats.coveragePercent > 0.0;
+    if (healthy == lastEvidenceLoggedHealthy_) return;
+    lastEvidenceLoggedHealthy_ = healthy;
+    if (healthy) {
+        PPET_LOG_TAG("RENDER", "渲染像素证据恢复正常：%lld / %lld 非透明像素（%.2f%%）",
+                     stats.nonTransparent, stats.totalPixels, stats.coveragePercent);
+    } else {
+        PPET_LOG_TAG_ERR("RENDER",
+                         "渲染像素证据异常：帧缓冲 %d x %d 内 0 个非透明像素，"
+                         "模型虽在绘制但未出图 —— 检查每帧清屏、glDepthMask 与视口",
+                         stats.width, stats.height);
+    }
+}
+
 void App::ProcessInput() {
     // 按键处理：保留原项目的快捷键习惯。
     // GLFW 的键盘回调已由平台层分发，这里通过轮询补充处理。
@@ -788,20 +832,37 @@ void App::Run() {
         ProcessInput();
 
         const RenderContext ctx = BuildRenderContext(deltaTime);
+        // 每帧必须先清屏（颜色 + 深度），与 IModel::Render 的契约一致。
+        // 双缓冲交换后 back buffer 内容按 GL 规范是未定义的，深度缓冲也会
+        // 残留上一帧的值；不清屏时下一帧所有片元因深度相等被 GL_LESS 剔除，
+        // 结果是 draw calls / FPS / GL 错误全部正常，画面却全空。
+        // ClearTransparent() 内部会复位 colorMask / depthMask（半透明材质会
+        // 把 depthMask 留成 GL_FALSE，否则 glClear 清不掉深度）。
+        ClearTransparent();
         if (model_) {
             model_->Update(ctx);
             model_->Render(ctx);
-        } else {
-            ClearTransparent();
         }
 
         // 设置界面是独立 Qt 窗口；每帧手动驱动 Qt 事件分发，
         // 与 GLFW 主循环共用同一条主线程（无需独立 Qt 线程）。
         settingsPanel_.PumpEvents();
 
+        // 先消费本帧 GL 错误：下面的帧像素读回内部会清空错误队列，
+        // 若放到读回之后再采集，真实错误会被吞掉。
+        const unsigned int frameGlError = ConsumeGlErrors();
+
+        // 帧像素证据：面板可见时每 200 ms 抓帧（顺带统计），面板不可见时
+        // 每 kEvidenceProbeFrames 帧做一次轻量读回自检，结果也写日志。
+        // 这样「draw calls 正常但帧缓冲全空」不打开面板也能被发现。
+        const bool refreshPanel = debugPanel_.ShouldRefresh();
+        if (refreshPanel || frameCount_ - lastEvidenceFrame_ >= kEvidenceProbeFrames) {
+            CollectFrameEvidence(refreshPanel);
+        }
+
         // 诊断面板：只有在可见且到达刷新时刻（200 ms）时才采集快照。
         // IModel::DebugInfo() 会检查贴图文件是否存在，每帧做会有不必要的 IO。
-        if (debugPanel_.ShouldRefresh()) {
+        if (refreshPanel) {
             RuntimeStats stats;
             stats.fps = frameMsSmoothed_ > 0.0f ? 1000.0f / frameMsSmoothed_ : 0.0f;
             stats.frameMs = frameMsSmoothed_;
@@ -818,12 +879,32 @@ void App::Run() {
             stats.desktopWidth = desktop.width;
             stats.desktopHeight = desktop.height;
             stats.logPath = Logger::Path();
-            // 消费 GL 错误队列：0 表示本帧区间内没有 GL 错误。
-            stats.glError = ConsumeGlErrors();
+            stats.glError = frameGlError;
+
+            // 帧缓冲像素证据：让「正常渲染」结论建立在真实像素上。
+            if (hasFrameEvidence_) {
+                stats.hasFrameEvidence = true;
+                stats.frameCoveragePercent = lastFrameStats_.coveragePercent;
+                stats.frameNonTransparent = lastFrameStats_.nonTransparent;
+                stats.frameTotalPixels = lastFrameStats_.totalPixels;
+                stats.frameEvidenceWidth = lastFrameStats_.width;
+                stats.frameEvidenceHeight = lastFrameStats_.height;
+            }
+            if (!lastPreviewPath_.empty()) {
+                stats.renderPreviewPath = lastPreviewPath_;
+                char note[160];
+                std::snprintf(note, sizeof(note),
+                              "渲染帧 %d x %d（非透明像素 %.2f%%，每 200 ms 抓取）",
+                              lastFrameStats_.width, lastFrameStats_.height,
+                              lastFrameStats_.coveragePercent);
+                stats.renderPreviewNote = note;
+            } else if (!lastEvidenceError_.empty()) {
+                stats.renderPreviewNote = "渲染帧抓取失败：" + lastEvidenceError_;
+            }
 
             ModelDebugInfo info = model_ ? model_->DebugInfo() : ModelDebugInfo();
             info.sourceArchive = lastFromZip_ ? lastPackage_.sourceArchive : std::string();
-            info.glError = stats.glError;
+            info.glError = frameGlError;
             // 稳定 ID + 最近一次加载的详细错误（供诊断面板对照日志）。
             info.modelId = model_ ? MakeModelId(info.path, info.type) : std::string();
             if (!lastLoadError_.ok()) {
@@ -832,31 +913,26 @@ void App::Run() {
                 info.errorDetails.insert(info.errorDetails.begin(),
                                          lastLoadError_.summary);
             }
-            // 抓当前渲染帧给「图片渲染」页预览。仅面板可见时执行，
-            // 且 App 已经先用 ConsumeGlErrors() 采集过本帧 GL 错误。
-            {
-                const std::string shotPath =
-                    (std::filesystem::temp_directory_path() /
-                     "ppet_render_preview.png").string();
-                int shotW = 0;
-                int shotH = 0;
-                std::string capError;
-                if (CaptureRenderFrame(shotPath, shotW, shotH, capError)) {
-                    stats.renderPreviewPath = shotPath;
-                    char note[128];
-                    std::snprintf(note, sizeof(note),
-                                  "渲染帧 %d x %d（面板可见时每 200 ms 抓取）",
-                                  shotW, shotH);
-                    stats.renderPreviewNote = note;
-                } else {
-                    stats.renderPreviewNote = "渲染帧抓取失败：" + capError;
-                }
-            }
-            if (stats.glError != 0 && model_) {
+            if (frameGlError != 0 && model_) {
                 info.renderingOk = false;
                 char buf[64];
-                std::snprintf(buf, sizeof(buf), "GL 错误码 %u", stats.glError);
+                std::snprintf(buf, sizeof(buf), "GL 错误码 %u", frameGlError);
                 info.renderStatus = buf;
+            }
+            // 模型后端的 renderingOk 只看「网格/GPU/GL 错误」，无法证明有像素。
+            // 这里用读回结果做最终裁决：一个非透明像素都没有 = 没出图。
+            if (hasFrameEvidence_ && model_ && lastFrameStats_.coveragePercent <= 0.0) {
+                info.renderingOk = false;
+                info.renderStatus = "帧缓冲为空：模型未出图（0% 覆盖率）";
+                info.errorCategory = "渲染无输出";
+                info.errorDetails = {
+                    "帧缓冲读回 0 个非透明像素：draw calls、贴图、FPS 与 GL 错误"
+                    "都可能正常，但屏幕上没有画面。",
+                    "常见原因：渲染前未清屏（尤其深度缓冲 / glDepthMask 被半透明"
+                    "材质置为 GL_FALSE）、视口为 0、窗口透明合成丢失 alpha。",
+                    "排查：确认主循环每帧调用 ClearTransparent()，"
+                    "并用 ppet_render_verify 对该模型做离屏渲染验证。",
+                };
             }
             debugPanel_.Update(info, stats);
         }

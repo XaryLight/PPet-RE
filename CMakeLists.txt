@@ -1022,6 +1022,12 @@ add_test(NAME window_layout_unit
          COMMAND ppet_window_layout_test
          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
+# 帧像素证据：纯统计函数，无需 GL 上下文。「正常渲染」结论靠它兜底。
+add_executable(ppet_frame_evidence_test tools/frame_evidence_test.cpp)
+add_test(NAME frame_evidence_unit
+         COMMAND ppet_frame_evidence_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
 # 模型加载失败弹窗冒烟测试（Qt 6 / offscreen）。
 add_executable(ppet_error_dialog_smoke
     tools/error_dialog_smoke.cpp
@@ -1187,6 +1193,17 @@ if(TARGET ppet_render_verify AND PPET_XVFB_RUN)
                  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
         set_tests_properties(render_verify_${_rv} PROPERTIES SKIP_RETURN_CODE 2)
     endforeach()
+
+    # 清屏契约回归：复现「漏清屏 -> 帧缓冲零像素，但间接指标全绿」这一真实 bug，
+    # 断言清屏组出图、漏清屏组零像素，钉死主循环每帧 ClearTransparent() 的必要性。
+    add_test(NAME render_verify_clear_contract
+             COMMAND ${CMAKE_COMMAND}
+                     -DRENDER_VERIFY=$<TARGET_FILE:ppet_render_verify>
+                     -DMODEL=${CMAKE_CURRENT_SOURCE_DIR}/tools/testdata/test.pmx
+                     -DOUTDIR=${CMAKE_CURRENT_BINARY_DIR}/clear_contract
+                     -DXVFB=${PPET_XVFB_RUN}
+                     -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/verify_clear_contract.cmake
+             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
 
 # ---------------------------------------------------------------------------

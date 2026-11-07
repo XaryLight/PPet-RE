@@ -1,0 +1,52 @@
+{
+  "note": "真实问题模型（用户上传的 表情.zip / 苍鹭·托特「扉页之吻」白衣1.0.pmx）离屏复现与修复验证",
+  "model": {
+    "display_name": "苍鹭·托特「扉页之吻」",
+    "type": "PMX",
+    "vertices": 34030,
+    "triangles": 42316,
+    "materials": 31,
+    "bones": 695,
+    "textures_referenced": 11,
+    "missing_resources": 0
+  },
+  "fixed_main_loop": {
+    "flags": "--swap-each-frame（每帧清屏 + 每帧交换，等价于修复后的 App::Run）",
+    "frame_coverage_percent": [
+      20.77,
+      20.77,
+      20.77,
+      20.77,
+      20.77,
+      20.77,
+      20.78,
+      20.78,
+      20.78,
+      20.78,
+      20.78,
+      20.77
+    ],
+    "coverage_percent": 20.774,
+    "gl_error": 0,
+    "result": "PASS",
+    "screenshot": "case_thoth_pmx.png"
+  },
+  "buggy_main_loop": {
+    "flags": "--no-clear --swap-each-frame（模拟修复前 App::Run 漏清屏）",
+    "frame_coverage_percent": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "coverage_percent": 0.0,
+    "gl_error": 0,
+    "rendering_ok": true,
+    "model_status": "正常渲染",
+    "result": "FAIL",
+    "screenshot": "case_thoth_pmx_noclear.png"
+  },
+  "conclusion": "漏清屏时帧缓冲 0 个非透明像素，但 rendering_ok=true、model_status=正常渲染、GL 错误 0，与用户诊断面板完全一致；每帧清屏后逐帧稳定约 20.77% 覆盖率。"
+}

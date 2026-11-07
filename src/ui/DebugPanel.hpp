@@ -53,6 +53,15 @@ struct RuntimeStats {
     /// 当前渲染帧的 PNG 路径（App 在面板可见时抓取，供「图片渲染」页预览）。
     std::string renderPreviewPath;
     std::string renderPreviewNote;
+
+    /// 帧缓冲像素证据：读回 RGBA 后统计，用于判定「是否真的出图」。
+    /// hasFrameEvidence=false 表示尚未采集过（例如刚启动、抓帧失败）。
+    bool hasFrameEvidence = false;
+    double frameCoveragePercent = 0.0;
+    long long frameNonTransparent = 0;
+    long long frameTotalPixels = 0;
+    int frameEvidenceWidth = 0;
+    int frameEvidenceHeight = 0;
 };
 
 class DebugPanel {
