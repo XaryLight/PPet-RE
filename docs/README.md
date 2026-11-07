@@ -20,4 +20,5 @@
 
 - [settings-panel.png](settings-panel.png) —— 设置面板截图
 - [live2d-verify.png](live2d-verify.png) —— Live2D 渲染验证截图
+- [live2d-render-fixed.png](live2d-render-fixed.png) —— **修复「渲染偏白」后的真实模型渲染结果**（白像素 7.66% → 0.01%）
 - [verify/](verify/) —— **VRM / PMX(zip) / moc3 三类模型的渲染截图与 JSON 报告**（Linux 离屏等价验证）
