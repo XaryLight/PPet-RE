@@ -308,9 +308,39 @@ PPet-RE/
 │   ├── app/                  # 主循环与应用编排
 │   └── main.cpp              # 程序入口
 ├── src/csdk/                 # Cubism SDK for Native 的 Core 目录（可选，需自备）
+├── Compiler/                 # 文案翻译器：JSON/CSV 界面文案 → C++ 内嵌表
+│   ├── i18n/                 # zh-CN.json / en-US.json（文案的唯一来源）
+│   └── i18n_gen/             # 翻译器源码与单元测试
 ├── third_party/              # nlohmann/json、stb、zlib（源码随仓库）
 └── tools/                    # 测试素材生成脚本与测试程序
 ```
+
+---
+
+## 界面文案（Compiler/）
+
+界面文案不在 C++ 代码里，而是放在 `Compiler/i18n/{zh-CN,en-US}.json`，
+构建时由 **文案翻译器**（`Compiler/i18n_gen/`）翻译成 C++ 内嵌表
+（`constexpr` 表 + X 宏，生成到构建目录，运行时零成本）。
+
+| 特点 | 说明 |
+| --- | --- |
+| 单一来源 | 改文案只改 JSON，不用再在两个 `if` 分支里手抄两遍 |
+| 构建期校验 | 「文案键 ↔ `struct Strings` 成员」必须一一对应，少一条 / 多一条 / 拼错键都会立刻报错，不会出现界面空白 |
+| 支持 CSV | 翻译器按扩展名自动判断 `.json` / `.csv`；含逗号的字段用双引号包起来即可 |
+| 可离线校验 | `ppet_i18n_gen --check` 只比对不写文件，CI 可用来检查生成物是否过期 |
+
+```bash
+# 改完文案后直接重新构建，CMake 会自动重跑翻译器
+cmake --build build
+
+# 也可以用 CSV 作为文案源
+cmake -S . -B build \
+  -DPPET_I18N_ZH=Compiler/i18n/zh-CN.csv \
+  -DPPET_I18N_EN=Compiler/i18n/en-US.csv
+```
+
+详见 [`Compiler/README.md`](Compiler/README.md)。
 
 ---
 
@@ -332,6 +362,7 @@ ctest --output-on-failure
 - **设置界面冒烟测试**：Qt 6 对话框创建、显示/隐藏切换、控件初始化、事件泵处理（offscreen 平台运行）
 - **ZIP 模型包导入测试**：解压中央目录、定位包内模型、幂等重导入、非法输入处理
 - **中文路径测试**：含中文的目录/文件名读写、目录遍历、相对路径转换、环境变量读取、ZIP 条目名编码归一化
+- **文案翻译器测试**：CSV/JSON 解析、结构体成员解析、键与成员一致性校验、字面量转义、`.inl` 生成；另有一项用仓库真实文案跑 `--check`，确保生成物未过期
 - **Live2D 渲染验证**（需 SDK）：加载真实 `.model3.json`，渲染后统计非透明像素并导出 PNG
 
 测试素材由脚本生成：

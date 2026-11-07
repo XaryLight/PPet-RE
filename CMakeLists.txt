@@ -584,6 +584,61 @@ endif()
 find_package(Qt6 REQUIRED COMPONENTS Widgets)
 
 # ---------------------------------------------------------------------------
+# Compiler/：文案翻译器
+#
+# 把 Compiler/i18n/*.json 里的界面文案「翻译」成 C++ 内嵌表
+# （constexpr 表 + X 宏），生成到构建目录下的 core/I18nStrings.inl。
+#
+# 这样中英文文案只有一份来源（JSON），不再在 src/core/I18n.cpp 里手抄两遍；
+# 生成器还会在构建期校验「文案键 ↔ struct Strings 成员」一一对应，
+# 拼错键、少翻译都会立刻报错，而不是等到界面上出现空白。
+# ---------------------------------------------------------------------------
+if(CMAKE_CROSSCOMPILING)
+    # 生成器必须跑在宿主机上。交叉编译时借 wine 运行；没有 wine 就明确报错，
+    # 而不是让构建走到一半才失败。
+    find_program(PPET_WINE_EXECUTABLE wine)
+    if(PPET_WINE_EXECUTABLE)
+        set(CMAKE_CROSSCOMPILING_EMULATOR ${PPET_WINE_EXECUTABLE})
+    else()
+        message(FATAL_ERROR
+            "交叉编译时无法运行文案翻译器（它必须跑在宿主机上）。\n"
+            "请安装 wine 并把它加进 PATH，或在宿主机上先跑一次生成器：\n"
+            "    cmake --build <build> --target ppet_i18n_gen_run")
+    endif()
+endif()
+
+add_executable(ppet_i18n_gen
+    Compiler/i18n_gen/i18n_gen.cpp
+    Compiler/i18n_gen/main.cpp
+)
+target_include_directories(ppet_i18n_gen PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/Compiler/i18n_gen
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
+
+set(PPET_I18N_ZH ${CMAKE_CURRENT_SOURCE_DIR}/Compiler/i18n/zh-CN.json CACHE FILEPATH
+    "中文文案源文件（.json 或 .csv）")
+set(PPET_I18N_EN ${CMAKE_CURRENT_SOURCE_DIR}/Compiler/i18n/en-US.json CACHE FILEPATH
+    "英文文案源文件（.json 或 .csv）")
+set(PPET_I18N_STRUCT_HEADER ${CMAKE_CURRENT_SOURCE_DIR}/src/core/I18n.hpp CACHE FILEPATH
+    "struct Strings 所在的头文件（用于校验文案键与成员一一对应）")
+set(PPET_I18N_GEN_DIR ${CMAKE_BINARY_DIR}/generated)
+set(PPET_I18N_INL ${PPET_I18N_GEN_DIR}/core/I18nStrings.inl)
+
+add_custom_command(
+    OUTPUT ${PPET_I18N_INL}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${PPET_I18N_GEN_DIR}/core
+    COMMAND ppet_i18n_gen
+            --out ${PPET_I18N_INL}
+            --struct ${PPET_I18N_STRUCT_HEADER}
+            --zh ${PPET_I18N_ZH}
+            --en ${PPET_I18N_EN}
+    DEPENDS ppet_i18n_gen ${PPET_I18N_ZH} ${PPET_I18N_EN} ${PPET_I18N_STRUCT_HEADER}
+    COMMENT "翻译界面文案：Compiler/i18n/*.json -> core/I18nStrings.inl"
+    VERBATIM)
+add_custom_target(ppet_i18n_gen_run DEPENDS ${PPET_I18N_INL})
+message(STATUS "文案翻译器：${PPET_I18N_ZH} + ${PPET_I18N_EN} -> ${PPET_I18N_INL}")
+
+# ---------------------------------------------------------------------------
 # 主程序
 # ---------------------------------------------------------------------------
 set(PPET_CORE_SOURCES
@@ -602,6 +657,7 @@ add_executable(ppet ${PPET_CORE_SOURCES} src/main.cpp)
 target_link_libraries(ppet PRIVATE ppet_model ppet_platform ppet_zlib Qt6::Widgets)
 set_target_properties(ppet PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+
 
 # MinGW + Cubism 动态库方案：把 Live2DCubismCore.dll 拷到可执行文件旁边，
 # 否则程序启动时会因找不到 DLL 而失败。
@@ -832,6 +888,31 @@ add_test(NAME vrm_unit
          COMMAND ppet_vrm_test
          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
+# ---------------------------------------------------------------------------
+# 文案翻译器（Compiler/i18n_gen）的单元测试
+# ---------------------------------------------------------------------------
+add_executable(ppet_i18n_gen_test
+    Compiler/i18n_gen/i18n_gen.cpp
+    Compiler/i18n_gen/i18n_gen_test.cpp
+)
+target_include_directories(ppet_i18n_gen_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/Compiler/i18n_gen
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
+add_test(NAME i18n_gen_unit
+         COMMAND ppet_i18n_gen_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# 端到端检查：真实的文案源文件能不能被翻译器正确处理，
+# 并且与构建时生成的 .inl 内容一致（防止有人改了 JSON 却忘了重建）。
+add_test(NAME i18n_gen_project
+         COMMAND ppet_i18n_gen
+                 --out ${PPET_I18N_INL}
+                 --struct ${PPET_I18N_STRUCT_HEADER}
+                 --zh ${PPET_I18N_ZH}
+                 --en ${PPET_I18N_EN}
+                 --check
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
 # 渲染层冒烟测试必须跑在真实 GL 上下文里，所以优先用 xvfb-run 提供虚拟显示；
 # 没有 xvfb 时直接运行，测试程序在没有显示时会以退出码 2 表示「跳过图形检查」。
 if(TARGET ppet_render_smoke)
@@ -903,3 +984,24 @@ if(TARGET ppet_unicode_path_test)
              COMMAND $<TARGET_FILE:ppet_unicode_path_test>
              WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
+
+# ---------------------------------------------------------------------------
+# 文案翻译器的消费方登记
+#
+# src/core/I18n.cpp 会 include 生成出来的 core/I18nStrings.inl，
+# 因此凡是编译了 I18n.cpp 的目标，都需要：
+#   1) 依赖 ppet_i18n_gen_run —— 保证 .inl 已经生成；
+#   2) 把生成目录加进头文件搜索路径。
+#
+# 这里统一扫描全部目标来登记，避免以后新增目标时漏掉（漏了就是
+# "fatal error: core/I18nStrings.inl: No such file or directory"）。
+# ---------------------------------------------------------------------------
+get_property(_ppet_all_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+foreach(_ppet_t IN LISTS _ppet_all_targets)
+    get_target_property(_ppet_t_sources ${_ppet_t} SOURCES)
+    if(_ppet_t_sources AND "src/core/I18n.cpp" IN_LIST _ppet_t_sources)
+        add_dependencies(${_ppet_t} ppet_i18n_gen_run)
+        target_include_directories(${_ppet_t} PRIVATE ${PPET_I18N_GEN_DIR})
+        message(STATUS "文案翻译器：目标 ${_ppet_t} 依赖生成的内嵌表")
+    endif()
+endforeach()
