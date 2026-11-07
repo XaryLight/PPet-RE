@@ -14,15 +14,30 @@
 namespace ppet::live2d {
 
 /// 一个动作组（model3.json 的 FileReferences.Motions 的一项）。
+///
+/// Cubism 3/4 规范里组值是数组，元素可带 FadeInTime / FadeOutTime：
+///   "Idle": [ { "File": "a.motion3.json", "FadeInTime": 0.5, "FadeOutTime": 0.5 } ]
+/// 这两个 fade 与 motion3.json 的 Meta.Fade* 二选一：优先用 motion 文件自带值，
+/// 缺失时回退到这里的组级值（-1 表示该动作未指定）。
 struct Live2DMotionGroup {
     std::string name;              ///< 组名（例如 "Idle"）
     std::vector<std::string> files; ///< 该组下的动作文件（.motion3.json）绝对路径
+    std::vector<float> fadeInTimes;  ///< 与 files 一一对应，-1 = 未指定
+    std::vector<float> fadeOutTimes; ///< 与 files 一一对应，-1 = 未指定
 };
 
 /// 一个动画条目（model3.json 顶层的 Animations）。
 struct Live2DAnimation {
     std::string name;  ///< 动画名
     std::string file;  ///< 动画文件（.motion3.json）绝对路径
+};
+
+/// 一个点击命中区（model3.json 顶层的 HitAreas）。
+/// Cubism 用 Drawable 的 ID 关联区域，Name 是部位名（head/body/leg/...），
+/// 用于把鼠标点击映射到对应的互动动作组（如 TapHead / TapBody）。
+struct Live2DHitArea {
+    std::string id;    ///< Drawable ID（如 "HitAreaHead"），精确命中判定用
+    std::string name;  ///< 部位名（如 "head"），动作组映射用
 };
 
 /// .model3.json 的解析结果。
@@ -37,6 +52,7 @@ struct Live2DManifest {
 
     std::vector<Live2DMotionGroup> motionGroups; ///< 动作组
     std::vector<Live2DAnimation> animations;     ///< 动画
+    std::vector<Live2DHitArea> hitAreas;         ///< 点击命中区
 };
 
 /// 定位 .model3.json。

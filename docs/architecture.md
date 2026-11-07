@@ -20,6 +20,11 @@ PPet/
 │       └── render/             # Renderer / Camera / RenderUtils / FrameCapture
 ├── api/                    # ★ 外部 SDK / 第三方库的引用与适配层
 │   ├── live2d/             # Cubism SDK 集成：model3.json / moc3 / 动作 / Live2DModel
+│   │   ├── MotionDirector.hpp  # ★ 动作调度（纯逻辑：待机/互动/优先级/fade，可脱离 SDK 单测）
+│   │   ├── Live2DModel.*       # 模型生命周期 / 参数驱动 / 绘制
+│   │   ├── Live2DManifest.*    # model3.json 解析（含 HitAreas）
+│   │   ├── Live2DMotion.*      # motion3.json 曲线解析（含 Fade）
+│   │   ├── CubismCore*         # SDK 唯一适配点
 │   │   └── csdk/           # 用户自备的 Cubism Core（gitignore，不入库）
 │   └── vendor/             # nlohmann/json、stb、zlib 的统一引用头
 ├── third_party/            # 第三方源码（nlohmann / stb / zlib），随仓库分发
@@ -76,6 +81,25 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 | 换第三方库不扩散 | `api/vendor/` 是单一引用点 |
 | 路径不随文件位置漂移 | 根索引：移动文件时 include 只改前缀，不需要 `../` 相对路径 |
 | 交叉编译友好 | `#include <src/...>` 只依赖一个 `-I <root>`，不受 `CMAKE_FIND_ROOT_PATH` 影响 |
+
+## Live2D 动作系统分层
+
+参考原 ppet / Touhou Desktop Pet 的动作组织（Idle 待机循环 + HitArea 点击互动 +
+优先级打断 + Fade），拆成「解析 → 调度 → 驱动」三层，前两层与 Cubism SDK 解耦：
+
+| 层 | 文件 | 职责 | 依赖 |
+| --- | --- | --- | --- |
+| 解析 | `Live2DManifest.*` / `Live2DMotion.*` | `model3.json` 的 Motions 分组、**HitAreas**、`motion3.json` 曲线与 **FadeIn/FadeOut** | 仅 json + FileIO |
+| 调度 | `MotionDirector.hpp` | 组名分类（Idle/Tap/Pinch…）、空间分区命中、优先级状态机、待机冷却、fade 权重 | **纯 STL，零依赖** |
+| 驱动 | `Live2DModel.*` | 每帧复位参数默认值 → 叠加视线/眨眼/呼吸 → 按调度采样曲线并 fade 混合写入 | Cubism Core + GL |
+
+`IModel::OnInteract(nx, ny)` 是上层（App）点击 → 模型的统一入口，默认空实现，
+PMX / VRM 不受影响。调度器的正确性由 `motion_director_unit`（状态机）与
+`live2d_manifest_unit`（解析数据链）两个单测保证，三种 Cubism 配置都能跑。
+
+> 解析层有个关键约束：`model3.json` 的 Motions 组值**标准写法是数组**
+> （`"Idle": [ {"File": ...} ]`），旧实现只认对象/字符串，会把真实模型动作组解析成空。
+> 见 `CollectMotionFiles()` 与 `live2d_manifest_unit` 的回归断言。
 
 ## 构建目标层次
 

@@ -28,6 +28,7 @@
 #include <src/tools/core/Math.hpp>
 #include <src/tools/model/Model.hpp>
 #include <api/live2d/Live2DMotion.hpp>
+#include <api/live2d/MotionDirector.hpp>
 
 namespace ppet::live2d {
 
@@ -61,6 +62,10 @@ public:
 
     /// 诊断快照（供 Qt 模型诊断面板）：moc3 / 纹理 / 部件 / 动作信息。
     ModelDebugInfo DebugInfo() const override;
+
+    /// 用户点击渲染窗口：按命中区触发互动动作（TapHead / TapBody 等）。
+    /// nx, ny ∈ [0,1]，左上原点、y 向下。
+    bool OnInteract(float nx, float ny) override;
 
 private:
     /// 加载纹理。失败时使用白色占位纹理，不中断加载。
@@ -123,14 +128,11 @@ private:
     /// 呼吸相位。
     float breathPhase_ = 0.0f;
 
-    /// 动作播放状态。
-    struct ActiveMotion {
-        const Motion* motion = nullptr;
-        float time = 0.0f;
-        bool looping = false;
-    };
-    ActiveMotion motion_;
-    float motionCooldown_ = 0.0f;
+    /// 动作调度器：Idle 待机随机循环 + 点击互动 + 优先级 + 淡入淡出。
+    /// 参考原 ppet / Touhou Desktop Pet 的动作组织，纯逻辑、可单测。
+    MotionDirector motionDirector_;
+
+    /// 眨眼随机源（与动作调度分开，互不影响可复现性）。
     std::mt19937 rng_{20240101u};
 };
 

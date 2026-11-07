@@ -62,6 +62,10 @@ struct MotionCurve {
 struct Motion {
     float duration = 0.0f;      ///< 总时长（秒）
     float fps = 30.0f;          ///< 帧率
+    /// 淡入/淡出时长（秒）。motion3.json 的 Meta.FadeInTime / FadeOutTime，
+    /// 缺省 0 表示不淡入淡出。动作切换时用它们做参数混合，避免姿态跳变。
+    float fadeInTime = 0.0f;
+    float fadeOutTime = 0.0f;
     std::vector<MotionCurve> curves;
 
     /// 按时间采样，返回该时刻各曲线的值。

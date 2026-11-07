@@ -352,7 +352,7 @@ bool DebugPanel::Initialize(std::string& error) {
     dialog->setMinimumSize(620, 480);
     dialog->resize(780, 600);
     dialog->setAttribute(Qt::WA_QuitOnClose, false);
-    dialog->setWindowFlag(Qt::WindowStaysOnTopHint, true);
+    // 置顶只作用于渲染窗口；Qt 诊断面板保持普通窗口层级（Show 时 raise 即可）。
     impl_->dialog = dialog;
 
     BuildUi();
@@ -556,6 +556,17 @@ void DebugPanel::Update(const ModelDebugInfo& model, const RuntimeStats& runtime
                            "</b></p>";
         html += HtmlSection("模型概览 / Overview", rows);
         html += HtmlSection("渲染状态 / Render status", renderRows);
+        // 动作系统：仅 Live2D 后端提供（待机/互动动作状态、动作组与命中区）。
+        // PMX/VRM 没有动作调度，motionSummary 为空，此时不显示该分组。
+        if (!model.motionSummary.empty()) {
+            std::vector<std::pair<std::string, std::string>> motionRows;
+            motionRows.emplace_back("动作状态 Motion",
+                                    model.motionStatus.empty() ? "-" : model.motionStatus);
+            motionRows.emplace_back("动作组 / 命中区 Groups", model.motionSummary);
+            motionRows.emplace_back("点击互动 Interaction",
+                                    "点击角色不同部位触发对应互动动作");
+            html += HtmlSection("动作系统 / Motion", motionRows);
+        }
         impl_->overviewView->setHtml(ToQString(html));
     }
 

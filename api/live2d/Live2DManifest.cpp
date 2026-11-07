@@ -91,36 +91,68 @@ std::string JsonString(const nlohmann::json& obj, const char* key) {
     return it->get<std::string>();
 }
 
-/// 收集动作组里的动作文件（绝对路径）。
+/// 从组条目里读出可选的 FadeInTime / FadeOutTime（缺省 -1）。
+float JsonFade(const nlohmann::json& obj, const char* key) {
+    if (!obj.is_object()) return -1.0f;
+    const auto it = obj.find(key);
+    if (it == obj.end() || !it->is_number()) return -1.0f;
+    return std::max(0.0f, it->get<float>());
+}
+
+/// 收集动作组里的动作文件与组级 fade（绝对路径 / 秒）。
 ///
-/// Cubism 3/4 规范里组的值形如 { "File": "a.motion3.json" }；
-/// 少数工具会写成 { "File": ["a.motion3.json", "b.motion3.json"] }，两种都兼容。
+/// 【支持三种写法，覆盖 Cubism 3/4 与常见工具】
+///   1) 标准数组："Idle": [ { "File": "a.motion3.json", "FadeInTime": 0.5 }, ... ]
+///   2) 单对象  ："Idle": { "File": "a.motion3.json" }
+///   3) 字符串  ："Idle": "a.motion3.json"  或 { "File": ["a", "b"] }
+/// 旧实现只认 2/3，遇到标准数组直接 return，导致真实模型动作组全被解析为空。
 void CollectMotionFiles(const nlohmann::json& groupValue, const std::string& baseDir,
-                        std::vector<std::string>& outFiles) {
-    if (groupValue.is_string()) {
+                        std::vector<std::string>& outFiles,
+                        std::vector<float>& outFadeIn,
+                        std::vector<float>& outFadeOut) {
+    auto pushFile = [&](const std::string& rel, float fin, float fout) {
         std::string abs;
-        if (ResolveInsideBase(baseDir, groupValue.get<std::string>(), abs)) {
+        if (ResolveInsideBase(baseDir, rel, abs)) {
             outFiles.push_back(abs);
+            outFadeIn.push_back(fin);
+            outFadeOut.push_back(fout);
         }
+    };
+
+    if (groupValue.is_array()) {
+        // 标准写法：数组的每个元素是一个动作条目对象。
+        for (const auto& item : groupValue) {
+            CollectMotionFiles(item, baseDir, outFiles, outFadeIn, outFadeOut);
+        }
+        return;
+    }
+    if (groupValue.is_string()) {
+        pushFile(groupValue.get<std::string>(), -1.0f, -1.0f);
         return;
     }
     if (!groupValue.is_object()) return;
 
     const auto it = groupValue.find("File");
     if (it == groupValue.end()) return;
-    const nlohmann::json* file = &it.value();
+    const nlohmann::json& file = it.value();
+    const float fin = JsonFade(groupValue, "FadeInTime");
+    const float fout = JsonFade(groupValue, "FadeOutTime");
 
-    if (file->is_string()) {
-        std::string abs;
-        if (ResolveInsideBase(baseDir, file->get<std::string>(), abs)) {
-            outFiles.push_back(abs);
-        }
-    } else if (file->is_array()) {
-        for (const auto& item : *file) {
-            if (!item.is_string()) continue;
-            std::string abs;
-            if (ResolveInsideBase(baseDir, item.get<std::string>(), abs)) {
-                outFiles.push_back(abs);
+    if (file.is_string()) {
+        pushFile(file.get<std::string>(), fin, fout);
+    } else if (file.is_array()) {
+        for (const auto& entry : file) {
+            if (entry.is_string()) {
+                pushFile(entry.get<std::string>(), fin, fout);
+            } else if (entry.is_object()) {
+                // 少数工具把 File 写成对象数组，条目内可能自带 fade。
+                const auto fit = entry.find("File");
+                if (fit == entry.end() || !fit->is_string()) continue;
+                const float efin = JsonFade(entry, "FadeInTime");
+                const float efout = JsonFade(entry, "FadeOutTime");
+                pushFile(fit->get<std::string>(),
+                         efin >= 0.0f ? efin : fin,
+                         efout >= 0.0f ? efout : fout);
             }
         }
     }
@@ -312,7 +344,8 @@ bool ParseModel3Json(const std::string& model3Path, Live2DManifest& out, std::st
         for (const auto& item : refs->at("Motions").items()) {
             Live2DMotionGroup group;
             group.name = item.key();
-            CollectMotionFiles(item.value(), baseDir, group.files);
+            CollectMotionFiles(item.value(), baseDir, group.files,
+                               group.fadeInTimes, group.fadeOutTimes);
             motionGroups.push_back(group);
         }
     }
@@ -334,6 +367,22 @@ bool ParseModel3Json(const std::string& model3Path, Live2DManifest& out, std::st
         }
     }
 
+    // --- 点击命中区（顶层 HitAreas）-----------------------------------------
+    // Cubism 3 规范：HitAreas 是顶层数组，元素形如
+    //   { "Id": "HitAreaHead", "Name": "head" }
+    // Name 是部位名，用于把点击位置映射到互动动作组（TapHead 等）。
+    std::vector<Live2DHitArea> hitAreas;
+    if (doc.contains("HitAreas") && doc.at("HitAreas").is_array()) {
+        for (const auto& item : doc.at("HitAreas")) {
+            if (!item.is_object()) continue;
+            Live2DHitArea area;
+            area.id = JsonString(item, "Id");
+            area.name = JsonString(item, "Name");
+            if (area.id.empty() && area.name.empty()) continue;
+            hitAreas.push_back(std::move(area));
+        }
+    }
+
     // --- 输出 ---------------------------------------------------------------
     out = Live2DManifest();
     out.model3Path = AbsolutePath(model3Path);
@@ -343,6 +392,7 @@ bool ParseModel3Json(const std::string& model3Path, Live2DManifest& out, std::st
     out.textureRelative = textureRelative;
     out.motionGroups = motionGroups;
     out.animations = animations;
+    out.hitAreas = hitAreas;
 
     std::string name = JsonString(doc, "Name");
     if (name.empty()) name = JsonString(doc, "name");

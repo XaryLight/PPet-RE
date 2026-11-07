@@ -1028,6 +1028,26 @@ add_test(NAME frame_evidence_unit
          COMMAND ppet_frame_evidence_test
          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
+# Live2D 动作调度：纯逻辑状态机（Idle 待机循环 / HitArea 互动 / 优先级 / fade），
+# 不依赖 Cubism SDK，三种 CMake 配置均可编译运行。
+add_executable(ppet_motion_director_test tools/motion_director_test.cpp)
+add_test(NAME motion_director_unit
+         COMMAND ppet_motion_director_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# Live2D manifest/motion 解析：验证 HitAreas 与 FadeIn/FadeOut 元数据真被解析，
+# 是动作调度器的数据源。直接编译所需 .cpp（不链接 ppet_model，避免与 Cubism
+# 后端配置耦合），三种配置均可运行。
+add_executable(ppet_live2d_manifest_test
+    tools/live2d_manifest_test.cpp
+    api/live2d/Live2DManifest.cpp
+    api/live2d/Live2DMotion.cpp
+    src/tools/core/FileIO.cpp
+)
+add_test(NAME live2d_manifest_unit
+         COMMAND ppet_live2d_manifest_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
 # 模型加载失败弹窗冒烟测试（Qt 6 / offscreen）。
 add_executable(ppet_error_dialog_smoke
     tools/error_dialog_smoke.cpp

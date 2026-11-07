@@ -136,6 +136,13 @@ float ParameterValue(const Model* model, int index);
 /// 写入参数值。
 void SetParameterValue(Model* model, int index, float value);
 
+/// 把所有参数复位为模型默认值。
+///
+/// 每帧更新前调用：先把参数恢复到 moc3 记录的默认值，再依次叠加
+/// 视线追踪 / 眨眼 / 呼吸 / 动作。这样动作淡出或结束后参数能自然回落，
+/// 不会残留上一帧动作写入的值（否则表情会「卡」在最后一个动作上）。
+void ResetParametersToDefault(Model* model);
+
 /// 参数的取值范围（min/max）。
 /// @param outMin 接收下界
 /// @param outMax 接收上界

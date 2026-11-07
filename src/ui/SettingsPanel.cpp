@@ -107,8 +107,9 @@ bool SettingsPanel::Initialize(std::string& error) {
     dialog->resize(720, 560);
     // 关闭设置窗口不应退出整个程序（主窗口是 GLFW 窗口，不在 Qt 的管理范围内）。
     dialog->setAttribute(Qt::WA_QuitOnClose, false);
-    // 默认置顶，与原 ImGui 设置窗口（GLFW_FLOATING）行为一致。
-    dialog->setWindowFlag(Qt::WindowStaysOnTopHint, true);
+    // 置顶（alwaysOnTop）只作用于渲染窗口（桌宠本体），Qt GUI 面板保持普通
+    // 窗口层级，不随「软件置顶」一起置顶。Show() 里的 raise()/activateWindow()
+    // 仍保证打开时位于同层窗口最前，但切换到其它应用后会被正常覆盖。
     impl_->dialog = dialog;
 
     BuildUi();

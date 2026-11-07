@@ -141,6 +141,12 @@ struct ModelDebugInfo {
     unsigned int glError = 0;     ///< 最近一次 GL 错误码（0 = 无错误）
     std::string renderStatus;     ///< 可读结论，例如「正常渲染」「贴图缺失 3 张，可能白模」
 
+    /// 动作系统状态（Live2D 待机/互动动作）。例如「待机动作：Idle 1.2s」「互动动作：TapHead」。
+    /// 其它后端为空字符串，诊断面板据此决定是否显示该行。
+    std::string motionStatus;
+    /// 动作组/命中区摘要（如「动作组 Idle×3 / TapHead×2 / TapBody×1，命中区 2」）。
+    std::string motionSummary;
+
     // --- 错误（详细）---
     std::string errorCategory;    ///< 最近一次加载/渲染问题的分类名
     std::vector<std::string> errorDetails;  ///< 逐条明细，供面板与弹窗显示
@@ -189,6 +195,15 @@ public:
     /// PMX 用它报告缺失贴图，并给出「请打包成 .zip」的建议。
     /// 默认返回空（VRM/Live2D 的图形数据内嵌在文件里）。
     virtual std::vector<std::string> MissingResources() const { return {}; }
+
+    /// 用户点击了渲染窗口（归一化坐标 nx, ny ∈ [0,1]，左上原点、y 向下）。
+    /// Live2D 后端据此按命中区触发互动动作；其它后端默认忽略。
+    /// @return 是否触发了互动动作。
+    virtual bool OnInteract(float nx, float ny) {
+        (void)nx;
+        (void)ny;
+        return false;
+    }
 };
 
 using ModelPtr = std::shared_ptr<IModel>;

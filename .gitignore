@@ -54,6 +54,8 @@ screenshots/
 imgui.ini
 
 # 运行时调试日志（程序自动写入当前工作目录）
+# 通配兜底：未来新增的 *.log 一律忽略，避免逐个登记漏网
+*.log
 last.log
 ppet_render_verify.log
 verify_report/

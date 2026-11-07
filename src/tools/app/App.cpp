@@ -37,7 +37,8 @@ constexpr const char* kIdLanguage = "language";
 constexpr const char* kIdLangZh = "lang.zh";
 constexpr const char* kIdLangEn = "lang.en";
 constexpr const char* kIdReload = "reload";
-constexpr const char* kIdDebug = "debug";
+// 「调试」(原 Ctrl+D，纯写日志) 与「模型分析」(原 Ctrl+Shift+D，Qt 面板) 已合并：
+// 只保留 kIdDebugPanel 一个入口，打开诊断面板的同时把诊断摘要写入日志。
 constexpr const char* kIdDebugPanel = "debugPanel";
 constexpr const char* kIdOpenAtLogin = "openAtLogin";
 constexpr const char* kIdFeedback = "feedback";
@@ -137,6 +138,18 @@ bool App::Initialize(std::string& error) {
             if (windowMovedByUser_) {
                 windowMovedByUser_ = false;
                 SaveConfig();
+            } else if (!moveMode_ && model_) {
+                // 按下后没有拖动 = 一次点击：交给模型做互动（Live2D 按命中区
+                // 触发 TapHead/TapBody 等动作）。移动窗口模式下只拖动，不触发。
+                // 归一化坐标：dragGrabX_/Y_ 是按下时光标在窗口内的像素位置。
+                const Vec2 size = window_.Size();
+                if (size.x > 0.0f && size.y > 0.0f) {
+                    const float nx = std::clamp(
+                        static_cast<float>(dragGrabX_ / size.x), 0.0f, 1.0f);
+                    const float ny = std::clamp(
+                        static_cast<float>(dragGrabY_ / size.y), 0.0f, 1.0f);
+                    model_->OnInteract(nx, ny);
+                }
             }
         }
     };
@@ -517,9 +530,8 @@ void App::RebuildTrayMenu() {
     items.push_back({Item::Type::Separator, "", "", false, true, {}, ""});
     items.push_back({Item::Type::Action, strings_.reRender, kIdReload, false, true, {},
                      "Ctrl+R"});
-    items.push_back({Item::Type::Action, strings_.debug, kIdDebug, false, true, {},
-                     "Ctrl+D"});
-    // 「模型诊断」：打开 Qt 调试面板，显示模型部分/参数/性质/渲染状态。
+    // 「模型诊断」= 合并后的唯一调试/分析入口：打开 Qt 诊断面板 +
+    // 把桌面/追踪/模型诊断摘要写入 last.log（保留原「调试」的日志能力）。
     items.push_back({Item::Type::Action, strings_.debugPanel, kIdDebugPanel, false, true, {},
                      "Ctrl+Shift+D"});
     items.push_back({Item::Type::Separator, "", "", false, true, {}, ""});
@@ -596,7 +608,13 @@ void App::OnTrayItem(const std::string& id, bool checked) {
                 PPET_LOG_ERR("%s\n", err.ToString().c_str());
             }
         }
-    } else if (id == kIdDebug) {
+    } else if (id == kIdDebugPanel) {
+        // 合并后的唯一「模型诊断」入口：打开 Qt 诊断面板（模型部分/参数/性质/
+        // 渲染状态/动作系统一目了然），同时把关键诊断摘要写入 last.log，
+        // 保留原「调试 Ctrl+D」无界面场景下也能排查的能力。
+        debugPanel_.Toggle();
+        PPET_LOG_TAG_DEBUG("DEBUG", "模型诊断面板：%s",
+                           debugPanel_.IsVisible() ? "已打开" : "已关闭");
         const auto desktop = cursorTracker_.Desktop();
         PPET_LOG_TAG("DEBUG",
                      "桌面 %dx%d+%d+%d | 全屏追踪 %s | 视口 %dx%d | 渲染缩放 %.2f | "
@@ -613,17 +631,13 @@ void App::OnTrayItem(const std::string& id, bool checked) {
             const ModelDebugInfo info = model_->DebugInfo();
             PPET_LOG_TAG("DEBUG",
                          "模型诊断：%s | %s | 顶点 %zu / 三角形 %zu / 贴图 %zu(已加载 %zu) | "
-                         "缺失资源 %zu | %s",
+                         "缺失资源 %zu | 动作 | %s | %s",
                          info.formatVersion.c_str(), info.renderStatus.c_str(),
                          info.vertexCount, info.triangleCount, info.textureReferenced,
                          info.textureLoaded, info.missingResources.size(),
+                         info.motionStatus.empty() ? "-" : info.motionStatus.c_str(),
                          info.path.c_str());
         }
-    } else if (id == kIdDebugPanel) {
-        // 打开 Qt 诊断面板：模型的部分、参数、性质与是否正常渲染一目了然。
-        debugPanel_.Toggle();
-        PPET_LOG_TAG_DEBUG("DEBUG", "模型诊断面板：%s",
-                           debugPanel_.IsVisible() ? "已打开" : "已关闭");
     } else if (id == kIdOpenAtLogin) {
         cfg.openAtLogin = checked;
         std::string err;

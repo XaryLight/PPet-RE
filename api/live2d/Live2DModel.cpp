@@ -420,26 +420,45 @@ void Live2DModel::LoadMotions() {
     impl_->motions.clear();
     impl_->motionGroups.clear();
 
-    // 动作组：manifest.motionGroups 里已经解析出了绝对路径。
+    std::vector<MotionGroup> directorGroups;
+
+    // 动作组：manifest.motionGroups 里已经解析出了绝对路径与组名。
+    // 旧实现把组名丢掉、把所有动作混进一个扁平数组随机播放，导致
+    // 「互动动作在待机时自己冒出来、点击也没有反应」。现在按组名分类，
+    // 交给 MotionDirector 做 Idle 待机循环 + 互动优先级调度。
     for (const Live2DMotionGroup& group : impl_->manifest.motionGroups) {
-        std::vector<int> indices;
-        for (const std::string& file : group.files) {
+        MotionGroup dg;
+        dg.name = group.name;
+        dg.kind = ClassifyMotionGroup(group.name);
+        dg.hitArea = HitAreaFromGroupName(group.name, dg.kind);
+        for (std::size_t fi = 0; fi < group.files.size(); ++fi) {
             Motion motion;
             std::string error;
-            if (!ParseMotionFile(file, motion, error)) {
+            if (!ParseMotionFile(group.files[fi], motion, error)) {
                 // 单个动作文件损坏不应导致整个模型加载失败。
                 std::fprintf(stderr, "[Live2D] %s\n", error.c_str());
                 continue;
             }
-            indices.push_back(static_cast<int>(impl_->motions.size()));
+            // fade 优先用 motion3.json 自带值；缺失时回退到 model3.json
+            // 组条目上的 FadeInTime / FadeOutTime（Cubism 标准写法）。
+            if (motion.fadeInTime <= 0.0f && fi < group.fadeInTimes.size() &&
+                group.fadeInTimes[fi] >= 0.0f) {
+                motion.fadeInTime = group.fadeInTimes[fi];
+            }
+            if (motion.fadeOutTime <= 0.0f && fi < group.fadeOutTimes.size() &&
+                group.fadeOutTimes[fi] >= 0.0f) {
+                motion.fadeOutTime = group.fadeOutTimes[fi];
+            }
+            dg.motionIndices.push_back(static_cast<int>(impl_->motions.size()));
             impl_->motions.push_back(std::move(motion));
         }
-        if (!indices.empty()) {
-            impl_->motionGroups.push_back(std::move(indices));
+        if (!dg.motionIndices.empty()) {
+            impl_->motionGroups.push_back(dg.motionIndices);
+            directorGroups.push_back(std::move(dg));
         }
     }
 
-    // 顶层 Animations 也作为动作加入。
+    // 顶层 Animations 也作为独立动作组加入（名字含 exp 的表情组会被识别为点缀）。
     for (const Live2DAnimation& animation : impl_->manifest.animations) {
         Motion motion;
         std::string error;
@@ -447,8 +466,36 @@ void Live2DModel::LoadMotions() {
             std::fprintf(stderr, "[Live2D] %s\n", error.c_str());
             continue;
         }
+        MotionGroup dg;
+        dg.name = animation.name;
+        dg.kind = ClassifyMotionGroup(animation.name);
+        dg.hitArea = HitAreaFromGroupName(animation.name, dg.kind);
+        dg.motionIndices.push_back(static_cast<int>(impl_->motions.size()));
         impl_->motions.push_back(std::move(motion));
+        impl_->motionGroups.push_back(dg.motionIndices);
+        directorGroups.push_back(std::move(dg));
     }
+
+    // 命中区名字（model3.json 的 HitAreas[].Name），用于把点击分区映射到互动组。
+    std::vector<std::string> hitAreaNames;
+    for (const Live2DHitArea& area : impl_->manifest.hitAreas) {
+        if (!area.name.empty()) hitAreaNames.push_back(area.name);
+    }
+
+    // 动作元数据（时长 / 淡入淡出）与全局 motions 下标一一对应。
+    std::vector<float> durations, fadeIns, fadeOuts;
+    durations.reserve(impl_->motions.size());
+    fadeIns.reserve(impl_->motions.size());
+    fadeOuts.reserve(impl_->motions.size());
+    for (const Motion& m : impl_->motions) {
+        durations.push_back(m.duration);
+        fadeIns.push_back(m.fadeInTime);
+        fadeOuts.push_back(m.fadeOutTime);
+    }
+
+    motionDirector_.Configure(std::move(directorGroups), std::move(hitAreaNames),
+                              impl_->motions.size());
+    motionDirector_.SetMotionMeta(durations, fadeIns, fadeOuts);
 }
 
 void Live2DModel::ResolveTrackingParameters() {
@@ -471,6 +518,10 @@ void Live2DModel::Update(const RenderContext& ctx) {
     if (!loaded_ || !impl_ || !impl_->model) return;
 
     const float dt = std::max(0.0f, ctx.deltaTime);
+
+    // 每帧先复位到默认姿态，再依次叠加各层。否则动作结束后它写过的参数
+    // 会一直停留在最后一帧（表情/手臂「卡住」），也不会随淡出平滑回落。
+    cubism::ResetParametersToDefault(impl_->model);
 
     ApplyTracking(ctx);
     ApplyEyeBlink(dt);
@@ -601,54 +652,44 @@ void Live2DModel::ApplyBreathing(float deltaTime) {
 void Live2DModel::UpdateMotion(float deltaTime) {
     if (!impl_ || !impl_->model) return;
 
-    // --- 推进当前动作 ---
-    if (motion_.motion) {
-        motion_.time += deltaTime;
-        const float duration = motion_.motion->duration;
-        if (duration > 0.0f && motion_.time >= duration) {
-            if (motion_.looping) {
-                motion_.time = std::fmod(motion_.time, duration);
-            } else {
-                motion_.motion = nullptr;
-                motion_.time = 0.0f;
-                motionCooldown_ = 3.0f;
-            }
+    // MotionDirector 负责「播放哪个动作、优先级、淡入淡出权重」：
+    //   - 空闲时按冷却随机播放 Idle 组动作（待机循环）；
+    //   - 用户点击时按命中区插入互动动作（可打断待机）；
+    //   - 动作结束回落到待机。
+    motionDirector_.Tick(deltaTime);
+
+    const MotionBlend blend = motionDirector_.Blend();
+    if (blend.motionIndex < 0 || blend.weight <= 0.0f) return;
+    if (blend.motionIndex >= static_cast<int>(impl_->motions.size())) return;
+
+    const Motion& motion = impl_->motions[static_cast<std::size_t>(blend.motionIndex)];
+    std::vector<float> values;
+    motion.Sample(blend.time, values);
+
+    for (std::size_t i = 0; i < motion.curves.size() && i < values.size(); ++i) {
+        const MotionCurve& curve = motion.curves[i];
+        // motion3.json 的曲线还可作用于部件不透明度（Target="PartOpacity"），
+        // 本渲染层未建立部件索引映射，暂时只处理 Parameter 曲线。
+        if (curve.target != "Parameter") continue;
+        const int index = cubism::FindParameter(impl_->model, curve.id);
+        if (index < 0) continue;
+
+        // 与「当前基线」按 fade 权重混合：基线已包含视线/眨眼/呼吸与默认值，
+        // 因此动作淡入/淡出时姿态平滑过渡，淡出结束自然回到待机，不会跳变。
+        const float base = cubism::ParameterValue(impl_->model, index);
+        float value = base + (values[i] - base) * blend.weight;
+        float minValue = -1.0f;
+        float maxValue = 1.0f;
+        if (cubism::ParameterRange(impl_->model, index, minValue, maxValue)) {
+            value = Clamp(value, minValue, maxValue);
         }
-
-        if (motion_.motion) {
-            // 采样曲线并写入参数。
-            std::vector<float> values;
-            motion_.motion->Sample(motion_.time, values);
-            for (std::size_t i = 0; i < motion_.motion->curves.size() && i < values.size();
-                 ++i) {
-                const MotionCurve& curve = motion_.motion->curves[i];
-                if (curve.target != "Parameter") continue;
-                const int index = cubism::FindParameter(impl_->model, curve.id);
-                if (index < 0) continue;
-                cubism::SetParameterValue(impl_->model, index, values[i]);
-            }
-        }
+        cubism::SetParameterValue(impl_->model, index, value);
     }
+}
 
-    // --- 冷却结束后随机起一个动作 ---
-    if (motionCooldown_ > 0.0f) {
-        motionCooldown_ -= deltaTime;
-        return;
-    }
-    if (motion_.motion) return;
-    if (impl_->motionGroups.empty()) return;
-
-    std::uniform_int_distribution<std::size_t> groupDist(0, impl_->motionGroups.size() - 1);
-    const std::vector<int>& group = impl_->motionGroups[groupDist(rng_)];
-    if (group.empty()) return;
-
-    std::uniform_int_distribution<std::size_t> motionDist(0, group.size() - 1);
-    const int motionIndex = group[motionDist(rng_)];
-    if (motionIndex < 0 || motionIndex >= static_cast<int>(impl_->motions.size())) return;
-
-    motion_.motion = &impl_->motions[static_cast<std::size_t>(motionIndex)];
-    motion_.time = 0.0f;
-    motion_.looping = false;
+bool Live2DModel::OnInteract(float nx, float ny) {
+    if (!loaded_) return false;
+    return motionDirector_.Interact(nx, ny);
 }
 
 // ---------------------------------------------------------------------------
@@ -916,6 +957,22 @@ ModelDebugInfo Live2DModel::DebugInfo() const {
         for (const Live2DMotionGroup& g : m.motionGroups) motionFiles += g.files.size();
         info.properties.push_back("动作组=" + std::to_string(m.motionGroups.size()) +
                                   " / 动作文件=" + std::to_string(motionFiles));
+        // --- 动作系统（待机/互动）诊断 ---
+        std::string groupSummary;
+        for (const MotionGroup& g : motionDirector_.Groups()) {
+            if (!groupSummary.empty()) groupSummary += " / ";
+            groupSummary += g.name + "×" + std::to_string(g.motionIndices.size());
+        }
+        info.motionSummary = "动作组 " + std::to_string(motionDirector_.GroupCount()) +
+                             "（" + (groupSummary.empty() ? "无" : groupSummary) + "）" +
+                             " / 命中区 " + std::to_string(motionDirector_.HitAreaCount()) +
+                             " / 互动组 " +
+                             (motionDirector_.HasInteractionGroups() ? "有" : "无");
+        info.motionStatus = motionDirector_.StatusText();
+        info.properties.push_back("动作系统=Idle 随机待机 + HitArea 互动（优先级打断 / 淡入淡出）");
+        info.properties.push_back("命中区(HitAreas)=" +
+                                  std::to_string(motionDirector_.HitAreaCount()));
+        info.properties.push_back("当前动作=" + info.motionStatus);
         info.properties.push_back("渲染管线=Live2D 二维部件叠加（与 PMX/VRM 的蒙皮网格不同）");
         info.properties.push_back("坐标系=Cubism 单位坐标 → 裁剪空间（Y 向上）");
     }

@@ -361,6 +361,19 @@ void SetParameterValue(Model* model, int index, float value) {
 #endif
 }
 
+void ResetParametersToDefault(Model* model) {
+#if defined(PPET_WITH_CUBISM) || defined(PPET_WITH_CUBISM_STUB)
+    if (!model || !model->model_) return;
+    float* values = csmGetParameterValues(model->model_);
+    const float* defaults = csmGetParameterDefaultValues(model->model_);
+    if (!values || !defaults) return;
+    const int count = csmGetParameterCount(model->model_);
+    for (int i = 0; i < count; ++i) values[i] = defaults[i];
+#else
+    (void)model;
+#endif
+}
+
 bool ParameterRange(const Model* model, int index, float& outMin, float& outMax) {
 #if defined(PPET_WITH_CUBISM) || defined(PPET_WITH_CUBISM_STUB)
     if (!model || !model->model_) return false;

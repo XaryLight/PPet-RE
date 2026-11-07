@@ -41,7 +41,7 @@ QWidget* BuildModelErrorDialog(const ModelLoadError& error, const Strings& strin
     dialog->setMinimumSize(560, 420);
     dialog->resize(680, 500);
     dialog->setAttribute(Qt::WA_QuitOnClose, false);
-    dialog->setWindowFlag(Qt::WindowStaysOnTopHint, true);
+    // 置顶只作用于渲染窗口；错误弹窗保持普通窗口层级（show 时 raise 即可）。
 
     auto* root = new QVBoxLayout(dialog);
 

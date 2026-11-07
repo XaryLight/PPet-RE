@@ -22,7 +22,6 @@ struct Strings {
     std::string prevModel;
     std::string nextModel;
     std::string reRender;
-    std::string debug;
     std::string feedback;
     std::string about;
     std::string quit;

@@ -163,6 +163,14 @@ bool ParseMotionFile(const std::string& path, Motion& out, std::string& error) {
         if (meta.contains("Fps") && meta.at("Fps").is_number()) {
             motion.fps = meta.at("Fps").get<float>();
         }
+        // 淡入/淡出：Cubism 3 规范里是 Meta.FadeInTime / FadeOutTime（秒）。
+        // 缺省 0：老模型没有这两个字段时保持「无过渡」的旧行为。
+        if (meta.contains("FadeInTime") && meta.at("FadeInTime").is_number()) {
+            motion.fadeInTime = std::max(0.0f, meta.at("FadeInTime").get<float>());
+        }
+        if (meta.contains("FadeOutTime") && meta.at("FadeOutTime").is_number()) {
+            motion.fadeOutTime = std::max(0.0f, meta.at("FadeOutTime").get<float>());
+        }
     }
 
     // --- Curves ---
