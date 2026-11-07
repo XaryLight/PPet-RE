@@ -13,6 +13,37 @@ cmake_minimum_required(VERSION 3.20)
 project(PPet LANGUAGES C CXX)
 
 # ---------------------------------------------------------------------------
+# 源码树一致性自检
+#
+# 背景：34da636 起目录调整为 src/{ui,tools} + api/。若本地只更新了部分文件
+# （典型：CMakeLists.txt 停在旧版、src/ 已换成新版，或反之），configure 会抛出
+# 一串 "Cannot find source file" / "No SOURCES given to target"，从报错本身很难
+# 看出其实是版本不同步。这里在最前面给出可读的中文诊断。
+#
+# 注意：旧版 CMakeLists.txt 不含本段检查，因此它无法自检；那种情况请用
+#       tools/check_sync.ps1 诊断，或直接同步到 origin/main。
+# ---------------------------------------------------------------------------
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/tools/core/Log.cpp")
+    message(FATAL_ERROR
+        "源码目录结构与本 CMakeLists.txt 不匹配：找不到 src/tools/core/Log.cpp。\n"
+        "本仓库自 34da636 起要求目录结构为 src/{ui,tools} + api/。\n"
+        "常见原因：只更新了部分文件，或本地 src/ 目录未随仓库一起更新。\n"
+        "修复（PowerShell）：\n"
+        "  git fetch origin\n"
+        "  git stash push -m ppet-local-backup\n"
+        "  git reset --hard origin/main\n"
+        "  Remove-Item -Recurse -Force cmake-build-debug\n"
+        "然后重新 configure。也可运行 tools/check_sync.ps1 自动诊断。")
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/core" OR
+   EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/model" OR
+   EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/platform")
+    message(WARNING
+        "检测到旧目录 src/core、src/model 或 src/platform 仍存在。34da636 起这些目录"
+        "已迁至 src/tools/ 与 api/，残留目录不会参与构建，确认其中没有你的本地文件后建议删除。")
+endif()
+
+# ---------------------------------------------------------------------------
 # C++23 标准
 #
 # 为什么升级（不只是改个数字，代码里确实用到了 C++23/20 的现代设施）：
@@ -983,6 +1014,12 @@ add_test(NAME log_unit
 add_executable(ppet_model_error_test tools/model_error_test.cpp)
 add_test(NAME model_error_unit
          COMMAND ppet_model_error_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# 窗口位置钳制：透明窗口被拖到桌面外后靠它救回，含多显示器负坐标场景。
+add_executable(ppet_window_layout_test tools/window_layout_test.cpp)
+add_test(NAME window_layout_unit
+         COMMAND ppet_window_layout_test
          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
 # 模型加载失败弹窗冒烟测试（Qt 6 / offscreen）。

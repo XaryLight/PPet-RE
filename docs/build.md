@@ -203,6 +203,35 @@ Qt 6 的依赖仍需用 `windeployqt` 部署到 `bin/` 目录。
 | `CMake Error: 未找到 Live2DCubismCore.h` | SDK 目录结构不对 | 确认 `<SDK>/include/Live2DCubismCore.h` 存在，或用 `-DPPET_CUBISM_ROOT=<Core 目录>` 显式指定 |
 | `CXX_STANDARD is set to invalid value '23'` | CMake 版本过老（< 3.20） | 升级 CMake 到 3.20+（CLion 自带版本通常已满足） |
 | 当前编译器不支持 C++23 | 编译器版本过低 | 升级到表「环境要求」列出的最低版本 |
+| `Cannot find source file: src/core/FileIO.cpp` / `No SOURCES given to target: ppet_model` | **本地 `CMakeLists.txt` 与 `src/` 目录版本不匹配**：CMakeLists 还是 `34da636` 之前的旧版（引用 `src/core/...`），而源码已是新结构 `src/tools/...` | 见下方「版本不同步自查」 |
+
+### 版本不同步自查
+
+`34da636` 起目录调整为 `src/{ui,tools}` + `api/`。如果只更新了部分文件（常见于本地手改过 `CMakeLists.txt` 导致 `git pull` 被跳过），configure 会抛出一串 `Cannot find source file` / `No SOURCES given to target`，报错本身看不出是版本问题。
+
+先跑诊断脚本（只报告、不改文件）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\check_sync.ps1
+```
+
+最小修复（只同步构建脚本 + 清缓存，保留其他本地改动）：
+
+```powershell
+git fetch origin
+git checkout origin/main -- CMakeLists.txt
+Remove-Item -Recurse -Force cmake-build-debug
+```
+
+彻底修复（先 `stash` 备份所有本地改动，再整体对齐远程）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\check_sync.ps1 -Fix
+```
+
+完成后在 CLion 里 **Reload CMake Project**。新版 `CMakeLists.txt` 自带源码树一致性自检，若 `src/` 结构与脚本不匹配会在配置阶段直接给出中文提示。
+
+> 提示：新版已支持 `-DPPET_WITH_CUBISM=OFF` 真正生效（不再被自动检测 `FORCE` 覆盖），**不需要再手改 `CMakeLists.txt`**——这正是过去反复产生本地改动、导致 `git pull` 不生效的根源。
 
 ---
 

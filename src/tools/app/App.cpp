@@ -27,6 +27,8 @@ namespace {
 constexpr const char* kIdAlwaysOnTop = "alwaysOnTop";
 constexpr const char* kIdShowTool = "showTool";
 constexpr const char* kIdIgnoreMouse = "ignoreMouseEvents";
+constexpr const char* kIdResetPosition = "resetPosition";
+constexpr const char* kIdMoveWindow = "moveWindow";
 constexpr const char* kIdSettings = "settings";
 constexpr const char* kIdPrevModel = "prevModel";
 constexpr const char* kIdNextModel = "nextModel";
@@ -83,12 +85,23 @@ bool App::Initialize(std::string& error) {
     currentLanguage_ = configStore_.config().language;
     showTool_ = configStore_.config().showTool;
 
+    // 虚拟桌面几何要尽早取到：加载配置、托盘重置、拖动结束都靠它把窗口钳制在
+    // 可见范围内。追踪器不一定启动（fullscreenTracking 可能关闭），所以这里显式
+    // 刷新一次，不能依赖 Start() 里的那次。
+    cursorTracker_.RefreshDesktop();
+
     // --- 窗口 ---
     WindowOptions opts;
     opts.width = configStore_.config().windowWidth;
     opts.height = configStore_.config().windowHeight;
-    opts.x = configStore_.config().windowX;
-    opts.y = configStore_.config().windowY;
+    // 旧版 Windows 上 Window::Position() 曾返回约 2 倍的坐标，配置里可能已经存了
+    // 把窗口顶出屏幕的坏值。这里统一钳制，保证每次启动都能看见窗口。
+    const IntRect safePos = ClampRectInside(
+        IntRect{configStore_.config().windowX, configStore_.config().windowY,
+                opts.width, opts.height},
+        DesktopRect());
+    opts.x = safePos.x;
+    opts.y = safePos.y;
     opts.title = "PPet";
     opts.alwaysOnTop = configStore_.config().alwaysOnTop;
     opts.transparent = true;
@@ -99,18 +112,24 @@ bool App::Initialize(std::string& error) {
 
     // --- 输入回调 ---
     window_.onMouseButton = [this](int button, int action) {
-        // 忽略点击开启时不响应交互，但拖动仍需处理（否则用户无法调整位置）。
-        if (action == GLFW_PRESS && button == GLFW_MOUSE_BUTTON_LEFT) {
-            if (configStore_.config().ignoreMouseEvents) return;
-            const Vec2 pos = window_.Position();
-            const Vec2 size = window_.Size();
+        if (button != GLFW_MOUSE_BUTTON_LEFT) return;
+
+        if (action == GLFW_PRESS) {
+            // 点击穿透开启时默认收不到鼠标事件；「移动窗口」模式会临时解除穿透，
+            // 让平时穿透的窗口也能被拖回来。
+            if (configStore_.config().ignoreMouseEvents && !moveMode_) return;
+            double cx = 0.0;
+            double cy = 0.0;
+            glfwGetCursorPos(window_.Handle(), &cx, &cy);
+            // A = 抓取点在窗口内的偏移，之后 W' = W + L - A = G - A。
+            dragGrabX_ = cx;
+            dragGrabY_ = cy;
             dragging_ = true;
-            dragOffsetX_ = 0.0;
-            dragOffsetY_ = 0.0;
-            (void)pos;
-            (void)size;
-        } else if (action == GLFW_RELEASE && button == GLFW_MOUSE_BUTTON_LEFT) {
+        } else if (action == GLFW_RELEASE) {
+            if (!dragging_) return;
             dragging_ = false;
+            // 松手时兜底钳制，避免最后一次移动把窗口带出可视范围。
+            ClampWindowToDesktop();
             if (windowMovedByUser_) {
                 windowMovedByUser_ = false;
                 SaveConfig();
@@ -120,13 +139,17 @@ bool App::Initialize(std::string& error) {
 
     window_.onMouseMove = [this](double xpos, double ypos) {
         if (!dragging_) return;
-        // 用光标在窗口内的位置减去按下时的偏移，实现无跳动拖动。
-        const double dx = xpos - dragOffsetX_;
-        const double dy = ypos - dragOffsetY_;
+        // 绝对定位：记 W = 窗口左上角、L = 光标在窗口内坐标，则全局光标
+        // G = W + L 恒成立（窗口移动会等量反向改变 L）。令 W' = G - A，
+        // 窗口精确跟随光标，且不会因为 W 变化反过来改变 L 而产生正反馈漂移。
+        //
+        // 旧实现用「L 的增量」去移动 W，且按下时把偏移清成 0：首次移动窗口就会
+        // 跳一个窗口内坐标的距离，随后反复震荡、越拖越远，最终飞出桌面。
         const Vec2 cur = window_.Position();
-        window_.SetPosition(static_cast<int>(cur.x + dx), static_cast<int>(cur.y + dy));
-        dragOffsetX_ = xpos;
-        dragOffsetY_ = ypos;
+        const double gx = static_cast<double>(cur.x) + xpos;
+        const double gy = static_cast<double>(cur.y) + ypos;
+        window_.SetPosition(static_cast<int>(std::lround(gx - dragGrabX_)),
+                            static_cast<int>(std::lround(gy - dragGrabY_)));
         windowMovedByUser_ = true;
     };
 
@@ -460,6 +483,11 @@ void App::RebuildTrayMenu() {
                      cfg.ignoreMouseEvents, true, {}, "Ctrl+I"});
     items.push_back({Item::Type::Action, strings_.settings, kIdSettings, false, true, {},
                      "Ctrl+,"});
+    // 窗口位置控制：透明无边框窗口一旦跑出桌面就没有可点的地方，只能靠托盘救回。
+    items.push_back({Item::Type::Action, strings_.resetPosition, kIdResetPosition,
+                     false, true, {}, ""});
+    items.push_back({Item::Type::Checkbox, strings_.moveWindow, kIdMoveWindow,
+                     moveMode_, true, {}, ""});
     items.push_back({Item::Type::Separator, "", "", false, true, {}, ""});
     items.push_back({Item::Type::Action, strings_.prevModel, kIdPrevModel, false, true, {},
                      "Ctrl+P"});
@@ -514,7 +542,23 @@ void App::OnTrayItem(const std::string& id, bool checked) {
         cfg.showTool = checked;
     } else if (id == kIdIgnoreMouse) {
         cfg.ignoreMouseEvents = checked;
-        window_.SetIgnoreMouseEvents(checked);
+        // 移动模式期间保持可交互，退出移动模式后再按配置恢复。
+        window_.SetIgnoreMouseEvents(moveMode_ ? false : checked);
+    } else if (id == kIdResetPosition) {
+        ResetWindowPosition();
+    } else if (id == kIdMoveWindow) {
+        moveMode_ = checked;
+        // 移动模式只是临时解除穿透：退出时按「当前配置」恢复，
+        // 不用进入时的快照，避免覆盖用户在模式期间改过的设置。
+        window_.SetIgnoreMouseEvents(moveMode_ ? false : cfg.ignoreMouseEvents);
+        if (moveMode_) {
+            PPET_LOG_TAG("WINDOW",
+                         "移动窗口模式已开启：按住窗口拖动即可移动；再次点击托盘菜单结束");
+        } else {
+            ClampWindowToDesktop();
+            SaveConfig();
+            PPET_LOG_TAG("WINDOW", "移动窗口模式已结束，已恢复点击穿透并保存位置");
+        }
     } else if (id == kIdSettings) {
         // 设置界面为独立 Qt 窗口，直接弹出。
         settingsPanel_.Toggle();
@@ -640,6 +684,37 @@ void App::SaveConfig() {
     if (!configStore_.Save(configPath_, err)) {
         PPET_LOG_ERR("%s\n", err.c_str());
     }
+}
+
+IntRect App::DesktopRect() const {
+    const VirtualDesktop d = cursorTracker_.Desktop();
+    return IntRect{d.x, d.y, d.width, d.height};
+}
+
+void App::ClampWindowToDesktop() {
+    const Vec2 pos = window_.Position();
+    const Vec2 size = window_.Size();
+    const IntRect before{static_cast<int>(pos.x), static_cast<int>(pos.y),
+                         static_cast<int>(size.x), static_cast<int>(size.y)};
+    const IntRect after = ClampRectInside(before, DesktopRect());
+    if (after.x == before.x && after.y == before.y) return;
+
+    window_.SetPosition(after.x, after.y);
+    PPET_LOG_TAG("WINDOW", "窗口位置已钳制回可见区域：%d,%d -> %d,%d",
+                 before.x, before.y, after.x, after.y);
+}
+
+void App::ResetWindowPosition() {
+    const Vec2 size = window_.Size();
+    // 用户指定的 (0,0) 即主显示器左上角；在虚拟桌面坐标系里它恒为有效可见点
+    // （多显示器时虚拟桌面左边界可能为负，但 (0,0) 仍落在主屏内）。
+    // 仍过一次钳制，兼容「窗口比屏幕还大」等极端配置。
+    IntRect target{0, 0, static_cast<int>(size.x), static_cast<int>(size.y)};
+    target = ClampRectInside(target, DesktopRect());
+    window_.SetPosition(target.x, target.y);
+    SaveConfig();
+    PPET_LOG_TAG("WINDOW", "窗口位置已重置到 (%d,%d)（主显示器左上角）",
+                 target.x, target.y);
 }
 
 RenderContext App::BuildRenderContext(float deltaTime) const {

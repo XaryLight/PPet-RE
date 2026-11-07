@@ -29,6 +29,39 @@ struct Vec2 {
 
 inline float Length(const Vec2& v) { return std::sqrt(v.x * v.x + v.y * v.y); }
 
+/// 整数矩形：窗口 / 虚拟桌面的几何，坐标可为负（多显示器时左侧屏幕的 x 为负）。
+struct IntRect {
+    int x = 0;
+    int y = 0;
+    int width = 0;
+    int height = 0;
+};
+
+/// 把窗口矩形整体钳制进虚拟桌面，保证窗口始终可见。
+///
+/// 为什么需要：透明置顶无边框窗口一旦被拖到桌面外就没有任何可点的地方，
+/// 而配置里保存的坐标会让下次启动继续不可见，形成死循环。所有程序化设置位置
+/// 的地方（加载配置 / 托盘重置 / 结束拖动）都先过这里。
+///
+/// 规则：
+///   - 桌面尺寸无效时原样返回，避免无显示器信息的环境把窗口强行挤到 (0,0)；
+///   - 窗口比桌面还大时退回桌面左上角，至少保证左上角可见；
+///   - 否则把左上角限制在 [desktop.x, desktop.right - window.width] 内。
+inline IntRect ClampRectInside(const IntRect& window, const IntRect& desktop) {
+    if (desktop.width <= 0 || desktop.height <= 0) return window;
+
+    const int maxX = desktop.x + (desktop.width > window.width
+                                      ? desktop.width - window.width
+                                      : 0);
+    const int maxY = desktop.y + (desktop.height > window.height
+                                      ? desktop.height - window.height
+                                      : 0);
+    IntRect out = window;
+    out.x = std::clamp(window.x, desktop.x, std::max(desktop.x, maxX));
+    out.y = std::clamp(window.y, desktop.y, std::max(desktop.y, maxY));
+    return out;
+}
+
 struct Vec3 {
     float x = 0.0f;
     float y = 0.0f;

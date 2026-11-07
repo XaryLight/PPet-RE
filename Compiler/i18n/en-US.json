@@ -7,6 +7,8 @@
   "tools": "Tools",
   "language": "Language",
   "settings": "Settings",
+  "resetPosition": "Reset Window Position",
+  "moveWindow": "Move Window",
   "prevModel": "Prev Model",
   "nextModel": "Next Model",
   "reRender": "ReRender",

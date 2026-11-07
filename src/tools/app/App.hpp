@@ -64,6 +64,16 @@ private:
     /// 同步窗口状态到配置并保存。
     void SaveConfig();
 
+    /// 当前虚拟桌面矩形（来自 GlobalCursorTracker，可能为负坐标）。
+    IntRect DesktopRect() const;
+
+    /// 把窗口钳制回虚拟桌面可见范围并落位。
+    /// 用于：加载配置后、拖动结束、托盘重置后 —— 杜绝「窗口跑到桌面外够不着」。
+    void ClampWindowToDesktop();
+
+    /// 托盘「重置窗口位置」：移到 (0,0)（主显示器左上角）并保存配置。
+    void ResetWindowPosition();
+
     /// 应用配置到窗口与追踪器。
     void ApplyConfig();
 
@@ -104,10 +114,18 @@ private:
     std::uint64_t frameCount_ = 0;
     float frameMsSmoothed_ = 0.0f;
 
-    // 拖动状态：记录鼠标按下时的偏移，避免窗口跳动。
+    // 拖动状态：用「抓取点偏移」做绝对定位，避免增量算法的正反馈漂移。
+    //
+    // 记 W = 窗口左上角（虚拟桌面坐标），L = 光标在窗口内的坐标，则全局光标
+    // G = W + L 恒成立（窗口移动会等量反向改变 L）。按下时记录抓取偏移 A = L0，
+    // 之后每次 mouse move 直接令 W' = W + L - A = G - A，窗口跟着光标走且不漂移。
     bool dragging_ = false;
-    double dragOffsetX_ = 0.0;
-    double dragOffsetY_ = 0.0;
+    double dragGrabX_ = 0.0;
+    double dragGrabY_ = 0.0;
+
+    // 「移动窗口」模式：临时关闭点击穿透，让平时鼠标穿透的窗口也能被拖动。
+    // 退出时按「当前配置」恢复穿透，不保存进入时的快照，避免覆盖用户中途的改动。
+    bool moveMode_ = false;
 
     // 窗口是否真的被移动过（用于区分「用户拖动」与「程序设置位置」）。
     bool windowMovedByUser_ = false;

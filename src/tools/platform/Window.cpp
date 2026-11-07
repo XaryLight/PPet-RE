@@ -448,12 +448,14 @@ Vec2 Window::Position() const {
 #if defined(_WIN32)
     HWND hwnd = glfwGetWin32Window(window_);
     if (hwnd) {
-        RECT rect{};
-        GetWindowRect(hwnd, &rect);
-        POINT origin{rect.left, rect.top};
-        // 客户区原点：与 GLFW 的窗口坐标语义保持一致（无边框窗口两者相同）。
-        ClientToScreen(hwnd, &origin);
-        return Vec2(static_cast<float>(origin.x), static_cast<float>(origin.y));
+        // 【重要】ClientToScreen 的输入必须是「客户区坐标」，不是屏幕坐标。
+        // 旧代码把 GetWindowRect 得到的屏幕坐标 rect.left/rect.top 又传进去做了一次
+        // 客户区→屏幕换算，结果约为真实坐标的 2 倍；SaveConfig() 把这个值写回配置，
+        // 下次启动窗口位置就翻倍，反复几次后窗口彻底跑出桌面（Win+Tab 能看到却够不着）。
+        POINT origin{0, 0};
+        if (ClientToScreen(hwnd, &origin)) {
+            return Vec2(static_cast<float>(origin.x), static_cast<float>(origin.y));
+        }
     }
     // hwnd 获取失败时回退到 GLFW 提供的窗口位置。
     int x = 0;

@@ -7,6 +7,8 @@
   "tools": "小工具",
   "language": "语言",
   "settings": "配置",
+  "resetPosition": "重置窗口位置",
+  "moveWindow": "移动窗口",
   "prevModel": "上一个模型",
   "nextModel": "下一个模型",
   "reRender": "重新渲染",

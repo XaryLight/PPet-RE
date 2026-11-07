@@ -17,6 +17,8 @@ struct Strings {
     std::string tools;
     std::string language;
     std::string settings;
+    std::string resetPosition;
+    std::string moveWindow;
     std::string prevModel;
     std::string nextModel;
     std::string reRender;
