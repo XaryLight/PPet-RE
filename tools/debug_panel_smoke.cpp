@@ -100,6 +100,10 @@ int main(int argc, char** argv) {
     model.errorCategory = "模型图片缺失";
     model.errorDetails.push_back("缺少 2 张贴图，可能出现白模");
     model.errorDetails.push_back("建议把 .pmx 与贴图目录打包成 .zip");
+    // 表情与语言状态（供「表情与说话」页签）
+    model.expressionStatus = "表情预设：开心 / 动作表情叠层 30%";
+    model.expressionSummary = "预设 6 / 通道 12 / 当前 开心";
+    model.dialogueStatus = "正在说：今天也要加油呀～";
     for (int i = 0; i < 8; ++i) {
         ppet::ModelDebugInfo::Part part;
         part.name = "材质 #" + std::to_string(i);
@@ -125,6 +129,10 @@ int main(int argc, char** argv) {
     // 不存在的路径：验证「暂无可预览的图片」分支不会崩。
     runtime.renderPreviewPath = "/tmp/ppet_no_such_frame.png";
     runtime.renderPreviewNote = "渲染帧抓取失败：测试占位";
+    // 语言系统运行时数据
+    runtime.dialogueStatus = "「今天也要加油呀～」 60%";
+    runtime.lipOpen = 0.42f;
+    runtime.lipForm = -0.25f;
 
     panel.Show();
     if (!panel.IsVisible()) {
@@ -132,8 +140,8 @@ int main(int argc, char** argv) {
         return 1;
     }
     if (auto* tabs = panel.Handle()->findChild<QTabWidget*>()) {
-        if (tabs->count() != 6) {
-            std::printf("debug_panel_smoke: 应有 6 个页签，实际 %d\n", tabs->count());
+        if (tabs->count() != 7) {
+            std::printf("debug_panel_smoke: 应有 7 个页签，实际 %d\n", tabs->count());
             return 1;
         }
     } else {
@@ -157,6 +165,19 @@ int main(int argc, char** argv) {
         }
     } else {
         std::printf("debug_panel_smoke: 未找到详细错误区\n");
+        return 1;
+    }
+
+    // 「表情与说话」页：应同时呈现表情状态、当前台词与口型数值。
+    if (auto* expr = panel.Handle()->findChild<QTextEdit*>("ppetExpressionView")) {
+        const QString text = expr->toPlainText();
+        if (!text.contains("开心") || !text.contains("今天也要加油呀") ||
+            !text.contains("开口")) {
+            std::printf("debug_panel_smoke: 表情与说话页内容不完整\n");
+            return 1;
+        }
+    } else {
+        std::printf("debug_panel_smoke: 未找到表情与说话页\n");
         return 1;
     }
 

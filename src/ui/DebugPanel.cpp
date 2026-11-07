@@ -104,6 +104,7 @@ enum TabIndex {
     kTabImages = 3,
     kTabParts = 4,
     kTabResources = 5,
+    kTabExpression = 6,
 };
 
 }  // namespace
@@ -123,6 +124,7 @@ struct DebugPanel::Impl {
     QTextEdit* propertiesView = nullptr;
     QTableWidget* missingTable = nullptr;
     QTextEdit* errorsView = nullptr;
+    QTextEdit* expressionView = nullptr;  ///< 「表情与说话」页签
     QLabel* groupMissingLabel = nullptr;
     QLabel* groupTexturesLabel = nullptr;
     QLabel* groupRenderLabel = nullptr;
@@ -333,6 +335,18 @@ void DebugPanel::BuildUi() {
         impl_->tabs->addTab(page, ToQString(s.debugTabResources));
     }
 
+    // --- Tab 7：表情与说话（表情管理 + 台词/气泡/口型的运行时状态）---
+    // 表情预设的切换入口在托盘「表情」子菜单里；本页只做状态呈现，
+    // 便于排查「表情没生效」「口型不动」「台词不显示」这类问题。
+    {
+        auto* page = new QWidget(dialog);
+        auto* layout = new QVBoxLayout(page);
+        impl_->expressionView = MakeReportView(page);
+        impl_->expressionView->setObjectName("ppetExpressionView");
+        layout->addWidget(impl_->expressionView);
+        impl_->tabs->addTab(page, ToQString(s.debugTabExpression));
+    }
+
     dialog->setLayout(root);
 }
 
@@ -378,6 +392,7 @@ void DebugPanel::Shutdown() {
     impl_->propertiesView = nullptr;
     impl_->missingTable = nullptr;
     impl_->errorsView = nullptr;
+    impl_->expressionView = nullptr;
     impl_->logLabel = nullptr;
     impl_->hintLabel = nullptr;
     impl_->groupMissingLabel = nullptr;
@@ -438,6 +453,7 @@ void DebugPanel::Refresh() {
     impl_->tabs->setTabText(kTabImages, ToQString(s.debugTabImages));
     impl_->tabs->setTabText(kTabParts, ToQString(s.debugTabParts));
     impl_->tabs->setTabText(kTabResources, ToQString(s.debugTabResources));
+    impl_->tabs->setTabText(kTabExpression, ToQString(s.debugTabExpression));
     if (impl_->copyBtn) impl_->copyBtn->setText(ToQString(s.debugCopy));
     if (impl_->hintLabel) impl_->hintLabel->setText(ToQString(s.debugAutoRefresh));
     if (impl_->groupMissingLabel) {
@@ -613,6 +629,36 @@ void DebugPanel::Update(const ModelDebugInfo& model, const RuntimeStats& runtime
                 runtime.renderPreviewNote.empty() ? s.debugAutoRefresh
                                                  : runtime.renderPreviewNote));
         }
+    }
+
+    // --- Tab 7：表情与说话（每次刷新都更新：台词与口型逐帧变化）---
+    // 同样必须放在下面的「模型变化才重建」短路之前。
+    if (impl_->expressionView) {
+        std::vector<std::pair<std::string, std::string>> exprRows;
+        const bool hasExpression = !model.expressionStatus.empty() ||
+                                   !model.expressionSummary.empty();
+        exprRows.emplace_back(s.expressionStatusLabel,
+                              model.expressionStatus.empty() ? std::string("-")
+                                                             : model.expressionStatus);
+        exprRows.emplace_back(s.expressionTitle,
+                              model.expressionSummary.empty() ? std::string("-")
+                                                              : model.expressionSummary);
+        exprRows.emplace_back(s.currentPhrase,
+                              runtime.dialogueStatus.empty() ? std::string("-")
+                                                              : runtime.dialogueStatus);
+        char lipBuf[96];
+        std::snprintf(lipBuf, sizeof(lipBuf), "开口 %.2f / 嘴形 %+.2f",
+                      static_cast<double>(runtime.lipOpen),
+                      static_cast<double>(runtime.lipForm));
+        exprRows.emplace_back(s.lipSyncLabel, lipBuf);
+
+        std::string html = HtmlSection("表情与语言 / Expression & Dialogue", exprRows);
+        if (!hasExpression) {
+            // Live2D 用动作组做表情、PMX/VRM 用 morph 通道；
+            // 后端没提供摘要时说明该模型没有接入表情系统。
+            html += "<p style='color:#777;'>" + EscapeHtml(s.noExpressions) + "</p>";
+        }
+        impl_->expressionView->setHtml(ToQString(html));
     }
 
     // --- Tab 3/5/6 的列表只在模型变化时重建，避免每 200 ms 闪烁 ---

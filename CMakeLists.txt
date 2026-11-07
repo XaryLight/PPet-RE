@@ -724,6 +724,8 @@ set(PPET_CORE_SOURCES
     src/ui/SettingsPanel.hpp
     src/ui/DebugPanel.cpp
     src/ui/DebugPanel.hpp
+    src/ui/BubbleWidget.cpp
+    src/ui/BubbleWidget.hpp
     src/ui/ErrorDialog.cpp
     src/ui/ErrorDialog.hpp
 )
@@ -876,6 +878,16 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/debug_panel_smoke.cpp)
     )
     target_include_directories(ppet_debug_panel_smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(ppet_debug_panel_smoke PRIVATE Qt6::Widgets)
+endif()
+
+# 台词气泡窗口冒烟测试：验证无边框气泡的显隐、文本与定位。
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/bubble_widget_smoke.cpp)
+    add_executable(ppet_bubble_widget_smoke
+        tools/bubble_widget_smoke.cpp
+        src/ui/BubbleWidget.cpp
+    )
+    target_include_directories(ppet_bubble_widget_smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(ppet_bubble_widget_smoke PRIVATE Qt6::Widgets)
 endif()
 
 # 设置面板截图工具：用真实 Qt 控件渲染并抓取 PNG，用于 README 配图。
@@ -1035,6 +1047,26 @@ add_test(NAME motion_director_unit
          COMMAND ppet_motion_director_test
          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
+# PMX/VRM 表情管理：纯逻辑状态机（参考 VRM-VPet 的 ExpressionManager），
+# 覆盖别名解析 / 预设过渡 / 自动眨眼叠层 / 动作表情叠层淡出 / 二元量化 / 时间轴。
+add_executable(ppet_expression_director_test tools/expression_director_test.cpp)
+add_test(NAME expression_director_unit
+         COMMAND ppet_expression_director_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# 语言功能：台词库 / 气泡状态机 / 口型同步（参考 FULASKA 的 phrases/bubble/mouth）。
+add_executable(ppet_dialogue_system_test tools/dialogue_system_test.cpp)
+add_test(NAME dialogue_system_unit
+         COMMAND ppet_dialogue_system_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# Live2D 运行时分层：参数栈仲裁 / 姿态总线 / 三通道视线 / 待机导演 /
+# 待机小表情 / 多边形热区 / 口型导演（参考 FULASKA SPEC 的 L0–L5 与分层）。
+add_executable(ppet_live2d_stage_test tools/live2d_stage_test.cpp)
+add_test(NAME live2d_stage_unit
+         COMMAND ppet_live2d_stage_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
 # Live2D manifest/motion 解析：验证 HitAreas 与 FadeIn/FadeOut 元数据真被解析，
 # 是动作调度器的数据源。直接编译所需 .cpp（不链接 ppet_model，避免与 Cubism
 # 后端配置耦合），三种配置均可运行。
@@ -1134,6 +1166,15 @@ if(TARGET ppet_debug_panel_smoke)
              COMMAND $<TARGET_FILE:ppet_debug_panel_smoke>
              WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
     set_tests_properties(debug_panel_smoke PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        SKIP_RETURN_CODE 2)
+endif()
+
+if(TARGET ppet_bubble_widget_smoke)
+    add_test(NAME bubble_widget_smoke
+             COMMAND $<TARGET_FILE:ppet_bubble_widget_smoke>
+             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    set_tests_properties(bubble_widget_smoke PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         SKIP_RETURN_CODE 2)
 endif()

@@ -29,6 +29,7 @@
 #include <src/tools/model/Model.hpp>
 #include <api/live2d/Live2DMotion.hpp>
 #include <api/live2d/MotionDirector.hpp>
+#include <api/live2d/Stage.hpp>
 
 namespace ppet::live2d {
 
@@ -67,6 +68,15 @@ public:
     /// nx, ny ∈ [0,1]，左上原点、y 向下。
     bool OnInteract(float nx, float ny) override;
 
+    /// 表情/口型：切换到表情动作组（如 "ExpHappy"）；无对应组返回 false。
+    bool SetExpressionPreset(const std::string& id) override;
+    /// 口型：设置开口度与嘴形（来自 LipSync），刷入 ParamMouthOpenY/ParamMouthForm。
+    bool SetLipSync(float open, float form) override;
+
+    /// 可用的表情预设 id：Live2D 的「表情」是表情类动作组（如 "ExpHappy"）。
+    /// 托盘「表情」子菜单据此生成条目。
+    std::vector<std::string> ExpressionPresetIds() const override;
+
 private:
     /// 加载纹理。失败时使用白色占位纹理，不中断加载。
     void LoadTextures();
@@ -78,7 +88,7 @@ private:
     void ResolveTrackingParameters();
 
     /// 应用视线追踪到模型参数。
-    void ApplyTracking(const RenderContext& ctx);
+    void ApplyTracking(const RenderContext& ctx, float deltaTime);
 
     /// 应用自动眨眼。
     void ApplyEyeBlink(float deltaTime);
@@ -88,6 +98,9 @@ private:
 
     /// 推进动作播放并把曲线值写入参数。
     void UpdateMotion(float deltaTime);
+
+    /// 应用口型（开口度 + 嘴形）到模型参数。
+    void ApplyMouth(float deltaTime);
 
     /// 计算模型单位坐标到裁剪空间的变换矩阵。
     Mat4 BuildTransform(const RenderContext& ctx) const;
@@ -119,6 +132,22 @@ private:
 
     /// 视线追踪的最大偏转角度（度）。由 App 通过 SetMaxTrackingAngle 设置。
     float maxTrackingAngle_ = 30.0f;
+
+    /// 三通道视线阻尼（眼/头/身体各自指数追向目标，参考 FULASKA 的 GazeChannels）。
+    GazeChannels gaze_;
+
+    /// 待机导演：常驻微摆 + 随机成套动作（IdleDirector）。
+    IdleDirector idleStage_;
+
+    /// 口型导演：呼吸微动 + 说话音节 + 情绪嘴形（MouthDirector）。
+    MouthDirector mouthStage_;
+
+    /// 口型目标（由 SetLipSync 设置，每帧平滑追向它）。
+    float talkOpen_ = 0.0f;
+
+    /// 口型参数索引（ParamMouthOpenY / ParamMouthForm），-1 表示模型无此参数。
+    int paramMouthOpenY_ = -1;
+    int paramMouthForm_ = -1;
 
     /// 眨眼状态。
     float blinkTimer_ = 0.0f;

@@ -562,6 +562,7 @@ void PmxModel::BuildMesh() {
     }
 
     mesh_.isSkinned = !mesh_.bones.empty();
+    BindExpressionDirector();
 }
 
 // ---------------------------------------------------------------------------
@@ -625,6 +626,12 @@ ModelDebugInfo PmxModel::DebugInfo() const {
 
     const bool meshOk = !mesh_.indices.empty() && !mesh_.materials.empty();
     info.renderingOk = loaded_ && gpuReady_ && meshOk && info.glError == 0;
+
+    info.expressionStatus = expressionDirector_.StatusText();
+    info.expressionSummary = "预设 " + std::to_string(expressionDirector_.Presets().size()) +
+                            " / 通道 " + std::to_string(expressionDirector_.ChannelCount()) +
+                            " / 当前 " + (expressionDirector_.ActivePreset().empty()
+                                              ? "自定义" : expressionDirector_.ActivePreset());
     if (!loaded_) {
         info.renderStatus = "未加载模型";
     } else if (!gpuReady_) {
@@ -725,6 +732,7 @@ void PmxModel::Update(const RenderContext& ctx) {
     UpdateIdle(dt);
     ApplyBoneTransforms();
     UpdateSkinningMatrices();
+    UpdateExpression(dt);
 }
 
 void PmxModel::UpdateGaze(const RenderContext& ctx, float dt) {
@@ -791,6 +799,80 @@ void PmxModel::ApplyBoneTransforms() {
 void PmxModel::UpdateSkinningMatrices() {
     skinningMatrices_.clear();
     ComputeSkinningMatrices(mesh_, skinningMatrices_);
+}
+
+void PmxModel::BindExpressionDirector() {
+    if (mesh_.morphs.empty()) return;
+    std::vector<std::string> channels;
+    channels.reserve(mesh_.morphs.size());
+    for (const SkinnedMesh::MorphTarget& m : mesh_.morphs) channels.push_back(m.name);
+    // PMX 的 morph 是连续顶点形变（无二元表情），不传 binaryFlags。
+    expressionDirector_.Bind(channels);
+    baseVertices_ = mesh_.vertices;
+    morphWeights_.assign(mesh_.morphs.size(), 0.0f);
+    uploadedMorphWeights_ = morphWeights_;
+    // 口型叠加层与 morph 一一对应（初始全 0，即不张嘴）。
+    mouthOverlay_.assign(mesh_.morphs.size(), 0.0f);
+}
+
+void PmxModel::UpdateExpression(float dt) {
+    expressionDirector_.Tick(dt);
+    if (mesh_.morphs.empty()) return;
+
+    // ExpressionDirector 的通道就是 morph（PMX 把 morph 名作为通道），
+    // 直接把它的输出映射成逐 morph 权重。
+    const std::vector<float>& w = expressionDirector_.Weights();
+    std::vector<float> weights(mesh_.morphs.size(), 0.0f);
+    for (std::size_t i = 0; i < weights.size() && i < w.size(); ++i) weights[i] = w[i];
+
+    // 口型叠加：元音 morph 权重加在表情权重之上（相加后钳制到 [0,1]）。
+    // 「开口」类 morph 与情绪 morph 是同一批通道时，取较大值而不是相加，
+    // 避免两次叠加后超过 1 造成形变过度。
+    for (std::size_t i = 0; i < weights.size() && i < mouthOverlay_.size(); ++i) {
+        const float mouth = mouthOverlay_[i];
+        if (mouth <= 0.0f) continue;
+        weights[i] = std::max(weights[i], mouth);
+    }
+
+    if (weights != morphWeights_) {
+        morphWeights_ = weights;
+        morphDirty_ = true;
+    }
+    if (!morphDirty_) return;
+
+    // 顶点缓冲需要重新上传（渲染层只接受静态顶点缓冲）。
+    mesh_.vertices = baseVertices_;
+    ApplyMorphs(mesh_, morphWeights_, mesh_.vertices);
+    if (gpuReady_) {
+        renderer_.Upload(mesh_);
+        uploadedMorphWeights_ = morphWeights_;
+        morphDirty_ = false;
+    }
+}
+
+bool PmxModel::SetExpressionPreset(const std::string& id) {
+    return expressionDirector_.ApplyPreset(id);
+}
+
+bool PmxModel::SetExpressionWeights(const std::vector<std::pair<std::string, float>>& weights) {
+    if (mesh_.morphs.empty()) return false;
+    // 口型走「叠加层」而不是 PreviewWeights：后者会清空基础权重，
+    // 导致每帧写口型都把用户当前选的表情（开心/生气…）抹掉。
+    // 这里只更新口型通道（aa/ih/ou/ee/oh 等元音 morph），其余通道不动。
+    std::fill(mouthOverlay_.begin(), mouthOverlay_.end(), 0.0f);
+    for (const auto& kv : weights) {
+        const int index = expressionDirector_.Resolve(kv.first);
+        if (index < 0 || static_cast<std::size_t>(index) >= mouthOverlay_.size()) continue;
+        mouthOverlay_[static_cast<std::size_t>(index)] =
+            std::clamp(kv.second, 0.0f, 1.0f);
+    }
+    return true;
+}
+
+std::vector<std::string> PmxModel::ExpressionPresetIds() const {
+    std::vector<std::string> ids;
+    for (const ExpressionPreset& p : expressionDirector_.Presets()) ids.push_back(p.id);
+    return ids;
 }
 
 // ---------------------------------------------------------------------------

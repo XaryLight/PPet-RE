@@ -6,7 +6,9 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
+#include <random>
 
 #include <GLFW/glfw3.h>
 
@@ -44,6 +46,12 @@ constexpr const char* kIdOpenAtLogin = "openAtLogin";
 constexpr const char* kIdFeedback = "feedback";
 constexpr const char* kIdAbout = "about";
 constexpr const char* kIdQuit = "quit";
+// 表情与语言功能入口
+constexpr const char* kIdExpressions = "expressions";  ///< 「表情」子菜单
+constexpr const char* kIdSayPhrase = "sayPhrase";      ///< 「说一句」
+constexpr const char* kIdBubble = "bubble";            ///< 台词气泡开关
+/// expr:<presetId> 形式的菜单项：触发某个表情预设。
+constexpr const char* kExprPrefix = "expr:";
 
 /// 不打开诊断面板时，每隔多少帧做一次「帧缓冲是否有像素」的轻量自检。
 /// 60 FPS 下约 2 秒一次；每次只读回一帧 RGBA，开销远小于一次贴图上传。
@@ -69,6 +77,20 @@ std::string MakeModelId(const std::string& path, ModelType type) {
     std::snprintf(buf, sizeof(buf), "PPET-%016llX",
                   static_cast<unsigned long long>(hash));
     return buf;
+}
+
+/// 表情预设 id -> 本地化显示名。
+///
+/// 预设 id 是 ExpressionDirector 的固定契约（neutral/happy/…），
+/// 显示名走 i18n，未知 id 原样返回（自定义预设也能正常显示）。
+std::string ExpressionPresetLabel(const Strings& s, const std::string& id) {
+    if (id == "neutral") return s.expressionNeutral;
+    if (id == "happy") return s.expressionHappy;
+    if (id == "relaxed") return s.expressionRelaxed;
+    if (id == "angry") return s.expressionAngry;
+    if (id == "sad") return s.expressionSad;
+    if (id == "surprised") return s.expressionSurprised;
+    return id;
 }
 
 }  // namespace
@@ -149,6 +171,8 @@ bool App::Initialize(std::string& error) {
                     const float ny = std::clamp(
                         static_cast<float>(dragGrabY_ / size.y), 0.0f, 1.0f);
                     model_->OnInteract(nx, ny);
+                    // 点击角色时来一句问候，配合口型让桌宠更有回应感。
+                    SayState(agent::AgentStateKind::Greeting, 2);
                 }
             }
         }
@@ -265,6 +289,21 @@ bool App::Initialize(std::string& error) {
         PPET_LOG_WARN("%s: %s\n", strings_.debugPanel.c_str(), debugError.c_str());
     }
 
+    // --- 台词气泡窗口（独立 Qt 窗口，默认不置顶）---
+    // 跟随桌宠窗口上方显示当前台词；托盘「台词气泡」可开关。
+    std::string bubbleError;
+    bubble_ = new BubbleWidget();
+    if (!bubble_->Initialize(bubbleError)) {
+        // 气泡不可用不应阻止启动（无气泡只是看不到台词文字）。
+        PPET_LOG_WARN("%s: %s\n", strings_.bubble.c_str(), bubbleError.c_str());
+        delete bubble_;
+        bubble_ = nullptr;
+    }
+
+    // 语言系统：台词库已默认构造；把指针交给 SpeechController，
+    // 否则 SayState 因 book_ 为空而无法抽台词。
+    speech_.SetPhraseBook(&phraseBook_);
+
     // --- 模型 ---
     const auto& cfg = configStore_.config();
     if (!cfg.modelPath.empty()) {
@@ -309,6 +348,57 @@ void App::RefreshLanguageIfNeeded() {
     settingsPanel_.Refresh();
     debugPanel_.Refresh();
     RebuildTrayMenu();
+}
+
+void App::SayState(agent::AgentStateKind kind, int priority) {
+    lastSpeechKind_ = kind;
+    speech_.SayState(kind, priority);
+}
+
+void App::TickDialogue(float dt) {
+    if (!model_) return;
+
+    // 口型：情绪跟随最近一次主动触发的台词（待机碎碎念为 Idle，嘴形偏中性）；
+    // 说话强度跟随「是否正在说话」，让开口度随音节起伏而不是匀速张嘴。
+    lipSync_.SetEmotion(lastSpeechKind_);
+    lipSync_.SetIntensity(speech_.IsSpeaking() ? 1.0f : 0.0f);
+    lipSync_.Tick(dt);
+    // 气泡状态机：bubbleEnabled_ 同时控制「是否允许待机碎碎念」与「气泡可见性」。
+    speech_.Tick(dt, bubbleEnabled_);
+
+    // 口型写入模型：
+    //   - Live2D 走 SetLipSync（ParamMouthOpenY / ParamMouthForm）；
+    //   - PMX / VRM 走元音 morph 叠加层（SetExpressionWeights 的 aa/ih/ou/ee/oh）。
+    const float open = lipSync_.MouthOpen();
+    const float form = lipSync_.MouthForm();
+    const agent::LipSync::Vowels& vowels = lipSync_.GetVowels();
+    model_->SetLipSync(open, form);
+    model_->SetExpressionWeights({
+        {"aa", vowels.aa},
+        {"ih", vowels.ih},
+        {"ou", vowels.ou},
+        {"ee", vowels.ee},
+        {"oh", vowels.oh},
+    });
+
+    // 气泡：把当前台词推给气泡窗口，并让它跟随桌宠窗口上方。
+    const std::string text = speech_.CurrentText();
+    currentPhrase_ = text;
+    if (bubble_) {
+        bubble_->SetText(text);
+        // 显隐由「有台词 + 托盘开关」共同决定：
+        // 关掉气泡后桌宠照常动嘴、台词照常推进，只是不显示文字。
+        bubble_->SetVisible(bubbleEnabled_ && !text.empty());
+        if (!text.empty()) {
+            const Vec2 size = window_.Size();
+            const Vec2 pos = window_.Position();
+            // 定位在桌宠窗口上方居中；by 取窗口顶边再上移一个气泡高度。
+            const int bubbleW = 220;
+            const int bx = static_cast<int>(pos.x + size.x * 0.5f - bubbleW * 0.5f);
+            const int by = static_cast<int>(pos.y) - 46;
+            bubble_->MoveTo(bx, by);
+        }
+    }
 }
 
 std::string App::ModelCacheDirectory() const {
@@ -514,6 +604,37 @@ void App::RebuildTrayMenu() {
     // 让桌宠在透明窗口里至少能显示出来（否则窗口内容为空）。
     items.push_back({Item::Type::Action, strings_.importModel, kIdImportModel, false, true, {},
                      "Ctrl+O"});
+
+    // 表情子菜单：列出模型支持的全部表情预设（经 model_->ExpressionPresetIds()）。
+    // 模型无表情或尚未加载时，放一条禁用提示。
+    {
+        std::vector<Item> exprItems;
+        if (model_) {
+            const std::vector<std::string> presetIds = model_->ExpressionPresetIds();
+            if (presetIds.empty()) {
+                exprItems.push_back({Item::Type::Action, strings_.noExpressions,
+                                     kIdExpressions, false, false, {}, ""});
+            } else {
+                for (const std::string& id : presetIds) {
+                    exprItems.push_back({Item::Type::Action,
+                                         ExpressionPresetLabel(strings_, id),
+                                         std::string(kExprPrefix) + id, false, true, {}, ""});
+                }
+            }
+        } else {
+            exprItems.push_back({Item::Type::Action, strings_.noExpressions,
+                                 kIdExpressions, false, false, {}, ""});
+        }
+        items.push_back({Item::Type::Submenu, strings_.expressionMenu, kIdExpressions,
+                         false, true, exprItems, ""});
+    }
+    // 说一句：随机抽一条台词（含问候/思考/工作等状态），供用户主动触发。
+    items.push_back({Item::Type::Action, strings_.sayPhrase, kIdSayPhrase, false, true, {},
+                     ""});
+    // 台词气泡：开关（默认开启；关闭后桌宠照常动嘴，只是不显示文字气泡）。
+    items.push_back({Item::Type::Checkbox, strings_.bubble, kIdBubble, bubbleEnabled_, true, {},
+                     ""});
+
     items.push_back({Item::Type::Separator, "", "", false, true, {}, ""});
 
     // 语言子菜单
@@ -586,6 +707,34 @@ void App::OnTrayItem(const std::string& id, bool checked) {
         // 用 Qt 原生文件对话框选模型文件（.pmx / .vrm / .json / .zip）。
         // 压缩包会先解压到缓存目录，再自动定位其中的模型文件。
         settingsPanel_.OpenImportDialog();
+    } else if (id.rfind(kExprPrefix, 0) == 0) {
+        // 表情预设：id 形如 "expr:<presetId>"。
+        if (model_) {
+            const std::string presetId = id.substr(std::strlen(kExprPrefix));
+            if (model_->SetExpressionPreset(presetId)) {
+                PPET_LOG_TAG("EXPRESSION", "切换表情预设：%s", presetId.c_str());
+            } else {
+                PPET_LOG_TAG("EXPRESSION", "表情预设不可用：%s", presetId.c_str());
+            }
+        }
+    } else if (id == kIdSayPhrase) {
+        // 随机挑一种状态说一句（比固定档位更鲜活）。
+        // 用固定种子：同一会话内顺序可复现，便于排查问题时对照日志。
+        static const agent::AgentStateKind kKinds[] = {
+            agent::AgentStateKind::Idle,     agent::AgentStateKind::Thinking,
+            agent::AgentStateKind::Working,  agent::AgentStateKind::Waiting,
+            agent::AgentStateKind::Success,  agent::AgentStateKind::Error,
+            agent::AgentStateKind::Greeting,
+        };
+        static std::mt19937 rng(20240101u);
+        std::uniform_int_distribution<std::size_t> dist(
+            0, sizeof(kKinds) / sizeof(kKinds[0]) - 1);
+        const agent::AgentStateKind kind = kKinds[dist(rng)];
+        SayState(kind, 1);
+        PPET_LOG_TAG("DIALOGUE", "手动说一句：%s", agent::AgentStateName(kind));
+    } else if (id == kIdBubble) {
+        bubbleEnabled_ = checked;
+        PPET_LOG_TAG("DIALOGUE", "台词气泡：%s", checked ? "开启" : "关闭");
     } else if (id == kIdLangZh) {
         cfg.language = Language::Chinese;
         currentLanguage_ = Language::Chinese;
@@ -853,6 +1002,9 @@ void App::Run() {
         // ClearTransparent() 内部会复位 colorMask / depthMask（半透明材质会
         // 把 depthMask 留成 GL_FALSE，否则 glClear 清不掉深度）。
         ClearTransparent();
+        // 先推进语言系统（台词/气泡/口型），把口型权重写进模型，
+        // 再 Update 让本帧的表情/口型生效。
+        TickDialogue(deltaTime);
         if (model_) {
             model_->Update(ctx);
             model_->Render(ctx);
@@ -894,6 +1046,21 @@ void App::Run() {
             stats.desktopHeight = desktop.height;
             stats.logPath = Logger::Path();
             stats.glError = frameGlError;
+
+            // 语言系统运行时数据（供「表情与说话」诊断页签）。
+            if (bubbleEnabled_ && !currentPhrase_.empty()) {
+                char dbuf[96];
+                std::snprintf(dbuf, sizeof(dbuf), "「%s」 %.0f%%",
+                              currentPhrase_.c_str(),
+                              static_cast<double>(speech_.Progress()) * 100.0);
+                stats.dialogueStatus = dbuf;
+            } else if (!bubbleEnabled_) {
+                stats.dialogueStatus = "台词气泡已关闭";
+            } else {
+                stats.dialogueStatus = "（沉默）";
+            }
+            stats.lipOpen = lipSync_.MouthOpen();
+            stats.lipForm = lipSync_.MouthForm();
 
             // 帧缓冲像素证据：让「正常渲染」结论建立在真实像素上。
             if (hasFrameEvidence_) {
@@ -960,6 +1127,11 @@ void App::Shutdown() {
     cursorTracker_.Stop();
     debugPanel_.Shutdown();
     settingsPanel_.Shutdown();
+    if (bubble_) {
+        bubble_->Shutdown();
+        delete bubble_;
+        bubble_ = nullptr;
+    }
     tray_.Destroy();
     window_.Destroy();
     model_.reset();

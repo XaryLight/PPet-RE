@@ -91,6 +91,8 @@ constexpr const char* kParamBodyAngleZ = "ParamBodyAngleZ";
 constexpr const char* kParamEyeLOpen = "ParamEyeLOpen";
 constexpr const char* kParamEyeROpen = "ParamEyeROpen";
 constexpr const char* kParamBreath = "ParamBreath";
+constexpr const char* kParamMouthOpenY = "ParamMouthOpenY";
+constexpr const char* kParamMouthForm = "ParamMouthForm";
 
 /// 顶���着色器（GLSL 330 core）。
 ///
@@ -508,6 +510,8 @@ void Live2DModel::ResolveTrackingParameters() {
     paramEyeLOpen_ = cubism::FindParameter(impl_->model, kParamEyeLOpen);
     paramEyeROpen_ = cubism::FindParameter(impl_->model, kParamEyeROpen);
     paramBreath_ = cubism::FindParameter(impl_->model, kParamBreath);
+    paramMouthOpenY_ = cubism::FindParameter(impl_->model, kParamMouthOpenY);
+    paramMouthForm_ = cubism::FindParameter(impl_->model, kParamMouthForm);
 }
 
 // ---------------------------------------------------------------------------
@@ -523,40 +527,37 @@ void Live2DModel::Update(const RenderContext& ctx) {
     // 会一直停留在最后一帧（表情/手臂「卡住」），也不会随淡出平滑回落。
     cubism::ResetParametersToDefault(impl_->model);
 
-    ApplyTracking(ctx);
+    ApplyTracking(ctx, dt);
     ApplyEyeBlink(dt);
     ApplyBreathing(dt);
     UpdateMotion(dt);
+    ApplyMouth(dt);
 
     // 依据参数重算顶点。
     cubism::UpdateModel(impl_->model);
 }
 
-void Live2DModel::ApplyTracking(const RenderContext& ctx) {
+void Live2DModel::ApplyTracking(const RenderContext& ctx, float deltaTime) {
     if (!impl_ || !impl_->model) return;
-    if (!ctx.hasGlobalCursor) return;
 
-    // 视线追踪：把归一化的鼠标位置映射到模型参数。
-    //
-    // 【参数映射表】
-    //   ParamAngleX     = localCursor.x * maxTrackingAngle   （头部左右）
-    //   ParamAngleY     = localCursor.y * maxTrackingAngle   （头部上下）
-    //   ParamEyeBallX   = localCursor.x * maxTrackingAngle   （眼球左右）
-    //   ParamEyeBallY   = localCursor.y * maxTrackingAngle   （眼球上下）
-    //   ParamBodyAngleX = localCursor.x * maxTrackingAngle   （身体左右）
-    //   ParamBodyAngleZ = localCursor.x * maxTrackingAngle   （身体倾斜）
-    //
-    // 重要：很多模型**没有**眼球参数或身体参数，
-    // 因此每个参数都必须先检查是否存在，不存在就跳过，
-    // 绝不能给不存在的参数写值（Core 会直接忽略，但索引越界会出问题）。
+    // 三通道视线：眼/头/身体各自以不同速度指数阻尼追向鼠标方向，
+    // 且「回中」比「偏离」更快（参考 FULASKA 的 GazeChannels）。
+    float targetX = 0.0f;
+    float targetY = 0.0f;
+    if (ctx.hasGlobalCursor) {
+        targetX = Clamp(ctx.localCursor.x, -1.0f, 1.0f);
+        targetY = Clamp(ctx.localCursor.y, -1.0f, 1.0f);
+    }
+    const GazeChannels::Channels g = gaze_.Tick(deltaTime, targetX, targetY);
+
+    // 待机微摆：常驻小幅晃动，叠加在视线基线之上（边说话边晃会被压低）。
+    const IdleDirector::Sway sway = idleStage_.Tick(deltaTime, talkOpen_);
+
     const float angle = maxTrackingAngle_;
-    const float cursorX = ctx.localCursor.x;
-    const float cursorY = ctx.localCursor.y;
 
     auto set = [&](int index, float value) {
         if (index < 0) return;
-        // 参数值要落在模型允许的范围内，否则 Core 会把它裁剪掉，
-        // 表现为「转头到一半就不动了」。
+        // 参数值要落在模型允许的范围内，否则 Core 会把它裁剪掉。
         float minValue = -1.0f;
         float maxValue = 1.0f;
         if (cubism::ParameterRange(impl_->model, index, minValue, maxValue)) {
@@ -565,12 +566,12 @@ void Live2DModel::ApplyTracking(const RenderContext& ctx) {
         cubism::SetParameterValue(impl_->model, index, value);
     };
 
-    set(paramAngleX_, cursorX * angle);
-    set(paramAngleY_, cursorY * angle);
-    set(paramEyeBallX_, cursorX * angle);
-    set(paramEyeBallY_, cursorY * angle);
-    set(paramBodyAngleX_, cursorX * angle);
-    set(paramBodyAngleZ_, cursorX * angle);
+    set(paramAngleX_, g.headX * angle + sway.headYaw);
+    set(paramAngleY_, g.headY * angle + sway.headPitch);
+    set(paramEyeBallX_, g.eyeX * angle);
+    set(paramEyeBallY_, g.eyeY * angle);
+    set(paramBodyAngleX_, g.bodyX * angle);
+    set(paramBodyAngleZ_, g.bodyX * angle);
 }
 
 void Live2DModel::ApplyEyeBlink(float deltaTime) {
@@ -690,6 +691,48 @@ void Live2DModel::UpdateMotion(float deltaTime) {
 bool Live2DModel::OnInteract(float nx, float ny) {
     if (!loaded_) return false;
     return motionDirector_.Interact(nx, ny);
+}
+
+void Live2DModel::ApplyMouth(float deltaTime) {
+    if (!impl_ || !impl_->model) return;
+    if (paramMouthOpenY_ < 0 && paramMouthForm_ < 0) return;
+
+    // 平滑追向「说话开口度」，并叠加呼吸微动（参考 FULASKA 的 MouthDirector）。
+    const std::pair<float, float> out = mouthStage_.Tick(deltaTime, talkOpen_);
+    auto set = [&](int index, float value) {
+        if (index < 0) return;
+        float minValue = -1.0f;
+        float maxValue = 1.0f;
+        if (cubism::ParameterRange(impl_->model, index, minValue, maxValue)) {
+            value = Clamp(value, minValue, maxValue);
+        }
+        cubism::SetParameterValue(impl_->model, index, value);
+    };
+    set(paramMouthOpenY_, out.first);
+    set(paramMouthForm_, out.second);
+}
+
+bool Live2DModel::SetLipSync(float open, float form) {
+    talkOpen_ = std::clamp(open, 0.0f, 1.0f);
+    mouthStage_.SetForm(form);
+    return true;
+}
+
+bool Live2DModel::SetExpressionPreset(const std::string& id) {
+    // Live2D 的「表情」通常是动作组（如 ExpHappy），用 MotionDirector 播放。
+    // 找不到对应组时退回普通播放（Force 优先级必定触发）。
+    return motionDirector_.PlayGroup(id, MotionPriority::Expression);
+}
+
+std::vector<std::string> Live2DModel::ExpressionPresetIds() const {
+    // Live2D 的表情就是「表情类动作组」：把 MotionGroupKind::Expression 的组名列出来。
+    std::vector<std::string> ids;
+    for (const MotionGroup& group : motionDirector_.Groups()) {
+        if (group.kind == MotionGroupKind::Expression && !group.name.empty()) {
+            ids.push_back(group.name);
+        }
+    }
+    return ids;
 }
 
 // ---------------------------------------------------------------------------

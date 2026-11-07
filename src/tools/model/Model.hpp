@@ -147,6 +147,16 @@ struct ModelDebugInfo {
     /// 动作组/命中区摘要（如「动作组 Idle×3 / TapHead×2 / TapBody×1，命中区 2」）。
     std::string motionSummary;
 
+    /// 表情系统状态（PMX/VRM 表情管理、Live2D 表情动作）。例如「表情预设：开心 / 动作表情叠层 30%」。
+    /// 不使用的后端为空字符串。
+    std::string expressionStatus;
+    /// 表情通道/预设摘要（如「预设 6 / 通道 12 / 当前 开心」）。
+    std::string expressionSummary;
+
+    /// 语言/对话状态（台词 + 气泡）。例如「正在说：今天也要加油呀～（进度 60%）」。
+    /// 不使用的后端为空字符串。
+    std::string dialogueStatus;
+
     // --- 错误（详细）---
     std::string errorCategory;    ///< 最近一次加载/渲染问题的分类名
     std::vector<std::string> errorDetails;  ///< 逐条明细，供面板与弹窗显示
@@ -204,6 +214,31 @@ public:
         (void)ny;
         return false;
     }
+
+    /// 切换到某个表情预设（如 "happy" / "angry"）。PMX/VRM 由 ExpressionDirector
+    /// 实现（含别名解析与平滑过渡）；不支持的后端返回 false。
+    virtual bool SetExpressionPreset(const std::string& id) {
+        (void)id;
+        return false;
+    }
+
+    /// 直接设置一组表情/口型通道权重（如口型 "aa"/"ih" 等）。用于逐帧口型同步。
+    /// @return 是否有任意通道被成功设置。
+    virtual bool SetExpressionWeights(const std::vector<std::pair<std::string, float>>& weights) {
+        (void)weights;
+        return false;
+    }
+
+    /// 设置口型开口度与嘴形（Live2D 的 ParamMouthOpenY/ParamMouthForm）。
+    /// PMX/VRM 走元音 morph，不支持此方法，返回 false（由 SetExpressionWeights 接管）。
+    virtual bool SetLipSync(float open, float form) {
+        (void)open;
+        (void)form;
+        return false;
+    }
+
+    /// 可用的表情预设 id 列表（供 UI 构建表情按钮）。无表情系统的后端返回空。
+    virtual std::vector<std::string> ExpressionPresetIds() const { return {}; }
 };
 
 using ModelPtr = std::shared_ptr<IModel>;

@@ -27,6 +27,7 @@
 #include <vector>
 
 #include <src/tools/core/Math.hpp>
+#include <src/tools/model/ExpressionDirector.hpp>
 #include <src/tools/model/Model.hpp>
 #include <src/tools/model/SkinnedMesh.hpp>
 #include <src/tools/render/Renderer.hpp>
@@ -76,6 +77,20 @@ public:
     /// 按名字设置某个表情的权重（找不到对应表情时忽略）。
     void SetExpressionWeight(const std::string& name, float weight);
 
+    /// 口型叠加层：把元音权重（aa/ih/ou/ee/oh）写入口型层。
+    ///
+    /// 为什么不用 ExpressionDirector::PreviewWeights：那个接口会清空全部基础权重，
+    /// 每帧写口型就会把用户选的「开心 / 生气」表情抹掉。口型应当是
+    /// 「叠在当前表情之上」的一层，这里单独保存，在 Update 里与导演输出合并。
+    bool SetExpressionWeights(const std::vector<std::pair<std::string, float>>& weights) override;
+
+    /// 表情预设切换（"happy" / "angry" …）。内部做别名解析，
+    /// 所以中文/日文 morph 名（开心 / 笑い）也能命中。
+    bool SetExpressionPreset(const std::string& id) override;
+
+    /// 可用的表情预设 id（托盘「表情」子菜单据此生成条目）。
+    std::vector<std::string> ExpressionPresetIds() const override;
+
     /// VRM 版本：1 = VRM 1.0，0 = VRM 0.x，-1 = 未识别出 VRM 扩展。
     int VrmVersion() const { return vrmVersion_; }
 
@@ -91,6 +106,9 @@ private:
     void BuildHumanoid();
     /// 读取 VRM 表情（VRM 1.0 的 expressions 或 VRM 0.x 的 blendShapeMaster）。
     void BuildExpressions();
+    /// 把真实表情通道绑定到 ExpressionDirector（命名空间 ppet 的表情调度器），
+    /// 让「预设 / 过渡 / 自动眨眼 / 动作叠层」统一由此驱动。
+    void BindExpressionDirector();
     /// 收集节点的所有后代（先序），受深度与数量限制，防止恶意文件构造超深子树。
     void CollectDescendants(int node, std::vector<int>& out) const;
     /// 判断 ancestor 是否是 node 的祖先（含 node 自身）。
@@ -235,6 +253,8 @@ private:
     /// 表情是否为二元表情（VRM 1.0 的 isBinary）。
     /// 二元表情只有 0 / 1 两种状态（例如 blink），权重需要量化而不是线性插值。
     std::vector<char> expressionBinary_;
+    /// 口型叠加层（与 mesh_.expressions 一一对应）：说话时临时加在表情之上。
+    std::vector<float> mouthOverlay_;
     /// 上一次上传顶点时使用的 morph 权重（用于判断是否需要重新上传）。
     std::vector<float> uploadedMorphWeights_;
 
@@ -332,6 +352,10 @@ private:
     /// 最近一次 OnResize 的窗口尺寸。
     int viewportWidth_ = 0;
     int viewportHeight_ = 0;
+
+    /// 表情调度器：把 VRM 的真实表情通道与「预设/过渡/眨眼/动作叠层」解耦。
+    /// 驱动 expressionWeights_（每帧 Tick 后同步），由 UpdateMorphWeights 写成 morph。
+    ppet::ExpressionDirector expressionDirector_;
 
     bool loaded_ = false;
     bool gpuReady_ = false;

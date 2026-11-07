@@ -82,5 +82,22 @@
   "errClose": "关闭",
   "errLogHint": "日志：",
   "errCopy": "复制详情",
-  "errCopied": "已复制"
+  "errCopied": "已复制",
+
+  "sayPhrase": "说一句",
+  "expressionMenu": "表情",
+  "bubble": "台词气泡",
+  "debugTabExpression": "表情与说话",
+  "expressionTitle": "表情",
+  "currentPhrase": "当前台词",
+  "lipSyncLabel": "口型",
+  "expressionStatusLabel": "表情状态",
+  "noExpressions": "该模型不支持表情/口型",
+
+  "expressionNeutral": "自然",
+  "expressionHappy": "开心",
+  "expressionRelaxed": "放松",
+  "expressionAngry": "生气",
+  "expressionSad": "难过",
+  "expressionSurprised": "惊讶"
 }

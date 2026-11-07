@@ -33,6 +33,7 @@
 #include <vector>
 
 #include <src/tools/core/Math.hpp>
+#include <src/tools/model/ExpressionDirector.hpp>
 #include <src/tools/model/Model.hpp>
 #include <src/tools/model/SkinnedMesh.hpp>
 #include <src/tools/model/pmx/PmxParser.hpp>
@@ -77,6 +78,11 @@ public:
     /// App 会据此提示「把 .pmx 与贴图一起打包成 .zip」。
     std::vector<std::string> MissingResources() const override;
 
+    /// 表情系统（ExpressionDirector 驱动 morph 顶点变形）。
+    bool SetExpressionPreset(const std::string& id) override;
+    bool SetExpressionWeights(const std::vector<std::pair<std::string, float>>& weights) override;
+    std::vector<std::string> ExpressionPresetIds() const override;
+
     /// 供测试与调试使用的只读访问。
     const SkinnedMesh& Mesh() const { return mesh_; }
 
@@ -100,6 +106,11 @@ private:
     void ApplyBoneTransforms();
     /// 按当前骨骼姿态重算蒙皮矩阵。
     void UpdateSkinningMatrices();
+
+    /// 把 PMX 的真实 morph 通道绑定到 ExpressionDirector。
+    void BindExpressionDirector();
+    /// 每帧推进表情调度并把 morph 权重写成顶点变形（morph 变化时才重传 GPU）。
+    void UpdateExpression(float dt);
     /// 计算视图投影矩阵：正交相机，按模型高度自动取景并居中。
     Mat4 ComputeViewProjection(int viewportWidth, int viewportHeight,
                                 float renderScale = 1.0f) const;
@@ -159,6 +170,27 @@ private:
     std::size_t textureLoaded_ = 0;
     /// 最近一帧的 draw call 数（主 pass + 描边 pass 的子网格数）。
     std::size_t drawCalls_ = 0;
+
+    /// 表情调度器：把 PMX 的真实 morph 通道与「预设/过渡/眨眼/口型」解耦。
+    /// 驱动 morphWeights_（每帧 Tick 后计算），由 UpdateExpression() 写成顶点变形。
+    ppet::ExpressionDirector expressionDirector_;
+
+    /// morph 索引 -> 权重（与 mesh_.morphs 一一对应）。
+    std::vector<float> morphWeights_;
+    /// 上一次上传 GPU 的 morph 权重（用于判断是否需要重新上传顶点）。
+    std::vector<float> uploadedMorphWeights_;
+    /// morph 应用前的基准顶点（ApplyMorphs 会累加偏移，需要保留基准值）。
+    std::vector<Vertex> baseVertices_;
+    /// morph 权重是否发生变化（需要重新上传顶点）。
+    bool morphDirty_ = false;
+
+    /// 口型叠加层（元音 morph 权重）。
+    ///
+    /// 为什么需要它：口型是「说话时临时加在当前表情之上」的一层，
+    /// 不能用 ExpressionDirector::PreviewWeights —— 那个接口会清空整个基础权重，
+    /// 于是每帧写口型都会把用户选的「开心 / 生气」表情抹掉。
+    /// 这里单独存一份口型权重，在 UpdateExpression 里与导演算出的权重相加。
+    std::vector<float> mouthOverlay_;
 
     bool loaded_ = false;
     bool gpuReady_ = false;

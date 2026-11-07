@@ -12,10 +12,12 @@
 #include <src/tools/core/ModelPackage.hpp>
 #include <src/tools/model/Model.hpp>
 #include <src/tools/model/ModelError.hpp>
+#include <src/tools/agent/DialogueSystem.hpp>
 #include <src/tools/render/FrameCapture.hpp>
 #include <src/tools/platform/GlobalCursorTracker.hpp>
 #include <src/tools/platform/Tray.hpp>
 #include <src/tools/platform/Window.hpp>
+#include <src/ui/BubbleWidget.hpp>
 #include <src/ui/DebugPanel.hpp>
 #include <src/ui/SettingsPanel.hpp>
 
@@ -78,6 +80,12 @@ private:
     /// 应用配置到窗口与追踪器。
     void ApplyConfig();
 
+    /// 每帧推进语言系统（台词/气泡/口型），并把口型写入当前模型。
+    void TickDialogue(float dt);
+
+    /// 触发一句指定状态的台词（互动/托盘「说一句」共用），并记住情绪供口型偏置。
+    void SayState(agent::AgentStateKind kind, int priority = 1);
+
     /// 配置语言变化时刷新界面文案与托盘菜单（由设置面板回调触发）。
     void RefreshLanguageIfNeeded();
 
@@ -100,6 +108,17 @@ private:
     ConfigStore configStore_;
     ModelPtr model_;
     Strings strings_;
+
+    /// 语言系统：台词库 / 气泡状态机 / 口型同步（PMX/VRM/Live2D 共用）。
+    agent::PhraseBook phraseBook_ = agent::DefaultPhraseBook();
+    agent::SpeechController speech_{4242u, nullptr};
+    agent::LipSync lipSync_;
+    std::string currentPhrase_;
+    bool bubbleEnabled_ = true;
+    /// 最近一次主动触发的台词情绪，供口型嘴形偏置（笑/怒）。待机碎碎念时为 Idle。
+    agent::AgentStateKind lastSpeechKind_ = agent::AgentStateKind::Idle;
+    /// 台词气泡窗口（默认跟随主窗口，不随 Qt GUI 置顶）。
+    BubbleWidget* bubble_ = nullptr;
 
     std::string configPath_;
     bool running_ = false;

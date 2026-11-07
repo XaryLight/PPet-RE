@@ -98,6 +98,26 @@ struct Strings {
     std::string errLogHint;
     std::string errCopy;
     std::string errCopied;
+
+    // 表情与语言功能（参考 VRM-VPet 的表情管理 / FULASKA 的 phrases+bubble+mouth）
+    std::string sayPhrase;        ///< 托盘「说一句」
+    std::string expressionMenu;   ///< 托盘「表情」子菜单
+    std::string bubble;           ///< 「台词气泡」开关
+    std::string debugTabExpression;  ///< 诊断面板「表情与说话」页签
+    std::string expressionTitle;  ///< 表情标题
+    std::string currentPhrase;    ///< 当前台词
+    std::string lipSyncLabel;     ///< 口型
+    std::string expressionStatusLabel;  ///< 表情状态
+    std::string noExpressions;    ///< 该模型不支持表情
+
+    // 表情预设名（托盘「表情」子菜单）。键与 ExpressionDirector 的预设 id 一致：
+    // neutral / happy / relaxed / angry / sad / surprised。
+    std::string expressionNeutral;
+    std::string expressionHappy;
+    std::string expressionRelaxed;
+    std::string expressionAngry;
+    std::string expressionSad;
+    std::string expressionSurprised;
 };
 
 /// 按语言取文案。

@@ -108,7 +108,11 @@ ctest --output-on-failure
 | `render_smoke` | 真实 GL 上下文下编译着色器、绘制网格、读回非零像素 |
 | `render_integration` | 真实模型文件 → 后端 → 渲染层 → 截图 |
 | `settings_panel_smoke` | Qt 设置面板创建 / 显示切换 / 事件泵（offscreen） |
-| `debug_panel_smoke` | 模型诊断面板生命周期、伪造快照刷新、节流、语言切换、复制摘要 |
+| `debug_panel_smoke` | 模型诊断面板生命周期、伪造快照刷新、节流、语言切换、复制摘要、**表情与说话页内容** |
+| `bubble_widget_smoke` | 台词气泡窗口：初始化幂等、文本读写、显隐开关、定位、可重复 Shutdown（offscreen） |
+| `expression_director_unit` | 表情调度：预设 / 别名解析 / smoothstep 过渡 / 自动眨眼叠层 / 动作叠层淡出 / 二元量化 / 时间轴 |
+| `dialogue_system_unit` | 语言系统：台词分档抽取 / 不重复 / 气泡优先级与冷却 / UTF-8 字数截断 / 口型音节包络与情绪嘴形 |
+| `live2d_stage_unit` | Live2D 分层：参数栈层序仲裁 / 姿态总线 / 三通道视线 / 待机包络 / 小表情 / 热区 z 优先 / 口型导演 |
 | `zip_package_test` | 生成测试用 zip（fixture） |
 | `zip_import_test` | 解压中央目录、定位包内模型、幂等重导入、非法输入 |
 | `pmx_package_gen` | 生成 4 种 PMX 包（fixture）：完整 / 缺贴图 / 大小写 / 子目录 |
@@ -118,7 +122,8 @@ ctest --output-on-failure
 | `error_dialog_smoke` | 失败弹窗：分类/摘要/逐条明细/建议/日志、复制按钮、警告型标题（offscreen） |
 | `render_verify_pmx` / `render_verify_vrm` | 用渲染验证 CLI 对仓库素材跑「加载 → 渲染 → 读回像素 → 判定」（xvfb） |
 
-共 **19 项**测试（含 fixture）。调试面板冒烟测试还会校验 6 个页签、骨架/图片/详细错误区。
+共 **28 项**测试（含 fixture）。调试面板冒烟测试还会校验 7 个页签、骨架/图片/详细错误区与
+表情与说话页；气泡冒烟测试校验无边框气泡的显隐、文本与定位。
 
 渲染验证 CLI（可单独用于人工核验或 CI）：
 

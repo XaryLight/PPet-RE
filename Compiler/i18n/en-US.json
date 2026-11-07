@@ -82,5 +82,22 @@
   "errClose": "Close",
   "errLogHint": "Log: ",
   "errCopy": "Copy Details",
-  "errCopied": "Copied"
+  "errCopied": "Copied",
+
+  "sayPhrase": "Say a line",
+  "expressionMenu": "Expressions",
+  "bubble": "Speech bubble",
+  "debugTabExpression": "Expression & Speech",
+  "expressionTitle": "Expression",
+  "currentPhrase": "Current line",
+  "lipSyncLabel": "Lip sync",
+  "expressionStatusLabel": "Expression status",
+  "noExpressions": "This model has no expression/lip-sync support",
+
+  "expressionNeutral": "Natural",
+  "expressionHappy": "Happy",
+  "expressionRelaxed": "Relaxed",
+  "expressionAngry": "Angry",
+  "expressionSad": "Sad",
+  "expressionSurprised": "Surprised"
 }

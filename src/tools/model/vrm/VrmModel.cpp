@@ -420,6 +420,7 @@ bool VrmModel::BuildMesh(std::string& error) {
     // --- humanoid / 表情 / 弹簧骨 ------------------------------------------
     BuildHumanoid();
     BuildExpressions();
+    BindExpressionDirector();
     BuildSpringBones();
 
     // --- 动画 ---------------------------------------------------------------
@@ -1718,7 +1719,23 @@ void VrmModel::Update(const RenderContext& ctx) {
     UpdateSpringBones(dt);
     UpdateSkinningMatrices();
 
-    UpdateBlink(dt);
+    // 表情调度：预设/过渡 + 自动眨眼（独立叠层） + 动作表情临时叠层，
+    // 全部由 ExpressionDirector 统一计算，结果同步进 expressionWeights_，
+    // 再由 UpdateMorphWeights 写成 morph 顶点变形。
+    expressionDirector_.Tick(dt);
+    if (expressionWeights_.size() == expressionDirector_.Weights().size()) {
+        const std::vector<float>& w = expressionDirector_.Weights();
+        for (std::size_t i = 0; i < expressionWeights_.size(); ++i) {
+            expressionWeights_[i] = w[i];
+        }
+    }
+    // 口型叠加：元音表情权重加在当前表情之上（取较大值而不是相加，
+    // 避免同一通道上两次叠加超过 1 造成形变过度）。
+    for (std::size_t i = 0; i < expressionWeights_.size() && i < mouthOverlay_.size(); ++i) {
+        const float mouth = mouthOverlay_[i];
+        if (mouth <= 0.0f) continue;
+        expressionWeights_[i] = std::max(expressionWeights_[i], mouth);
+    }
     UpdateMorphWeights();
 }
 
@@ -1946,6 +1963,18 @@ void VrmModel::UpdateSpringBones(float dt) {
     }
 }
 
+void VrmModel::BindExpressionDirector() {
+    if (mesh_.expressions.empty()) return;
+    std::vector<std::string> channels;
+    channels.reserve(mesh_.expressions.size());
+    for (const SkinnedMesh::Expression& expr : mesh_.expressions) {
+        channels.push_back(expr.name);
+    }
+    expressionDirector_.Bind(channels, &expressionBinary_);
+    // 口型叠加层与表情通道一一对应（初始全 0，即不张嘴）。
+    mouthOverlay_.assign(mesh_.expressions.size(), 0.0f);
+}
+
 void VrmModel::UpdateMorphWeights() {
     if (mesh_.morphs.empty()) return;
     std::vector<float> weights(mesh_.morphs.size(), 0.0f);
@@ -2085,6 +2114,31 @@ void VrmModel::SetExpressionWeight(const std::string& name, float weight) {
             return;
         }
     }
+}
+
+bool VrmModel::SetExpressionWeights(const std::vector<std::pair<std::string, float>>& weights) {
+    if (mesh_.expressions.empty()) return false;
+    // 口型走「叠加层」而不是 PreviewWeights：后者会清空基础权重，
+    // 导致每帧写口型都把用户当前选的表情（开心/生气…）抹掉。
+    // 这里只更新口型通道（aa/ih/ou/ee/oh 等元音表情），其余通道不动。
+    std::fill(mouthOverlay_.begin(), mouthOverlay_.end(), 0.0f);
+    for (const auto& kv : weights) {
+        const int index = expressionDirector_.Resolve(kv.first);
+        if (index < 0 || static_cast<std::size_t>(index) >= mouthOverlay_.size()) continue;
+        mouthOverlay_[static_cast<std::size_t>(index)] = Clamp(kv.second, 0.0f, 1.0f);
+    }
+    return true;
+}
+
+bool VrmModel::SetExpressionPreset(const std::string& id) {
+    return expressionDirector_.ApplyPreset(id);
+}
+
+std::vector<std::string> VrmModel::ExpressionPresetIds() const {
+    std::vector<std::string> ids;
+    ids.reserve(expressionDirector_.Presets().size());
+    for (const ExpressionPreset& p : expressionDirector_.Presets()) ids.push_back(p.id);
+    return ids;
 }
 
 std::string VrmModel::DisplayName() const {
@@ -2286,6 +2340,12 @@ ModelDebugInfo VrmModel::DebugInfo() const {
                               std::string(mesh_.headBoneIndex >= 0 ? "命中" : "未找到") +
                               " / 左眼 " + (mesh_.leftEyeBoneIndex >= 0 ? "命中" : "未找到") +
                               " / 右眼 " + (mesh_.rightEyeBoneIndex >= 0 ? "命中" : "未找到"));
+
+    info.expressionStatus = expressionDirector_.StatusText();
+    info.expressionSummary = "预设 " + std::to_string(expressionDirector_.Presets().size()) +
+                            " / 通道 " + std::to_string(expressionDirector_.ChannelCount()) +
+                            " / 当前 " + (expressionDirector_.ActivePreset().empty()
+                                              ? "自定义" : expressionDirector_.ActivePreset());
 
     const bool meshOk = !mesh_.indices.empty() && !mesh_.materials.empty();
     info.renderingOk = loaded_ && gpuReady_ && meshOk && info.glError == 0;

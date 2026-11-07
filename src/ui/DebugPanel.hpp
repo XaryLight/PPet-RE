@@ -54,6 +54,11 @@ struct RuntimeStats {
     std::string renderPreviewPath;
     std::string renderPreviewNote;
 
+    /// 语言系统运行时数据（「表情与说话」页签用）。
+    std::string dialogueStatus;  ///< 当前台词 / 进度（如 「今天也要加油呀～」 60%）
+    float lipOpen = 0.0f;       ///< 口型开口度（0=闭嘴，1=全开）
+    float lipForm = 0.0f;       ///< 口型嘴形（-1..1，笑为正、怒为负）
+
     /// 帧缓冲像素证据：读回 RGBA 后统计，用于判定「是否真的出图」。
     /// hasFrameEvidence=false 表示尚未采集过（例如刚启动、抓帧失败）。
     bool hasFrameEvidence = false;

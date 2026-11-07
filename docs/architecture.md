@@ -9,18 +9,21 @@ PPet/
 ├── src/                    # 产品源码（只有 ui / tools 两个文件夹）
 │   ├── ui/                 # ★ 所有 GUI 实现（Qt 6 Widgets）
 │   │   ├── SettingsPanel.*     # 设置窗口
-│   │   ├── DebugPanel.*        # 模型诊断面板（6 个页签）
+│   │   ├── DebugPanel.*        # 模型诊断面板（7 个页签）
+│   │   ├── BubbleWidget.*      # 台词气泡窗口（跟随桌宠，不抢置顶）
 │   │   └── ErrorDialog.*       # 模型加载失败/警告弹窗
 │   └── tools/              # ★ 所有非 GUI 实现（按职责分子目录）
 │       ├── main.cpp            # 程序入口（QApplication + App）
 │       ├── app/                # 应用主控制器、托盘菜单、主循环
+│       ├── agent/              # 语言系统：台词库 / 气泡状态机 / 口型（纯逻辑）
 │       ├── core/               # 配置、日志、i18n、文件 IO、ZIP 解析、模型包
-│       ├── model/              # IModel 抽象、SkinnedMesh、PMX / VRM 后端、错误模型
+│       ├── model/              # IModel 抽象、SkinnedMesh、表情调度器、PMX / VRM 后端、错误模型
 │       ├── platform/           # 窗口、托盘、开机启动、光标追踪、文件对话框
 │       └── render/             # Renderer / Camera / RenderUtils / FrameCapture
 ├── api/                    # ★ 外部 SDK / 第三方库的引用与适配层
 │   ├── live2d/             # Cubism SDK 集成：model3.json / moc3 / 动作 / Live2DModel
 │   │   ├── MotionDirector.hpp  # ★ 动作调度（纯逻辑：待机/互动/优先级/fade，可脱离 SDK 单测）
+│   │   ├── Stage.hpp          # ★ 分层运行时（纯逻辑：参数栈/视线/待机/热区/口型）
 │   │   ├── Live2DModel.*       # 模型生命周期 / 参数驱动 / 绘制
 │   │   ├── Live2DManifest.*    # model3.json 解析（含 HitAreas）
 │   │   ├── Live2DMotion.*      # motion3.json 曲线解析（含 Fade）
@@ -100,6 +103,30 @@ PMX / VRM 不受影响。调度器的正确性由 `motion_director_unit`（状�
 > 解析层有个关键约束：`model3.json` 的 Motions 组值**标准写法是数组**
 > （`"Idle": [ {"File": ...} ]`），旧实现只认对象/字符串，会把真实模型动作组解析成空。
 > 见 `CollectMotionFiles()` 与 `live2d_manifest_unit` 的回归断言。
+
+## 表情与语言系统的分层
+
+与动作系统同一思路：把「解析 → 调度 → 驱动」拆开，前两层做成**纯头文件**，
+零 GL / 零 Qt / 零文件 IO，因此可以脱离渲染上下文做单元测试。
+
+| 层 | 文件 | 职责 | 依赖 |
+| --- | --- | --- | --- |
+| 表情调度 | `src/tools/model/ExpressionDirector.hpp` | 预设 / 别名解析 / smoothstep 过渡 / 自动眨眼叠层 / 动作表情临时叠层 / 二元量化 / 表情时间轴 | **纯 STL，零依赖** |
+| 语言系统 | `src/tools/agent/DialogueSystem.hpp` | 台词库（按状态分档）/ 气泡状态机（优先级·冷却·字数上限）/ 口型（音节包络→元音嘴形） | **纯 STL，零依赖** |
+| Live2D 分层 | `api/live2d/Stage.hpp` | 参数分层栈（L0~L5）/ 姿态总线 / 三通道视线 / 待机导演 / 小表情 / 热区 / 口型导演 | **纯 STL，零依赖** |
+| 驱动 | `PmxModel.*` / `VrmModel.*` / `Live2DModel.*` | 把调度结果刷进 morph 权重或 Cubism 参数 | GL / Cubism Core |
+
+三种模型格式共用同一套语言层：`IModel` 上新增 `SetExpressionPreset` /
+`SetExpressionWeights` / `SetLipSync` / `ExpressionPresetIds` 四个接口，
+不支持的后端返回 `false`（默认实现），因此新增格式不会破坏上层。
+
+> **口型不能覆盖表情**：口型是「叠在当前表情之上」的一层。
+> PMX / VRM 后端的 `SetExpressionWeights` 写的是独立的口型叠加层，
+> 而不是 `ExpressionDirector::PreviewWeights` —— 后者会清空全部基础权重，
+> 每帧写口型都会把用户选的表情抹掉。
+
+细节见 **[表情管理与语言功能](expressions.md)** 与
+**[Live2D 分层运行时](live2d-stage.md)**。
 
 ## 构建目标层次
 
