@@ -115,12 +115,12 @@ void TestIdleFaces() {
     IdleFaces faces;
     faces.SetCandidates({"blink", "happy", "angry"}, 11u);
     // 冷却内不应随机出表情。
-    auto out = faces.Tick(0.01f, 6.0f);
+    auto out = faces.Tick(0.01f);
     Check(out.empty(), "冷却内无小表情");
     // 推进超过冷却后可能出现（多跑几次保证触发）。
     bool triggered = false;
     for (int i = 0; i < 2000 && !triggered; ++i) {
-        auto f = faces.Tick(0.1f, 6.0f);
+        auto f = faces.Tick(0.1f);
         if (!f.empty()) triggered = true;
     }
     Check(triggered, "冷却后触发小表情");
@@ -132,6 +132,61 @@ void TestIdleFaces() {
     bool hasWink = false;
     for (const auto& f : wout) if (f.name == "ParamWinkL") hasWink = true;
     Check(hasWink, "wink 覆盖层生效");
+}
+
+void TestIdleFacePresets() {
+    std::printf("-- 待机小表情预设（参数通道）--\n");
+    IdleFaces faces;
+    std::vector<FacePreset> presets;
+    FacePreset happy;
+    happy.id = "happy";
+    happy.name = "开心";
+    happy.params = {{"ParamBrowLY", 1.0f}, {"ParamEyeLSmile", 1.0f}};
+    presets.push_back(happy);
+    FacePreset shy;
+    shy.id = "shy";
+    shy.name = "害羞";
+    shy.params = {{"ParamCheek", 1.0f}};
+    presets.push_back(shy);
+    faces.SetPresets(std::move(presets), 7u);
+    faces.SetInterval(1.0f, 1.0f);
+    faces.SetEnabled(true);
+    Check(faces.Presets().size() == 2, "预设数量正确");
+    Check(!faces.Empty(), "非空");
+
+    // 手动触发后应立刻进入淡入阶段，包络从 0 上升。
+    Check(faces.Trigger(), "手动触发小表情");
+    Check(faces.CurrentId() == "happy" || faces.CurrentId() == "shy", "触发后有当前表情");
+    float maxEnv = 0.0f;
+    bool sawParam = false;
+    for (int i = 0; i < 60; ++i) {
+        auto fs = faces.Tick(0.05f);
+        for (const auto& f : fs) {
+            // 两个预设的参数集合不同，只要出现任一预设参数即算生效。
+            if (f.name == "ParamBrowLY" || f.name == "ParamEyeLSmile" ||
+                f.name == "ParamCheek") {
+                sawParam = true;
+            }
+            maxEnv = std::max(maxEnv, f.weight);
+        }
+    }
+    Check(sawParam, "表情参数被输出");
+    Check(maxEnv > 0.0f, "淡入后包络 > 0");
+
+    // 表情播完后应回到中性（当前 id 清空）。
+    // 注意：冷却到点后会再次随机触发，因此这里检查的是「曾经回到过中性」。
+    bool returnedNeutral = false;
+    for (int i = 0; i < 400 && !returnedNeutral; ++i) {
+        faces.Tick(0.05f);
+        if (faces.CurrentId().empty()) returnedNeutral = true;
+    }
+    Check(returnedNeutral, "表情结束后回到中性");
+
+    // 关闭时不应再产生表情。
+    faces.SetEnabled(false);
+    const auto before = faces.Presets().size();
+    faces.Tick(1.0f);
+    Check(faces.Presets().size() == before, "关闭后不改变预设");
 }
 
 void TestRegionSet() {
@@ -178,6 +233,7 @@ int main() {
     TestGazeChannels();
     TestIdleDirector();
     TestIdleFaces();
+    TestIdleFacePresets();
     TestRegionSet();
     TestMouthDirector();
     std::printf("=== %d 项检查，失败 %d ===\n", checks, failures);

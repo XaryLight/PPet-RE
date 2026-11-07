@@ -237,6 +237,16 @@ const int* csmGetDrawableRenderOrders(const csmModel* model);
 /// 部件不透明度数组。
 const float* csmGetDrawableOpacities(const csmModel* model);
 
+/// 每个部件的遮罩数量数组（真实 SDK 同名 API）。
+const int* csmGetDrawableMaskCounts(const csmModel* model);
+
+/// 每个部件的遮罩编号（锯齿数组）。
+///
+/// 真实 SDK 里这是 const int**：第 d 项指向第 d 个部件自己的遮罩编号数组，
+/// 长度由 csmGetDrawableMaskCounts()[d] 给出。桩不生成遮罩，
+/// 因此永远返回「数量为 0」。
+const int** csmGetDrawableMasks(const csmModel* model);
+
 /// 部件顶点数数组。
 const int* csmGetDrawableVertexCounts(const csmModel* model);
 

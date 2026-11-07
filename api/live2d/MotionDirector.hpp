@@ -51,6 +51,20 @@ enum class MotionPriority {
     Force = 3,      ///< 强制互动（用户显式触发，必定打断）
 };
 
+/// 动作组用途的中文名（诊断/日志用）。
+inline const char* MotionGroupKindName(MotionGroupKind kind) {
+    switch (kind) {
+        case MotionGroupKind::Idle: return "待机";
+        case MotionGroupKind::Tap: return "点击";
+        case MotionGroupKind::Pinch: return "捏合";
+        case MotionGroupKind::Shake: return "摇晃";
+        case MotionGroupKind::Flick: return "轻拂";
+        case MotionGroupKind::Expression: return "表情";
+        case MotionGroupKind::Other:
+        default: return "其它";
+    }
+}
+
 /// 依据动作组名推断用途。纯函数，大小写不敏感。
 inline MotionGroupKind ClassifyMotionGroup(const std::string& name) {
     std::string lower;
@@ -63,6 +77,109 @@ inline MotionGroupKind ClassifyMotionGroup(const std::string& name) {
     if (lower.find("flick") != std::string::npos) return MotionGroupKind::Flick;
     if (lower.find("exp") != std::string::npos) return MotionGroupKind::Expression;
     return MotionGroupKind::Other;
+}
+
+/// 依据**动作文件名**推断用途（当组名不带语义时的回退方案）。
+///
+/// 【为什么需要】
+///   很多国内常见的 Live2D 模型包把全部动作塞进 model3.json 的**空名组**：
+///     "Motions": { "": [ { "File": "motions/idle.motion3.json" },
+///                        { "File": "motions/touch_head.motion3.json" },
+///                        { "File": "motions/touch_body.motion3.json" }, ... ] }
+///   此时 ClassifyMotionGroup("") 返回 Other，既没有 Idle 组（待机时**一个动作都不播**，
+///   表现为「模型完全不动」），也没有互动组（点击无反应）。
+///   必须回退到文件名语义。
+///
+/// 识别的关键字（对文件名去掉目录与 .motion3.json 后缀后匹配，大小写不敏感）：
+///   · idle / stand / wait / breathe  → Idle（待机）
+///   · touch / tap + head/body/...    → Tap（并抽出命中区）
+///   · pinch / shake / flick          → 对应互动类型
+///   · exp / emotion / smile / blink  → Expression（随机表情点缀）
+///
+/// @param fileName 动作文件名（可带目录，例如 "motions/idle.motion3.json"）
+/// @return 推断出的用途；无法判断时返回 Other。
+inline MotionGroupKind ClassifyMotionFile(const std::string& fileName) {
+    // 去掉目录。
+    std::string base = fileName;
+    const std::size_t slash = base.find_last_of("/\\");
+    if (slash != std::string::npos) base = base.substr(slash + 1);
+    // 去掉后缀：".motion3.json" / ".m3.json" / ".json"。
+    // 必须去掉**完整**后缀：只去最后一个点会留下 "idle.motion3"，
+    // 关键字匹配虽然还能命中，但命中区提取会出错（见 HitAreaFromMotionFile）。
+    static const char* kSuffixes[] = {".motion3.json", ".m3.json", ".json"};
+    for (const char* suffix : kSuffixes) {
+        const std::size_t len = std::strlen(suffix);
+        if (base.size() > len &&
+            base.compare(base.size() - len, len, suffix) == 0) {
+            base = base.substr(0, base.size() - len);
+            break;
+        }
+    }
+
+    std::string lower;
+    lower.reserve(base.size());
+    for (unsigned char c : base) lower.push_back(static_cast<char>(std::tolower(c)));
+
+    // 互动类型优先于 idle：例如 "tap_idle" 应当算互动而不是待机。
+    if (lower.find("touch") != std::string::npos ||
+        lower.find("tap") != std::string::npos) {
+        return MotionGroupKind::Tap;
+    }
+    if (lower.find("pinch") != std::string::npos) return MotionGroupKind::Pinch;
+    if (lower.find("shake") != std::string::npos) return MotionGroupKind::Shake;
+    if (lower.find("flick") != std::string::npos) return MotionGroupKind::Flick;
+    if (lower.find("exp") != std::string::npos ||
+        lower.find("emotion") != std::string::npos ||
+        lower.find("face") != std::string::npos) {
+        return MotionGroupKind::Expression;
+    }
+    if (lower.find("idle") != std::string::npos ||
+        lower.find("stand") != std::string::npos ||
+        lower.find("wait") != std::string::npos ||
+        lower.find("breathe") != std::string::npos ||
+        lower.find("breath") != std::string::npos) {
+        return MotionGroupKind::Idle;
+    }
+    return MotionGroupKind::Other;
+}
+
+/// 从**动作文件名**提取关联的命中区名（HitArea）。
+///
+/// 例如 "touch_head.motion3.json" -> "head"。找不到返回空串。
+inline std::string HitAreaFromMotionFile(const std::string& fileName) {
+    std::string base = fileName;
+    const std::size_t slash = base.find_last_of("/\\");
+    if (slash != std::string::npos) base = base.substr(slash + 1);
+    // 去掉后缀：".motion3.json" / ".m3.json" / ".json"。
+    // 注意必须先去掉完整的 ".motion3.json"，否则只去最后一个点会留下
+    // "touch_head.motion3"，命中区就变成了 "head.motion3"（匹配不上 HitArea）。
+    static const char* kSuffixes[] = {".motion3.json", ".m3.json", ".json"};
+    for (const char* suffix : kSuffixes) {
+        const std::size_t len = std::strlen(suffix);
+        if (base.size() > len &&
+            base.compare(base.size() - len, len, suffix) == 0) {
+            base = base.substr(0, base.size() - len);
+            break;
+        }
+    }
+
+    std::string lower;
+    lower.reserve(base.size());
+    for (unsigned char c : base) lower.push_back(static_cast<char>(std::tolower(c)));
+
+    static const char* kPrefixes[] = {"touch", "tap", "pinch", "shake", "flick"};
+    for (const char* p : kPrefixes) {
+        const std::size_t pos = lower.find(p);
+        if (pos == std::string::npos) continue;
+        std::string rest = lower.substr(pos + std::strlen(p));
+        while (!rest.empty() && (rest.front() == '_' || rest.front() == '-' ||
+                                rest.front() == ' ')) {
+            rest.erase(rest.begin());
+        }
+        // 去掉尾部可能残留的编号（下划线/连字符分隔的数字），如 "head2" -> "head2"。
+        return rest;
+    }
+    return std::string();
 }
 
 /// 从动作组名提取关联的命中区（HitArea）名，用于把点击位置映射到动作组。
@@ -159,10 +276,12 @@ public:
     /// 未调用时按「时长 0（不自动结束）、无 fade」处理。
     void SetMotionMeta(const std::vector<float>& durations,
                        const std::vector<float>& fadeIns,
-                       const std::vector<float>& fadeOuts) {
+                       const std::vector<float>& fadeOuts,
+                       const std::vector<bool>& loops = {}) {
         durations_ = durations;
         fadeIns_ = fadeIns;
         fadeOuts_ = fadeOuts;
+        loops_ = loops;
     }
 
     /// 每帧推进。返回当前应生效的动作（可能为空，表示纯待机）。
@@ -331,6 +450,11 @@ private:
         current_.fadeOut = MetaAt(fadeOuts_, static_cast<std::size_t>(motionIndex));
         current_.priority = priority;
         current_.groupName = groupName;
+        // 动作自带的循环标记（motion3.json 的 Meta.Loop）。
+        // 待机动画几乎总是循环的，必须让它自己转起来，
+        // 否则播完一轮就停 3~7 秒，桌宠看起来是「动一下、停很久」。
+        current_.loop = static_cast<std::size_t>(motionIndex) < loops_.size() &&
+                       loops_[static_cast<std::size_t>(motionIndex)];
     }
 
     void FinishClip() {
@@ -359,7 +483,10 @@ private:
         const MotionGroup* group = idleGroups[groupDist(rng_)];
         std::uniform_int_distribution<std::size_t> motionDist(0, group->motionIndices.size() - 1);
         StartClip(group->motionIndices[motionDist(rng_)], MotionPriority::Idle, group->name);
-        current_.loop = false;  // 待机动作靠冷却循环，不自己在末尾循环
+        // 循环标记由动作自身决定（Meta.Loop）。没标记循环的待机动作
+        // 播完一轮后进入冷却，由下一次 PickNextIdle 接上——
+        // 这样「一段待机动作 → 冷却 → 下一段」仍然成立，
+        // 而标记了循环的动作会一直转下去（更接近真实桌宠的观感）。
     }
 
     /// 淡入淡出综合权重。淡出只在动作有有限时长时生效。
@@ -403,6 +530,7 @@ private:
     std::vector<MotionGroup> groups_;
     std::vector<std::string> hitAreas_;
     std::vector<float> durations_;
+    std::vector<bool> loops_;
     std::vector<float> fadeIns_;
     std::vector<float> fadeOuts_;
     std::size_t motionCount_ = 0;

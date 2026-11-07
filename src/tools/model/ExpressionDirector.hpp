@@ -458,6 +458,53 @@ public:
         releaseInfluence_ = motionInfluence_ / 0.2f;
     }
 
+    // --- 待机随机表情 -----------------------------------------------------
+    //
+    // 桌宠待机时每隔一段时间自己换一个表情（对齐 VRM-VPet 的「随机表情」）。
+    // 与「手动切换表情」的区别：手动切换会一直保持到下一次手动操作，
+    // 而随机表情是「换一个表情 → 停留几秒 → 回到中性」的循环。
+    //
+    // 用户手动选过表情后会进入「保护期」，保护期内不随机切换，
+    // 避免用户刚选好表情就被系统改掉。
+
+    /// 开关待机随机表情。
+    void SetRandomIdle(bool enabled) {
+        randomIdle_ = enabled;
+        randomTimer_ = RandomIdleWait();
+        randomHold_ = -1.0f;
+        manualHold_ = 0.0f;
+    }
+    bool RandomIdle() const { return randomIdle_; }
+
+    /// 设置随机间隔（秒）。min 必须大于 0。
+    void SetRandomIdleInterval(float min, float max) {
+        randomIdleMin_ = std::max(0.5f, min);
+        randomIdleMax_ = std::max(randomIdleMin_, max);
+    }
+
+    /// 立刻随机抽一个表情并切换过去（返回是否抽到了）。
+    bool TriggerRandomIdle() {
+        // 收集可用候选：排除中性表情与当前表情。
+        std::vector<const ExpressionPreset*> candidates;
+        for (const ExpressionPreset& p : presets_) {
+            if (p.id == "neutral" || p.id == activePreset_) continue;
+            if (!IsPresetAvailable(p)) continue;
+            candidates.push_back(&p);
+        }
+        if (candidates.empty()) return false;
+        std::uniform_int_distribution<std::size_t> dist(0, candidates.size() - 1);
+        const ExpressionPreset* chosen = candidates[dist(rng_)];
+        if (!ApplyPreset(chosen->id)) return false;
+        // 停留 2~5 秒后回到中性。
+        std::uniform_real_distribution<float> hold(2.0f, 5.0f);
+        randomHold_ = hold(rng_);
+        randomTimer_ = RandomIdleWait();
+        return true;
+    }
+
+    /// 用户手动切换表情后调用：在一段时间内不触发随机表情。
+    void NotifyManualChange() { manualHold_ = 6.0f; }
+
     void Tick(float dt) {
         if (!(dt >= 0.0f)) dt = 0.0f;
         // 切后台回来时限制单帧步长，避免眨眼与过渡一次跳完。
@@ -498,6 +545,26 @@ public:
                 }
             }
         }
+
+        // --- 待机随机表情 ---
+        if (randomIdle_) {
+            if (manualHold_ > 0.0f) {
+                manualHold_ -= dt;
+            } else if (randomHold_ >= 0.0f) {
+                // 正在「保持某个随机表情」，到时间后回到中性。
+                randomHold_ -= dt;
+                if (randomHold_ <= 0.0f) {
+                    randomHold_ = -1.0f;
+                    ApplyPreset("neutral");
+                }
+            } else {
+                randomTimer_ -= dt;
+                if (randomTimer_ <= 0.0f) {
+                    TriggerRandomIdle();
+                }
+            }
+        }
+
         Recompute(blink);
     }
 
@@ -528,6 +595,12 @@ private:
 
     float RandomBlinkWait() {
         std::uniform_real_distribution<float> dist(2.0f, 5.0f);
+        return dist(rng_);
+    }
+
+    /// 下一次随机表情的等待时间。
+    float RandomIdleWait() {
+        std::uniform_real_distribution<float> dist(randomIdleMin_, randomIdleMax_);
         return dist(rng_);
     }
 
@@ -567,6 +640,15 @@ private:
     bool autoBlink_ = true;
     float blinkWait_ = 3.0f;
     float blinkTime_ = -1.0f;
+
+    // --- 待机随机表情 ---
+    bool randomIdle_ = false;
+    float randomIdleMin_ = 8.0f;   ///< 随机间隔下限（秒）
+    float randomIdleMax_ = 20.0f;  ///< 随机间隔上限（秒）
+    float randomTimer_ = 10.0f;    ///< 距离下一次随机的剩余时间
+    float randomHold_ = -1.0f;     ///< 正在保持某个随机表情时的剩余时间（<0 表示不在保持）
+    float manualHold_ = 0.0f;       ///< 用户手动切换后的保护期
+
     std::mt19937 rng_;
 };
 

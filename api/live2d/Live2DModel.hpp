@@ -21,12 +21,15 @@
 #pragma once
 
 #include <memory>
+#include <map>
 #include <random>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <src/tools/core/Math.hpp>
 #include <src/tools/model/Model.hpp>
+#include <api/live2d/CubismCore.hpp>
 #include <api/live2d/Live2DMotion.hpp>
 #include <api/live2d/MotionDirector.hpp>
 #include <api/live2d/Stage.hpp>
@@ -64,6 +67,12 @@ public:
     /// 诊断快照（供 Qt 模型诊断面板）：moc3 / 纹理 / 部件 / 动作信息。
     ModelDebugInfo DebugInfo() const override;
 
+    /// 关键参数的当前值（名称 -> 值）。
+    ///
+    /// 用于诊断「动画到底有没有在动」：待机动作、物理、表情都会改参数，
+    /// 只要采样若干帧对比数值，就能确认哪一层在工作。
+    std::vector<std::pair<std::string, float>> ParameterSnapshot() const;
+
     /// 用户点击渲染窗口：按命中区触发互动动作（TapHead / TapBody 等）。
     /// nx, ny ∈ [0,1]，左上原点、y 向下。
     bool OnInteract(float nx, float ny) override;
@@ -77,19 +86,50 @@ public:
     /// 托盘「表情」子菜单据此生成条目。
     std::vector<std::string> ExpressionPresetIds() const override;
 
+    /// 待机随机表情：随机播一个表情动作组（对齐 VRM-VPet 的随机表情）。
+    void SetRandomIdleExpression(bool enabled) override;
+
+    /// 设置视线追踪强度倍率（0 = 关闭眼睛跟随，1 = 默认，2 = 双倍）。
+    void SetTrackingStrength(float strength);
+    float TrackingStrength() const { return trackingStrength_; }
+    bool RandomIdleExpression() const override;
+    bool TriggerRandomExpression() override;
+
 private:
+    /// 下一次随机表情的等待时间（秒）。
+    float RandomExpressionWait();
+
+    /// 探测模型里的表情参数并生成小表情预设。
+    ///
+    /// Live2D 的表情参数有一套事实上的命名惯例（Cubism 官方模板与绝大多数
+    /// 模型都遵循），本函数按这些惯例探测模型实际拥有的参数，
+    /// 只为**真实存在**的参数生成预设——不存在的参数写进去没有效果，
+    /// 反而会掩盖真正的表情能力。
+    void ResolveFaceParameters();
+
+    /// 应用待机小表情（叠加到模型参数上，不覆盖动作写入的值）。
+    void ApplyIdleFaces(float deltaTime);
+
     /// 加载纹理。失败时使用白色占位纹理，不中断加载。
     void LoadTextures();
 
     /// 加载动作文件。
     void LoadMotions();
 
+    /// 载入物理设置（physics3.json）：解析参数映射并把摆锤安定到静止姿态。
+    /// 模型没有物理文件时什么都不做（只是没有头发摇曳）。
+    void LoadPhysics();
+
+    /// 推进物理并把结果叠加回模型参数。
+    ///
+    /// 物理的输入通常是头部/身体角度参数，因此必须在视线追踪**之后**调用。
+    void ApplyPhysics(float deltaTime);
+
     /// 建立视线追踪所需的参数索引。参数不存在时索引保持 -1。
     void ResolveTrackingParameters();
 
     /// 应用视线追踪到模型参数。
     void ApplyTracking(const RenderContext& ctx, float deltaTime);
-
     /// 应用自动眨眼。
     void ApplyEyeBlink(float deltaTime);
 
@@ -105,8 +145,22 @@ private:
     /// 计算模型单位坐标到裁剪空间的变换矩阵。
     Mat4 BuildTransform(const RenderContext& ctx) const;
 
+    /// 解析遮罩关系（部件 -> 遮罩列表，并标出哪些部件本身是遮罩）。
+    /// 遮罩关系在模型加载后是静态的，只需要在结构变化时解析一次。
+    void ResolveMaskRelations(int drawableCount);
+
+    /// 把遮罩画进遮罩纹理。
+    ///
+    /// 遮罩用与主画面相同的 MVP 矩阵绘制，因此遮罩纹理与主画面的
+    /// 「模型坐标 → 像素」一一对应，片元着色器可直接按裁剪空间采样。
+    ///
+    /// @return 遮罩纹理不可用时返回 false（调用方应退化为不裁剪）。
+    bool RenderMaskTexture(const std::vector<cubism::MaskRef>& masks, const Mat4& transform,
+                           const RenderContext& ctx);
+
     /// 绘制一个部件。
-    void DrawDrawable(int index, const Mat4& transform);
+    /// @param maskPass true 表示画进遮罩纹理（此时没有自己的贴图就用白色实心填充）。
+    void DrawDrawable(int index, const Mat4& transform, bool maskPass);
 
     /// 释放所有 GPU 资源。
     void ReleaseGraphics();
@@ -118,6 +172,27 @@ private:
     // --- 状态 ---
     bool loaded_ = false;
     std::string displayName_;
+
+    // --- 待机随机表情 ---
+    //
+    // 两条通道并行工作，缺一不可：
+    //   1) 表情动作组（MotionGroupKind::Expression）：模型有 "Exp*" 组时随机播；
+    //   2) 表情参数（IdleFaces）：模型没有表情动作组时，靠 ParamBrowLY /
+    //      ParamCheek / ParamEyeLSmile 这类参数做小表情。
+    // 很多模型只有第 2 条通道，只做第 1 条会让随机表情对这类模型完全无效。
+    bool randomExpression_ = false;
+    float randomExpressionTimer_ = 12.0f;
+    float randomExpressionHold_ = -1.0f;
+    std::mt19937 expressionRng_{20240501u};
+
+    /// 参数级待机小表情（眉毛/脸颊/笑眼）。
+    IdleFaces idleFaces_;
+
+    /// 表情参数索引缓存：参数名 -> Cubism 索引（-1 表示模型没有该参数）。
+    std::map<std::string, int> faceParamIndex_;
+
+    /// 视线追踪强度倍率（1 = 默认）。可在设置里放大/缩小眼睛跟随幅度。
+    float trackingStrength_ = 1.0f;
 
     // 视线追踪参数索引（-1 表示该模型没有这个参数）。
     int paramAngleX_ = -1;

@@ -106,23 +106,35 @@ float JsonFade(const nlohmann::json& obj, const char* key) {
 ///   2) 单对象  ："Idle": { "File": "a.motion3.json" }
 ///   3) 字符串  ："Idle": "a.motion3.json"  或 { "File": ["a", "b"] }
 /// 旧实现只认 2/3，遇到标准数组直接 return，导致真实模型动作组全被解析为空。
+/// 取路径的文件名部分（不含目录）。
+///
+/// 用于按文件名推断动作用途（"idle.motion3.json" -> "idle"）。
+/// 同时兼容 Windows 的反斜杠分隔符。
+inline std::string FileNameOf(const std::string& path) {
+    const std::size_t slash = path.find_last_of("/\\");
+    if (slash == std::string::npos) return path;
+    return path.substr(slash + 1);
+}
+
 void CollectMotionFiles(const nlohmann::json& groupValue, const std::string& baseDir,
                         std::vector<std::string>& outFiles,
                         std::vector<float>& outFadeIn,
-                        std::vector<float>& outFadeOut) {
+                        std::vector<float>& outFadeOut,
+                        std::vector<std::string>* outFileNames) {
     auto pushFile = [&](const std::string& rel, float fin, float fout) {
         std::string abs;
         if (ResolveInsideBase(baseDir, rel, abs)) {
             outFiles.push_back(abs);
             outFadeIn.push_back(fin);
             outFadeOut.push_back(fout);
+            if (outFileNames) outFileNames->push_back(FileNameOf(rel));
         }
     };
 
     if (groupValue.is_array()) {
         // 标准写法：数组的每个元素是一个动作条目对象。
         for (const auto& item : groupValue) {
-            CollectMotionFiles(item, baseDir, outFiles, outFadeIn, outFadeOut);
+            CollectMotionFiles(item, baseDir, outFiles, outFadeIn, outFadeOut, outFileNames);
         }
         return;
     }
@@ -345,7 +357,8 @@ bool ParseModel3Json(const std::string& model3Path, Live2DManifest& out, std::st
             Live2DMotionGroup group;
             group.name = item.key();
             CollectMotionFiles(item.value(), baseDir, group.files,
-                               group.fadeInTimes, group.fadeOutTimes);
+                               group.fadeInTimes, group.fadeOutTimes,
+                               &group.fileNames);
             motionGroups.push_back(group);
         }
     }
@@ -383,11 +396,25 @@ bool ParseModel3Json(const std::string& model3Path, Live2DManifest& out, std::st
         }
     }
 
+    // --- 物理文件（可选）-----------------------------------------------------
+    // FileReferences.Physics 指向 .physics3.json。缺失不影响模型加载，
+    // 只是没有头发/裙摆的物理摇曳。
+    std::string physicsPath;
+    const std::string physicsRelative = JsonString(*refs, "Physics");
+    if (!physicsRelative.empty()) {
+        std::string abs;
+        if (ResolveInsideBase(baseDir, physicsRelative, abs) &&
+            fs::is_regular_file(ToFsPath(abs), ec)) {
+            physicsPath = abs;
+        }
+    }
+
     // --- 输出 ---------------------------------------------------------------
     out = Live2DManifest();
     out.model3Path = AbsolutePath(model3Path);
     out.baseDir = baseDir;
     out.mocPath = mocPath;
+    out.physicsPath = physicsPath;
     out.texturePaths = texturePaths;
     out.textureRelative = textureRelative;
     out.motionGroups = motionGroups;

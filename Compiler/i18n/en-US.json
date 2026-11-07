@@ -1,6 +1,5 @@
 {
   "_comment": "PPet UI strings (English). Compiler/i18n_gen translates this file into a C++ embedded table. Keys must match the member names of struct Strings in src/core/I18n.hpp exactly.",
-
   "alwaysOnTop": "Always On Top",
   "ignoreMouseEvents": "Ignore Mouse Events",
   "openAtLogin": "Open At Login",
@@ -15,7 +14,6 @@
   "feedback": "Feedback",
   "about": "About",
   "quit": "Quit",
-
   "modelList": "Model List",
   "importModel": "Import Model",
   "importOnlineModel": "Import Online Model",
@@ -33,7 +31,6 @@
   "windowSection": "Window",
   "settingsTitle": "PPet Settings",
   "noFontNote": "No CJK font found; Chinese text may show as boxes",
-
   "importFailed": "Import model failed",
   "removeFailed": "Remove model failed",
   "modelLoadFailed": "Failed to load model",
@@ -46,7 +43,6 @@
   "modelTypeVrm": "VRM",
   "noModel": "No model loaded",
   "trackingHint": "When enabled, the model's eyes and head follow the mouse across the entire screen",
-
   "debugPanel": "Model Diagnostics",
   "debugTitle": "PPet Model Diagnostics",
   "debugTabOverview": "Overview & Render",
@@ -64,7 +60,6 @@
   "debugMissingNone": "No missing resources",
   "debugMissingHint": "PMX files do not embed textures; package the .pmx together with its textures into a .zip",
   "debugGroupMissing": "Missing resources",
-
   "debugTabBones": "Skeleton",
   "debugTabImages": "Images & Render",
   "debugModelId": "Model ID",
@@ -74,7 +69,6 @@
   "debugNoPreview": "No preview available",
   "debugErrorGroup": "Errors & Warnings (Detailed)",
   "debugNoErrors": "No errors",
-
   "errTitleFailed": "Failed to Load Model",
   "errTitleWarning": "Model Loaded with Warnings",
   "errDetailGroup": "Details",
@@ -83,7 +77,6 @@
   "errLogHint": "Log: ",
   "errCopy": "Copy Details",
   "errCopied": "Copied",
-
   "sayPhrase": "Say a line",
   "expressionMenu": "Expressions",
   "bubble": "Speech bubble",
@@ -93,11 +86,12 @@
   "lipSyncLabel": "Lip sync",
   "expressionStatusLabel": "Expression status",
   "noExpressions": "This model has no expression/lip-sync support",
-
   "expressionNeutral": "Natural",
   "expressionHappy": "Happy",
   "expressionRelaxed": "Relaxed",
   "expressionAngry": "Angry",
   "expressionSad": "Sad",
-  "expressionSurprised": "Surprised"
+  "expressionSurprised": "Surprised",
+  "randomExpression": "Random idle expression",
+  "randomExpressionNow": "Random expression now"
 }

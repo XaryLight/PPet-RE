@@ -158,6 +158,11 @@ private:
     double dragGrabX_ = 0.0;
     double dragGrabY_ = 0.0;
 
+    /// 窗口内鼠标位置（窗口局部坐标）与有效性标记。
+    /// 用于全屏追踪不可用时的视线追踪兜底。
+    Vec2 windowCursor_{0.0f, 0.0f};
+    bool hasWindowCursor_ = false;
+
     // 「移动窗口」模式：临时关闭点击穿透，让平时鼠标穿透的窗口也能被拖动。
     // 退出时按「当前配置」恢复穿透，不保存进入时的快照，避免覆盖用户中途的改动。
     bool moveMode_ = false;

@@ -50,6 +50,8 @@ constexpr const char* kIdQuit = "quit";
 constexpr const char* kIdExpressions = "expressions";  ///< 「表情」子菜单
 constexpr const char* kIdSayPhrase = "sayPhrase";      ///< 「说一句」
 constexpr const char* kIdBubble = "bubble";            ///< 台词气泡开关
+constexpr const char* kIdRandomExpr = "randomExpr";    ///< 待机随机表情开关
+constexpr const char* kIdRandomExprNow = "randomExprNow"; ///< 立即随机一个表情
 /// expr:<presetId> 形式的菜单项：触发某个表情预设。
 constexpr const char* kExprPrefix = "expr:";
 
@@ -179,6 +181,12 @@ bool App::Initialize(std::string& error) {
     };
 
     window_.onMouseMove = [this](double xpos, double ypos) {
+        // 记录窗口内鼠标位置：作为「全屏追踪不可用时」的视线追踪兜底。
+        // 桌宠窗口通常开启了点击穿透，全局钩子拿不到位置，但窗口内的
+        // 鼠标移动事件仍然会送达——至少让模型能看向窗口内的鼠标。
+        windowCursor_ = Vec2(static_cast<float>(xpos), static_cast<float>(ypos));
+        hasWindowCursor_ = true;
+
         if (!dragging_) return;
         // 绝对定位：记 W = 窗口左上角、L = 光标在窗口内坐标，则全局光标
         // G = W + L 恒成立（窗口移动会等量反向改变 L）。令 W' = G - A，
@@ -628,6 +636,12 @@ void App::RebuildTrayMenu() {
         items.push_back({Item::Type::Submenu, strings_.expressionMenu, kIdExpressions,
                          false, true, exprItems, ""});
     }
+    // 待机随机表情：桌宠每隔 8~20 秒自己换一个表情（对齐 VRM-VPet 的随机表情）。
+    items.push_back({Item::Type::Checkbox, strings_.randomExpression, kIdRandomExpr,
+                     model_ && model_->RandomIdleExpression(), true, {}, ""});
+    // 立即随机一个表情：不等下一次自动触发，立刻抽一个。
+    items.push_back({Item::Type::Action, strings_.randomExpressionNow, kIdRandomExprNow,
+                     false, true, {}, ""});
     // 说一句：随机抽一条台词（含问候/思考/工作等状态），供用户主动触发。
     items.push_back({Item::Type::Action, strings_.sayPhrase, kIdSayPhrase, false, true, {},
                      ""});
@@ -716,6 +730,18 @@ void App::OnTrayItem(const std::string& id, bool checked) {
             } else {
                 PPET_LOG_TAG("EXPRESSION", "表情预设不可用：%s", presetId.c_str());
             }
+        }
+    } else if (id == kIdRandomExpr) {
+        // 待机随机表情开关。
+        if (model_) {
+            const bool enabled = !model_->RandomIdleExpression();
+            model_->SetRandomIdleExpression(enabled);
+            PPET_LOG_TAG("DIALOGUE", "待机随机表情：%s", enabled ? "开" : "关");
+            RebuildTrayMenu();
+        }
+    } else if (id == kIdRandomExprNow) {
+        if (model_ && model_->TriggerRandomExpression()) {
+            PPET_LOG_TAG("DIALOGUE", "手动随机一个表情");
         }
     } else if (id == kIdSayPhrase) {
         // 随机挑一种状态说一句（比固定档位更鲜活）。
@@ -915,6 +941,18 @@ RenderContext App::BuildRenderContext(float deltaTime) const {
         GlobalCursorTracker::NormalizeAround(ctx.globalCursor, ctx.modelScreenCenter,
                                              configStore_.config().trackingRadius, &normalized);
         ctx.localCursor = normalized;
+    } else if (hasWindowCursor_) {
+        // 【兜底】全局追踪不可用（权限不足 / 被关闭 / 平台不支持）时，
+        // 退化为「窗口内追踪」：鼠标在桌宠窗口内移动时模型照样看向它。
+        // 换算基准是窗口中心，半径取窗口对角线的一半，
+        // 于是鼠标在窗口边缘时归一化坐标约为 ±1。
+        ctx.windowCursor = windowCursor_;
+        ctx.hasWindowCursor = true;
+        const float radius = std::max(1.0f, std::max(size.x, size.y) * 0.5f);
+        ctx.localCursor = Vec2((windowCursor_.x - size.x * 0.5f) / radius,
+                               -(windowCursor_.y - size.y * 0.5f) / radius);
+        ctx.localCursor.x = std::clamp(ctx.localCursor.x, -1.0f, 1.0f);
+        ctx.localCursor.y = std::clamp(ctx.localCursor.y, -1.0f, 1.0f);
     }
 
     return ctx;

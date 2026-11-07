@@ -19,13 +19,16 @@
 | **系统托盘** | 置顶 / 忽略点击 / 切换模型 / **表情预设** / **说一句** / 台词气泡开关 / 语言 / 开机启动 / 调试 / 模型诊断 / 关于 / 退出 |
 | **Qt 6 设置面板** | 模型管理、渲染缩放、全屏追踪参数、语言切换 |
 | **模型诊断面板** | 7 个页签：概览与渲染、**模型 ID**、参数、**骨架信息**、**图片渲染（贴图缩略图 + 实时渲染帧）**、模型部分、性质与详细错误、**表情与说话**，见 [调试与日志](docs/debugging.md) |
-| **表情管理** | PMX / VRM 表情预设 + 别名解析 + 平滑过渡 + 自动眨眼叠层；Live2D 表情动作组，见 [表情管理与语言功能](docs/expressions.md) |
+| **表情管理** | PMX / VRM 表情预设 + 别名解析 + 平滑过渡 + 自动眨眼叠层；Live2D 表情动作组 + 表情参数预设，见 [表情管理与语言功能](docs/expressions.md) |
+| **待机动画** | 参考 FULASKA 与 VRM-VPet：PMX / VRM 程序化待机（呼吸 / 重心 / 头部 / 手臂 / 腿部）+ 骨骼动作（点头 / 摇头 / 挥手）；Live2D 待机动作循环播放 + **物理头发摇曳** + 视线追踪 |
+| **待机随机表情** | 三种模型格式通用：换一个表情 → 停留 2~5 秒 → 自动回中性，间隔随机 8~20 秒；托盘可开关，也可立即触发 |
 | **语言功能** | 台词库（按状态分档）/ 台词气泡 / 音节包络口型同步，三种模型格式共用，见 [表情管理与语言功能](docs/expressions.md) |
 | **失败原因弹窗** | 添加模型失败时用 Qt 弹窗显示分类（未找到有效骨架 / 模型图片缺失 / 解析错误 / moc3 错误…）、逐条明细与建议 |
 | **结构化日志** | 毫秒级时间戳、源码位置、线程 ID、6 级分级，写到 `./last.log` |
 | **中英双语** | 界面文案由 [`Compiler/`](Compiler/README.md) 从 JSON 生成，改文案不必动 C++ |
 | **渲染验证工具** | `ppet_render_verify` 对 VRM / PMX(zip) / moc3 出图并输出 PNG + JSON 报告，见 [Windows 验收](docs/windows-test.md) |
 | **健壮的解析器** | 所有模型读取都有边界检查与索引越界防护，配套 ASAN 模糊测试 |
+| **Live2D 物理** | 完整实现 Cubism 官方物理算法（Verlet 摆锤链 + 固定步长 + 输入/输出插值），头发与裙摆随头部转动甩动，见 [Live2D 分层运行时](docs/live2d-stage.md) |
 
 ---
 
@@ -92,11 +95,11 @@ cmake --build build -j
 | [docs/build.md](docs/build.md) | 依赖、C++23 要求、编译步骤、Live2D 后端、Windows 工具链与故障排查 |
 | [docs/windows-test.md](docs/windows-test.md) | **Windows 11 + N 卡 + llvm-mingw + Qt6 + SDK 5.x 真机验收手册** |
 | [docs/models.md](docs/models.md) | 模型格式、**PMX 的 `.zip` 包规范**、压缩包导入流程、中文路径 |
-| [docs/expressions.md](docs/expressions.md) | **表情管理（预设 / 别名 / 过渡 / 叠加层）、语言功能（台词 / 气泡 / 口型）** |
-| [docs/live2d-stage.md](docs/live2d-stage.md) | **Live2D 分层运行时：参数栈 / 姿态总线 / 三通道视线 / 待机 / 热区 / 口型** |
-| [docs/usage.md](docs/usage.md) | 运行、托盘菜单、设置面板、全屏追踪、配置字段 |
+| [docs/expressions.md](docs/expressions.md) | **表情管理（预设 / 别名 / 过渡 / 叠加层）、语言功能（台词 / 气泡 / 口型）、待机随机表情** |
+| [docs/live2d-stage.md](docs/live2d-stage.md) | **Live2D 分层运行时：参数栈 / 姿态总线 / 三通道视线 / 待机 / 热区 / 口型 / 物理 / 动作分组** |
+| [docs/usage.md](docs/usage.md) | 运行、托盘菜单、**PMX / VRM 待机动画与骨骼动作**、设置面板、全屏追踪、配置字段 |
 | [docs/debugging.md](docs/debugging.md) | 模型诊断面板、失败弹窗、结构化日志格式与级别、常见问题排查 |
-| [docs/development.md](docs/development.md) | 架构分层、测试清单、文案翻译器、C++23 使用点 |
+| [docs/development.md](docs/development.md) | 架构分层、测试清单、**三配置构建矩阵**、文案翻译器、C++23 使用点 |
 | [api/README.md](api/README.md) | Live2D SDK 集成层与第三方库引用头说明 |
 | [Compiler/README.md](Compiler/README.md) | 文案翻译器（JSON/CSV → C++ 内嵌表）的用法 |
 
@@ -114,11 +117,11 @@ PPet-RE/
 │       ├── app/              # 主循环、托盘菜单、应用编排
 │       ├── agent/            # 语言系统：台词库 / 气泡状态机 / 口型
 │       ├── core/             # 配置、i18n、结构化日志、文件 IO、ZIP、模型包
-│       ├── model/            # IModel 抽象、蒙皮网格、表情调度器、PMX / VRM 后端、错误模型
+│       ├── model/            # IModel 抽象、蒙皮网格、表情调度器、程序化待机 / 骨骼动作、PMX / VRM 后端、错误模型
 │       ├── platform/         # 窗口、托盘、光标追踪、开机启动、文件对话框
 │       └── render/           # 渲染管线、相机、渲染帧抓图
 ├── api/                      # ★ 外部 SDK / 第三方库引用层
-│   ├── live2d/               # Cubism SDK 集成（model3.json / moc3 / 动作 / 分层运行时）
+│   ├── live2d/               # Cubism SDK 集成（model3.json / moc3 / 动作 / 物理 / 分层运行时）
 │   │   └── csdk/             # 自备的 Cubism Core（已 gitignore）
 │   └── vendor/               # nlohmann/json、stb、zlib 统一引用头
 ├── Compiler/                 # 文案翻译器：JSON/CSV → C++ 内嵌表

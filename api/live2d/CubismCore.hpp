@@ -95,6 +95,16 @@ struct Drawable {
     bool visible = true;                     ///< 是否可见
 };
 
+/// 一个遮罩（mask）引用。
+///
+/// Cubism 的「遮罩」是另一块部件的几何：被它遮住的部件只显示落在遮罩范围内的部分。
+/// 官方渲染器把遮罩单独画进一张遮罩纹理，再用它裁剪被遮部件。
+/// 本项目照此实现（见 Live2DModel 的遮罩通道）。
+struct MaskRef {
+    int drawableIndex = -1;  ///< 遮罩部件的索引
+    bool inverted = false;   ///< 是否为「反转遮罩」（挖洞而不是遮挡）
+};
+
 /// 模型句柄（不透明类型，实现细节全部藏在适配层里）。
 class Model;
 
@@ -130,6 +140,9 @@ std::string ParameterId(const Model* model, int index);
 /// 找不到就必须跳过，而不是写一个不存在的参数。
 int FindParameter(const Model* model, const std::string& id);
 
+/// 第 index 个部件的 id（如 "zuoyanzhuGG"）。索引越界返回空串。
+std::string DrawableId(const Model* model, int index);
+
 /// 读取参数当前值。
 float ParameterValue(const Model* model, int index);
 
@@ -155,5 +168,14 @@ int DrawableCount(const Model* model);
 /// 取第 index 个部件的几何数据。
 /// @return 索引越界返回 false。
 bool GetDrawable(const Model* model, int index, Drawable& out);
+
+/// 取第 index 个部件的遮罩列表。
+///
+/// 遮罩关系在模型加载后是**静态**的（不会随参数变化），
+/// 因此调用方可以缓存结果，不必每帧查询。
+///
+/// @param out 接收遮罩引用列表（可能被清空）
+/// @return 该部件有遮罩返回 true。
+bool GetDrawableMasks(const Model* model, int index, std::vector<MaskRef>& out);
 
 }  // namespace ppet::live2d::cubism

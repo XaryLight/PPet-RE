@@ -118,9 +118,61 @@ const auto frames = timeline.Sample(0.75f, ClipEasing::EaseInOut);
 
 ### 1.7 Live2D 的表情
 
-Live2D 的「表情」通常是**动作组**（如 `ExpHappy`），由 `MotionDirector` 以
-`MotionPriority::Expression` 优先级播放。托盘的「表情」子菜单会列出模型里
-所有 `MotionGroupKind::Expression` 类型的动作组。
+Live2D 的「表情」有**两条通道**：
+
+| 通道 | 载体 | 说明 |
+| --- | --- | --- |
+| 表情动作组 | `model3.json` 的 `Motions` 里名字含 `Exp` 的组 | 由 `MotionDirector` 以 `MotionPriority::Expression` 优先级播放 |
+| **表情参数** | `ParamBrowLY` / `ParamCheek` / `ParamEyeLSmile` / `ParamMouthForm` 等 | 由 `IdleFaces` 加性叠加 |
+
+托盘的「表情」子菜单会列出模型里所有 `MotionGroupKind::Expression` 类型的动作组。
+
+**为什么必须有第二条通道**：很多模型（尤其是国内常见的一体成型模型包）
+**完全没有表情动作组**，只有几十个表情参数。只做第一条通道，
+「待机表情随机化」对这些模型就是完全无效的。
+
+`IdleFaces` 在加载时探测模型**实际拥有**的表情参数，并据此生成预设：
+
+| 预设 | 涉及参数 |
+| --- | --- |
+| 开心 | `ParamBrowLY`↑ `ParamBrowRY`↑ `ParamEyeLSmile`↑ `ParamEyeRSmile`↑ `ParamMouthForm`↑ |
+| 害羞 | `ParamCheek`↑ `ParamCheekL`↑ `ParamCheekR`↑ `ParamBrowLY`↑ `ParamBrowRY`↑ |
+| 生气 | `ParamBrowLForm`↓ `ParamBrowRForm`↓ `ParamBrowLAngle`↓ `ParamBrowRAngle`↓ |
+| 惊讶 | `ParamBrowLY`↑ `ParamBrowRY`↑ |
+
+预设只包含模型真实拥有的参数——不会设了不存在的参数而让整张脸没变化。
+
+---
+
+## 一之补、待机表情随机化
+
+「待机表情随机化」是**待机时自动换表情**，与「手动切换表情」是两件事：
+
+| | 手动切换 | 待机随机化 |
+| --- | --- | --- |
+| 触发者 | 用户点托盘菜单 | 系统按随机间隔自动触发 |
+| 持续 | 一直保持到下一次手动操作 | 换一个 → 停留 2~5 s → 自动回中性 |
+| 间隔 | — | 随机 8~20 s |
+| 冲突 | 用户手动换过后有 6 s 保护期 | 保护期内不触发 |
+
+### 开关与入口
+
+| 入口 | 作用 |
+| --- | --- |
+| 托盘 → 「待机随机表情」（勾选项） | 开 / 关随机表情 |
+| 托盘 → 「立即随机表情」 | 不等下一次自动触发，立刻抽一个 |
+| 诊断面板 → 「表情与说话」页签 | 查看开关状态、当前小表情、下次触发倒计时 |
+
+### 三种后端的行为
+
+| 后端 | 随机表情的实现 |
+| --- | --- |
+| PMX / VRM | `ExpressionDirector::TriggerRandomIdle()`：随机挑一个非中性预设 → 停留 2~5 s → 回 `neutral` |
+| Live2D（有 `Exp*` 组） | `MotionDirector::PlayGroup(id, MotionPriority::Expression)` 随机播一个表情动作组 |
+| Live2D（只有表情参数） | `IdleFaces::Trigger()` 随机切一个表情参数预设（淡入 → 停留 → 淡出） |
+
+Live2D 会**自动回退**：模型没有表情动作组时，用表情参数预设兜底，
+所以随机表情对任何模型都有效。
 
 ---
 

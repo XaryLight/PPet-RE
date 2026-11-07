@@ -29,17 +29,15 @@ CurveType ParseCurveType(const std::string& text) {
 
 /// 计算三次贝塞尔曲线在 t 处的值。
 ///
-/// 控制点为 (0,0) -> (x1,y1) -> (x2,y2) -> (1,1)。
+/// 控制点为 (0,from) -> (x1,y1) -> (x2,y2) -> (1,to)。
 /// 横坐标用于反解参数 t（牛顿迭代），纵坐标给出插值结果。
 ///
-/// @param p  控制点 [x1, y1, x2, y2]
+/// @param p  控制点 [x1, y1, x2, y2]（x 归一化、y 绝对）
 /// @param t  时间比例 [0,1]
-float BezierValue(const float p[4], float t) {
-    // 二次贝塞尔的 y 分量。
+float BezierValue(const float p[4], float t, float fromValue, float toValue) {
     const float mt = 1.0f - t;
-    const float y = mt * mt * mt * 0.0f + 3.0f * mt * mt * t * p[1] +
-                    3.0f * mt * t * t * p[3] + t * t * t * 1.0f;
-    return y;
+    return mt * mt * mt * fromValue + 3.0f * mt * mt * t * p[1] +
+           3.0f * mt * t * t * p[3] + t * t * t * toValue;
 }
 
 /// 计算贝塞尔曲线在给定 x 处的 t（横坐标反解）。
@@ -75,13 +73,129 @@ float Interpolate(const MotionKey& from, const MotionKey& to, float t) {
             return from.value;
         case CurveType::Bezier: {
             const float param = BezierTime(from.bezier, t);
-            return BezierValue(from.bezier, param);
+            return BezierValue(from.bezier, param, from.value, to.value);
         }
         case CurveType::Linear:
         default:
             break;
     }
     return from.value + (to.value - from.value) * t;
+}
+
+/// 把绝对时间的贝塞尔控制点换算成「相对本段」的归一化坐标。
+///
+/// 两种动作格式里控制点的时间都是绝对秒数，而插值时用的是
+/// 相对本关键帧到下一关键帧的 [0,1] 比例，因此要在这里换算。
+///
+/// @param key      起始关键帧（其 bezier 里存的是绝对控制点）
+/// @param nextTime 下一个关键帧的时间
+void NormalizeBezier(MotionKey& key, float nextTime) {
+    const float span = nextTime - key.time;
+    if (span <= 1e-6f) return;
+    // 控制点的时间可能在有效区间之外（例如末帧的贝塞尔会延伸到一个「未来」时间），
+    // 这里不做钳制，保持与官方一致。
+    key.bezier[0] = (key.bezier[0] - key.time) / span;
+    key.bezier[2] = (key.bezier[2] - key.time) / span;
+}
+
+/// 解析 Cubism 5 的扁平「Segments」数组。
+///
+/// 官方规范（Live2D/CubismSpecs · FileFormats/motion3.json.md，原文摘录）：
+///   · A point is a sequence of 2 numbers, where the first number is its
+///     timing in seconds (t), and the second number its value at t.
+///   · A segment identifier is single number:
+///       0 = linear, 1 = cubic bézier, 2 = stepped, 3 = inverse-stepped.
+///   · Each curve starts with the first point followed by the segment
+///     identifier. Therefore, the first segment identifier is the third number.
+///   · A segment identifier is followed by *1 point* in case of linear, stepped,
+///     and inverse stepped segments, that represents the end of the segment,
+///     or *3 points* in case of bézier segments, that represent P1, P2, P3.
+///   · 贝塞尔控制点的时间按比例固定：
+///       P1.t = 1/3 (P3.t - P0.t)，P2.t = 2/3 (P3.t - P0.t)
+///
+/// 【重要】官方样例（CubismSdkForNative-5-r.5 的 Haru 模型 haru_g_m08）：
+///   "Segments": [ 0, 0, 1, 0.167, 0, 0.333, 0, 0.5, 0, 1, ... ]
+///   = 点(0s, 0) + 段标识1 + 三个点 (0.167s,0) (0.333s,0) (0.5s,0)。
+///   早期实现按「4 个数（x1,y1,x2,y2）」解析，会把控制点数量数错，
+///   导致整条曲线的关键帧时间轴错位（动画「看起来不动」或节奏乱掉）。
+///
+/// @param segments 扁平数组
+/// @param out      解析出的关键帧
+/// @return 解析出至少一个关键帧返回 true。
+bool ParseSegments(const nlohmann::json& segments, std::vector<MotionKey>& out) {
+    out.clear();
+    if (!segments.is_array() || segments.size() < 3) return false;
+
+    std::vector<float> numbers;
+    numbers.reserve(segments.size());
+    for (const auto& item : segments) {
+        if (!item.is_number()) return false;
+        numbers.push_back(item.get<float>());
+    }
+
+    // 第一个点。
+    MotionKey first;
+    first.time = numbers[0];
+    first.value = numbers[1];
+    out.push_back(first);
+    std::size_t i = 2;
+
+    while (i < numbers.size()) {
+        // 段标识。
+        const int segId = static_cast<int>(numbers[i]);
+        ++i;
+        if (segId < 0 || segId > 3) return false;
+
+        if (segId == 1) {
+            // 贝塞尔段：段标识后跟 **3 个点**（P1、P2、P3），
+            // 其中 P3 就是这一段的终点。
+            if (i + 6 > numbers.size()) break;
+            const float p1t = numbers[i + 0];
+            const float p1v = numbers[i + 1];
+            const float p2t = numbers[i + 2];
+            const float p2v = numbers[i + 3];
+            const float p3t = numbers[i + 4];
+            const float p3v = numbers[i + 5];
+            i += 6;
+
+            MotionKey& prev = out.back();
+            prev.outType = CurveType::Bezier;
+            // 控制点：x1/x2 用**实际时间**参与插值（随后按段长归一化），
+            // y1/y2 是绝对值。
+            prev.bezier[0] = p1t;
+            prev.bezier[1] = p1v;
+            prev.bezier[2] = p2t;
+            prev.bezier[3] = p2v;
+            // P3 是本段终点。
+            MotionKey key;
+            key.time = p3t;
+            key.value = p3v;
+            key.inType = CurveType::Bezier;
+            out.push_back(key);
+            continue;
+        }
+
+        // 线性 / 阶跃 / 反向阶跃：段标识后跟 **1 个点**（本段终点）。
+        if (i + 1 >= numbers.size()) break;
+        MotionKey key;
+        key.time = numbers[i];
+        key.value = numbers[i + 1];
+        i += 2;
+
+        MotionKey& prev = out.back();
+        prev.outType = (segId >= 2) ? CurveType::Stepped : CurveType::Linear;
+        key.inType = prev.outType;
+        out.push_back(key);
+    }
+
+    if (out.size() < 2) return false;
+    // 贝塞尔控制点的时间是绝对秒数，换算成相对本段的归一化坐标。
+    for (std::size_t k = 0; k + 1 < out.size(); ++k) {
+        if (out[k].outType == CurveType::Bezier) {
+            NormalizeBezier(out[k], out[k + 1].time);
+        }
+    }
+    return true;
 }
 
 }  // namespace
@@ -171,6 +285,10 @@ bool ParseMotionFile(const std::string& path, Motion& out, std::string& error) {
         if (meta.contains("FadeOutTime") && meta.at("FadeOutTime").is_number()) {
             motion.fadeOutTime = std::max(0.0f, meta.at("FadeOutTime").get<float>());
         }
+        // Meta.Loop：待机动画标记为循环（Cubism 5 起新增的字段）。
+        if (meta.contains("Loop") && meta.at("Loop").is_boolean()) {
+            motion.loop = meta.at("Loop").get<bool>();
+        }
     }
 
     // --- Curves ---
@@ -181,6 +299,17 @@ bool ParseMotionFile(const std::string& path, Motion& out, std::string& error) {
         curve.target = JsonString(item, "Target");
         curve.id = JsonString(item, "Id");
         if (curve.id.empty()) continue;
+
+        // 两种曲线写法：
+        //   · Cubism 5：扁平数组 "Segments"
+        //   · Cubism 3/4：关键帧数组 "Curve"
+        const auto segmentsIt = item.find("Segments");
+        if (segmentsIt != item.end() && segmentsIt->is_array()) {
+            if (ParseSegments(*segmentsIt, curve.keys)) {
+                motion.curves.push_back(std::move(curve));
+            }
+            continue;
+        }
 
         const auto curveIt = item.find("Curve");
         if (curveIt == item.end() || !curveIt->is_array()) continue;
@@ -198,7 +327,8 @@ bool ParseMotionFile(const std::string& path, Motion& out, std::string& error) {
             key.inType = ParseCurveType(JsonString(keyItem, "In"));
             key.outType = ParseCurveType(JsonString(keyItem, "Out"));
 
-            // 贝塞尔控制点：Bezier 字段形如 [x1, y1, x2, y2]。
+            // 贝塞尔控制点：Bezier 字段形如 [x1, y1, x2, y2]，
+            // 这里的 x 是**绝对时间**（与 Cubism 3/4 的原始格式一致）。
             const auto bezierIt = keyItem.find("Bezier");
             if (bezierIt != keyItem.end() && bezierIt->is_array() &&
                 bezierIt->size() >= 4) {
@@ -215,7 +345,13 @@ bool ParseMotionFile(const std::string& path, Motion& out, std::string& error) {
         // 关键帧按时间排序，保证采样逻辑成立。
         std::sort(curve.keys.begin(), curve.keys.end(),
                   [](const MotionKey& a, const MotionKey& b) { return a.time < b.time; });
-        motion.curves.push_back(curve);
+        // 贝塞尔控制点换算成相对本段的归一化坐标。
+        for (std::size_t k = 0; k + 1 < curve.keys.size(); ++k) {
+            if (curve.keys[k].outType == CurveType::Bezier) {
+                NormalizeBezier(curve.keys[k], curve.keys[k + 1].time);
+            }
+        }
+        motion.curves.push_back(std::move(curve));
     }
 
     if (motion.curves.empty()) {

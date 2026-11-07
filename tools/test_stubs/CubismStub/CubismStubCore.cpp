@@ -281,6 +281,10 @@ struct CSM_MODEL {
     int* drawOrders;
     int* renderOrders;
     float* opacities;
+    /// 每个部件的遮罩数量（桩恒为 0）。
+    int* maskCounts;
+    /// 每个部件的遮罩编号指针（桩恒为 nullptr）。
+    const int** maskLists;
     int* vertexCounts;
     int* indexCounts;
 
@@ -415,6 +419,8 @@ csmModel* csmInitializeModelInPlace(const csmMoc* moc, void* address,
     model->drawOrders = alloc.Alloc<int>(drawableCount);
     model->renderOrders = alloc.Alloc<int>(drawableCount);
     model->opacities = alloc.Alloc<float>(drawableCount);
+    model->maskCounts = alloc.Alloc<int>(drawableCount);
+    model->maskLists = alloc.Alloc<const int*>(drawableCount);
     model->vertexCounts = alloc.Alloc<int>(drawableCount);
     model->indexCounts = alloc.Alloc<int>(drawableCount);
     model->drawableCount = static_cast<unsigned int>(drawableCount);
@@ -500,6 +506,9 @@ csmModel* csmInitializeModelInPlace(const csmMoc* moc, void* address,
         model->indexCounts[d] = static_cast<int>(indexCount);
         // Live2D 网格多为双面，桩实现统一标记为双面。
         model->constantFlags[d] = csmIsDoubleSided;
+        // 桩不建立遮罩关系：数量为 0，编号指针为空。
+        model->maskCounts[d] = 0;
+        model->maskLists[d] = nullptr;
         model->dynamicFlags[d] = csmIsVisible;
         model->drawOrders[d] = static_cast<int>(d);
         model->renderOrders[d] = static_cast<int>(d);
@@ -679,6 +688,18 @@ const int* csmGetDrawableRenderOrders(const csmModel* model) {
 const float* csmGetDrawableOpacities(const csmModel* model) {
     if (!model || model->drawableCount == 0) return nullptr;
     return model->opacities;
+}
+
+const int* csmGetDrawableMaskCounts(const csmModel* model) {
+    // 桩不生成遮罩关系：每个部件的遮罩数量恒为 0。
+    if (!model || model->drawableCount == 0) return nullptr;
+    return model->maskCounts;
+}
+
+const int** csmGetDrawableMasks(const csmModel* model) {
+    // 桩没有遮罩：返回空的锯齿数组（每项都是 nullptr）。
+    if (!model || model->drawableCount == 0) return nullptr;
+    return model->maskLists;
 }
 
 const int* csmGetDrawableVertexCounts(const csmModel* model) {

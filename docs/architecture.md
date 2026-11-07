@@ -17,16 +17,19 @@ PPet/
 │       ├── app/                # 应用主控制器、托盘菜单、主循环
 │       ├── agent/              # 语言系统：台词库 / 气泡状态机 / 口型（纯逻辑）
 │       ├── core/               # 配置、日志、i18n、文件 IO、ZIP 解析、模型包
-│       ├── model/              # IModel 抽象、SkinnedMesh、表情调度器、PMX / VRM 后端、错误模型
+│       ├── model/              # IModel 抽象、SkinnedMesh、表情调度器、程序化待机 / 骨骼动作、PMX / VRM 后端、错误模型
+│       │   ├── IdleAnimator.hpp    # ★ 程序化待机微动（纯头文件，零依赖）
+│       │   └── BoneMotion.*        # ★ 骨骼动作（点头/摇头/挥手 + 随机触发）
 │       ├── platform/           # 窗口、托盘、开机启动、光标追踪、文件对话框
 │       └── render/             # Renderer / Camera / RenderUtils / FrameCapture
 ├── api/                    # ★ 外部 SDK / 第三方库的引用与适配层
-│   ├── live2d/             # Cubism SDK 集成：model3.json / moc3 / 动作 / Live2DModel
+│   ├── live2d/             # Cubism SDK 集成：model3.json / moc3 / 动作 / 物理 / Live2DModel
 │   │   ├── MotionDirector.hpp  # ★ 动作调度（纯逻辑：待机/互动/优先级/fade，可脱离 SDK 单测）
-│   │   ├── Stage.hpp          # ★ 分层运行时（纯逻辑：参数栈/视线/待机/热区/口型）
+│   │   ├── Stage.hpp          # ★ 分层运行时（纯逻辑：参数栈/视线/待机/热区/口型/小表情）
+│   │   ├── Live2DPhysics.*    # ★ physics3.json 解析 + Cubism 官方摆锤求解（可脱离 SDK 单测）
 │   │   ├── Live2DModel.*       # 模型生命周期 / 参数驱动 / 绘制
 │   │   ├── Live2DManifest.*    # model3.json 解析（含 HitAreas）
-│   │   ├── Live2DMotion.*      # motion3.json 曲线解析（含 Fade）
+│   │   ├── Live2DMotion.*      # motion3.json 曲线解析（含 Fade / Meta.Loop / Segments）
 │   │   ├── CubismCore*         # SDK 唯一适配点
 │   │   └── csdk/           # 用户自备的 Cubism Core（gitignore，不入库）
 │   └── vendor/             # nlohmann/json、stb、zlib 的统一引用头
@@ -92,17 +95,29 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 
 | 层 | 文件 | 职责 | 依赖 |
 | --- | --- | --- | --- |
-| 解析 | `Live2DManifest.*` / `Live2DMotion.*` | `model3.json` 的 Motions 分组、**HitAreas**、`motion3.json` 曲线与 **FadeIn/FadeOut** | 仅 json + FileIO |
-| 调度 | `MotionDirector.hpp` | 组名分类（Idle/Tap/Pinch…）、空间分区命中、优先级状态机、待机冷却、fade 权重 | **纯 STL，零依赖** |
-| 驱动 | `Live2DModel.*` | 每帧复位参数默认值 → 叠加视线/眨眼/呼吸 → 按调度采样曲线并 fade 混合写入 | Cubism Core + GL |
+| 解析 | `Live2DManifest.*` / `Live2DMotion.*` | `model3.json` 的 Motions 分组、**HitAreas**、`motion3.json` 曲线与 **FadeIn/FadeOut** / **Meta.Loop** / 官方 `Segments` 语义 | 仅 json + FileIO |
+| 调度 | `MotionDirector.hpp` | 组名分类（Idle/Tap/Pinch…）+ **空名组按文件名回退推断**、空间分区命中、优先级状态机、待机冷却、fade 权重 | **纯 STL，零依赖** |
+| 物理 | `Live2DPhysics.*` | `physics3.json` 解析（标准 + Mobill 变体）、Verlet 摆锤链、固定步长与输入/输出插值 | 仅 json + FileIO |
+| 驱动 | `Live2DModel.*` | 每帧复位参数默认值 → 叠加视线/眨眼/呼吸 → 按调度采样曲线并 fade 混合写入 → 物理求值 → 口型 | Cubism Core + GL |
 
 `IModel::OnInteract(nx, ny)` 是上层（App）点击 → 模型的统一入口，默认空实现，
-PMX / VRM 不受影响。调度器的正确性由 `motion_director_unit`（状态机）与
-`live2d_manifest_unit`（解析数据链）两个单测保证，三种 Cubism 配置都能跑。
+PMX / VRM 不受影响。调度器的正确性由 `motion_director_unit`（状态机）、
+`live2d_manifest_unit`（解析数据链）与 `live2d_motion_group_unit`（分组推断 / 循环 / Segments）
+三个单测保证，三种 Cubism 配置都能跑。
 
 > 解析层有个关键约束：`model3.json` 的 Motions 组值**标准写法是数组**
 > （`"Idle": [ {"File": ...} ]`），旧实现只认对象/字符串，会把真实模型动作组解析成空。
 > 见 `CollectMotionFiles()` 与 `live2d_manifest_unit` 的回归断言。
+
+> **空名组必须能识别**：很多模型把全部动作塞进一个无名组 `""`，
+> 只按组名分类会得到「无 Idle 组」→ 待机时零动作。
+> 现在会先按组名分类，无语义组名再**按文件名**推断用途并抽出命中区，
+> 见 `ClassifyMotionGroup()` / `ClassifyMotionFile()` / `HitAreaFromMotionFile()`。
+
+> **`Segments` 必须按官方语义解析**：一条曲线 = 「第一个点 + 段标识」开头，
+> 段标识后跟 1 个点（线性/阶跃）或 **3 个点**（贝塞尔 P1/P2/P3）。
+> 详见 [Live2D 分层运行时](live2d-stage.md) 与官方规范
+> `Live2D/CubismSpecs/FileFormats/motion3.json.md`。
 
 ## 表情与语言系统的分层
 
@@ -127,6 +142,30 @@ PMX / VRM 不受影响。调度器的正确性由 `motion_director_unit`（状�
 
 细节见 **[表情管理与语言功能](expressions.md)** 与
 **[Live2D 分层运行时](live2d-stage.md)**。
+
+## 待机动画的分层
+
+待机表现拆成三套**互不依赖**的子系统，各自都是纯逻辑、可单测：
+
+| 子系统 | 文件 | 适用格式 | 职责 |
+| --- | --- | --- | --- |
+| 程序化待机 | `src/tools/model/IdleAnimator.hpp` | PMX / VRM | 呼吸、重心转移、头部微摆、手臂摆动、重心转移与腿部抬起、眼睛微眯；频率互质避免节拍 |
+| 骨骼动作 | `src/tools/model/BoneMotion.*` | PMX / VRM | 「骨骼名 + 欧拉角 + 权重 + 时间轴」的离散动作：点头 / 摇头 / 挥手；淡入淡出、播完回待机、待机随机触发（8~18 秒） |
+| Live2D 物理 | `api/live2d/Live2DPhysics.*` | Live2D | `physics3.json` 驱动的摆锤链，头发与裙摆随头部转动甩动 |
+
+三者都只输出「偏移量」，由各后端自行套用到骨骼或参数上，
+因此可以脱离渲染层做单元测试：
+
+| 单测 | 覆盖 |
+| --- | --- |
+| `idle_animator_unit` | 通道幅度、互质频率、小动作包络与触发间隔 |
+| `bone_motion_unit` | 内置动作轨道、插值、淡入淡出、随机触发 |
+| `live2d_physics_unit` | 两种 `physics3.json` 格式解析、摆锤链收敛、归一化映射 |
+
+> 待机随机表情有**两条通道**：
+> PMX / VRM 走 `ExpressionDirector` 的预设过渡，
+> Live2D 优先走表情动作组，没有则回退到 `Stage.hpp` 的 `IdleFaces` 参数预设。
+> 详见 [表情管理与语言功能](expressions.md)。
 
 ## 构建目标层次
 

@@ -236,7 +236,9 @@ endif()
 # ---------------------------------------------------------------------------
 set(PPET_MODEL_SOURCES
     src/tools/core/FileIO.cpp
+    src/tools/core/Log.cpp
     src/tools/model/SkinnedMesh.cpp
+    src/tools/model/BoneMotion.cpp
     src/tools/model/pmx/PmxParser.cpp
     src/tools/model/pmx/PmxModel.cpp
     src/tools/model/vrm/GltfParser.cpp
@@ -292,6 +294,7 @@ if(PPET_WITH_CUBISM OR PPET_WITH_CUBISM_STUB)
         api/live2d/Live2DModel.cpp
         api/live2d/Live2DMotion.cpp
         api/live2d/Live2DManifest.cpp
+        api/live2d/Live2DPhysics.cpp
         api/live2d/CubismCoreAdapter.cpp
     )
 endif()
@@ -831,6 +834,7 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/render_integration.cpp)
         tools/render_integration.cpp
         src/tools/core/FileIO.cpp
         src/tools/model/SkinnedMesh.cpp
+        src/tools/model/BoneMotion.cpp
         src/tools/model/pmx/PmxParser.cpp
         src/tools/model/pmx/PmxModel.cpp
         src/tools/model/vrm/GltfParser.cpp
@@ -929,7 +933,7 @@ endif()
 
 # Live2D 渲染验证工具：仅真实 Cubism SDK 模式下构建（桩无法加载真实模型）。
 # 用隐藏 GLFW 窗口 + GLEW 渲染一个兼容的 Live2D 模型，读回像素并合成 PNG。
-if(PPET_WITH_CUBISM AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/live2d_verify.cpp)
+if((PPET_WITH_CUBISM OR PPET_WITH_CUBISM_STUB) AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/live2d_verify.cpp)
     add_executable(ppet_live2d_verify tools/live2d_verify.cpp)
     # 验证工具自己创建 GLFW 窗口 + GLEW 上下文，因此需要直接链接 GL/GLFW。
     target_link_libraries(ppet_live2d_verify PRIVATE
@@ -1065,6 +1069,46 @@ add_test(NAME dialogue_system_unit
 add_executable(ppet_live2d_stage_test tools/live2d_stage_test.cpp)
 add_test(NAME live2d_stage_unit
          COMMAND ppet_live2d_stage_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# 程序化待机动画（呼吸 / 重心 / 头部 / 手臂 / 腿部）：IdleAnimator 是纯头文件，
+# 零外部依赖，直接单测。
+add_executable(ppet_idle_animator_test tools/idle_animator_test.cpp)
+add_test(NAME idle_animator_unit
+         COMMAND ppet_idle_animator_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# 内置骨骼动作（VRM-VPet 风格：点头 / 摇头 / 挥手）：播放器 + 关键帧插值，
+# 纯逻辑，不依赖渲染层。
+add_executable(ppet_bone_motion_test
+    tools/bone_motion_test.cpp
+    src/tools/model/BoneMotion.cpp
+)
+add_test(NAME bone_motion_unit
+         COMMAND ppet_bone_motion_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# Live2D 物理（头发摇曳）：解析 physics3.json + 摆锤求解。
+# 纯逻辑，不依赖 Cubism SDK，三种 CMake 配置均可编译运行。
+add_executable(ppet_live2d_physics_test
+    tools/live2d_physics_test.cpp
+    api/live2d/Live2DPhysics.cpp
+)
+add_test(NAME live2d_physics_unit
+         COMMAND ppet_live2d_physics_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# Live2D 动作分组与待机回归：验证「空名动作组按文件名推断」「Meta.Loop 循环」
+# 「Segments 解析」三件事，防止待机动画再次变成「完全不动」。
+# 纯逻辑（不链接 ppet_model），三种 CMake 配置均可编译运行。
+add_executable(ppet_live2d_motion_group_test
+    tools/live2d_motion_group_test.cpp
+    api/live2d/Live2DMotion.cpp
+    src/tools/core/FileIO.cpp
+)
+target_include_directories(ppet_live2d_motion_group_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME live2d_motion_group_unit
+         COMMAND ppet_live2d_motion_group_test
          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Live2D manifest/motion 解析：验证 HitAreas 与 FadeIn/FadeOut 元数据真被解析，

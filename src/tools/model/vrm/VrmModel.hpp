@@ -27,6 +27,8 @@
 #include <vector>
 
 #include <src/tools/core/Math.hpp>
+#include <src/tools/model/BoneMotion.hpp>
+#include <src/tools/model/IdleAnimator.hpp>
 #include <src/tools/model/ExpressionDirector.hpp>
 #include <src/tools/model/Model.hpp>
 #include <src/tools/model/SkinnedMesh.hpp>
@@ -87,6 +89,10 @@ public:
     /// 表情预设切换（"happy" / "angry" …）。内部做别名解析，
     /// 所以中文/日文 morph 名（开心 / 笑い）也能命中。
     bool SetExpressionPreset(const std::string& id) override;
+    /// 待机随机表情（对齐 VRM-VPet 的随机表情）。
+    void SetRandomIdleExpression(bool enabled) override;
+    bool RandomIdleExpression() const override;
+    bool TriggerRandomExpression() override;
 
     /// 可用的表情预设 id（托盘「表情」子菜单据此生成条目）。
     std::vector<std::string> ExpressionPresetIds() const override;
@@ -136,6 +142,8 @@ private:
     void UpdateAnimation(float dt);
     /// 待机动画（没有 glTF 动画时的呼吸 / 摆动）。
     void UpdateIdle(float dt);
+    /// 应用内置骨骼动作（VRM-VPet 风格：点头 / 摇头 / 挥手）。
+    void ApplyBoneMotion(const model::BonePose& pose);
     /// 视线追踪：驱动头部与眼球骨骼。
     void UpdateGaze(const RenderContext& ctx, float dt);
     /// 自动眨眼：驱动 blink 表情。
@@ -320,6 +328,15 @@ private:
     int leftEyeBone_ = -1;
     int rightEyeBone_ = -1;
     int bodyBone_ = -1;
+    /// 待机动画用到的 humanoid 骨骼（-1 表示该模型没有）。
+    int spineBone_ = -1;
+    int chestBone_ = -1;
+    int leftUpperArmBone_ = -1;
+    int rightUpperArmBone_ = -1;
+    int leftLowerArmBone_ = -1;
+    int rightLowerArmBone_ = -1;
+    int leftUpperLegBone_ = -1;
+    int rightUpperLegBone_ = -1;
     /// 视线角度（弧度），带平滑插值。
     float gazeYaw_ = 0.0f;
     float gazePitch_ = 0.0f;
@@ -332,6 +349,12 @@ private:
     float idleTime_ = 0.0f;
     float idleYaw_ = 0.0f;
     float idlePitch_ = 0.0f;
+    /// 程序化待机动画器（呼吸 / 重心 / 头部 / 手臂 / 小动作）。
+    model::IdleAnimator idleAnimator_;
+    /// 程序化待机的当前姿态。
+    model::IdlePose idlePose_;
+    /// 内置骨骼动作播放器（VRM-VPet 风格：点头 / 摇头 / 挥手）。
+    model::BoneMotionPlayer boneMotion_;
 
     // --- 眨眼 -------------------------------------------------------------
     /// 距离下一次眨眼的剩余时间。

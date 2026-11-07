@@ -27,6 +27,7 @@
 #include <map>
 #include <random>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace ppet::live2d {
@@ -272,60 +273,257 @@ private:
     float actionWeight_ = 0.0f;
 };
 
-/// 待机小表情：每隔一段随机给一个「小表情」加性权重（例如偶尔眯眼、歪嘴），
-/// 并叠加 wink（单眼眨）覆盖层。输出「表情名 -> 权重」，由 Live2DModel 刷入
-/// 对应表情参数（Cubism 的 ParamEyeLOpen/ROpen 或表情动作组）。
+/// 一个待机小表情预设。
+///
+/// Live2D 的「表情」有两种载体：
+///   1. 表情动作组（model3.json 的 Motions 里名字含 "Exp" 的组）——本项目用
+///      MotionDirector 播放；
+///   2. **表情参数**（ParamBrowLY / ParamCheek / ParamEyeLSmile …）——
+///      模型直接用参数驱动眉毛、脸颊、笑眼，最常见也最轻量。
+///
+/// 很多模型（包括本项目实测的国内模型包）**没有任何表情动作组**，
+/// 只有第 2 种载体。因此随机表情必须走参数通道，否则「待机表情随机化」
+/// 对这类模型完全无效。
+struct FacePreset {
+    std::string id;    ///< 预设 id（如 "happy"）
+    std::string name;  ///< 显示名（如 "开心"）
+    /// 参数名 -> 目标值。值为 0 表示「回到中性」。
+    std::vector<std::pair<std::string, float>> params;
+};
+
+/// 待机小表情：随机挑一个预设，淡入 -> 停留 -> 淡出回中性。
+///
+/// 与「手动切换表情」的区别（对齐 VRM-VPet 的随机表情）：
+///   · 手动切换会一直保持到下一次手动操作；
+///   · 随机表情是「换一个表情 → 停留 2~5 秒 → 自动回到中性」的循环，
+///     且两次随机之间的间隔是随机的（默认 8~20 秒）。
+///
+/// 输出「参数名 -> 权重」，由 Live2DModel **叠加**刷入模型参数
+/// （叠加而不是覆盖，保证模型自己的待机动作与表情可以共存）。
 class IdleFaces {
 public:
     struct Face {
-        std::string name;   ///< 表情/参数名
+        std::string name;   ///< 参数名
         float weight = 0.0f; ///< 加性权重
     };
 
-    /// 设置候选小表情名（通常是模型里真实存在的表情参数）。
+    /// 设置可用的小表情预设。
+    void SetPresets(std::vector<FacePreset> presets, std::uint32_t seed = 13579u) {
+        presets_ = std::move(presets);
+        rng_.seed(seed);
+        cooldown_ = RandomCooldown();
+    }
+
+    /// 设置候选小表情名（单参数脉冲模式）。
+    ///
+    /// 这是早期接口：只给某个参数一个瞬时加性权重。
+    /// 保留是为了兼容「模型只有一个可调表情参数」的最简场景。
     void SetCandidates(const std::vector<std::string>& candidates, std::uint32_t seed = 13579u) {
         candidates_ = candidates;
         rng_.seed(seed);
     }
 
-    /// 每帧推进。cooldown 为两次小表情之间的间隔（秒）。
-    std::vector<Face> Tick(float dt, float cooldown = 6.0f) {
-        (void)cooldown;  // 间隔由内部 cooldown_ 维护，参数保留以对齐统一接口
-        cooldown_ -= dt;
+    /// 是否已配置可用预设。
+    bool Empty() const { return presets_.empty() && candidates_.empty(); }
+
+    /// 当前可用预设（诊断用）。
+    const std::vector<FacePreset>& Presets() const { return presets_; }
+
+    /// 开启/关闭随机小表情。
+    void SetEnabled(bool enabled) {
+        enabled_ = enabled;
+        if (enabled) {
+            cooldown_ = RandomCooldown();
+        } else {
+            // 关闭时立即回中性，避免表情卡在非中性状态。
+            presetIndex_ = -1;
+            phase_ = Phase::Idle;
+            phaseTime_ = 0.0f;
+        }
+    }
+    bool Enabled() const { return enabled_; }
+
+    /// 设置两次随机之间的间隔区间（秒）。
+    void SetInterval(float min, float max) {
+        min_ = std::max(1.0f, min);
+        max_ = std::max(min_, max);
+    }
+
+    /// 每帧推进，返回当前应叠加到模型参数上的「参数 -> 权重」。
+    std::vector<Face> Tick(float dt) {
+        if (!(dt > 0.0f)) return CurrentFaces();
+        if (!enabled_) return CurrentFaces();
+
+        // 单参数脉冲模式：权重随相位衰减，到期后清空。
+        if (pulseTime_ >= 0.0f) {
+            pulseTime_ += dt;
+            if (pulseTime_ >= kPulseDuration) pulseTime_ = -1.0f;
+        }
+
+        // 状态机：Idle（等待） -> FadeIn（淡入） -> Hold（停留） -> FadeOut（淡出）
+        switch (phase_) {
+            case Phase::Idle: {
+                cooldown_ -= dt;
+                if (cooldown_ <= 0.0f) StartPreset();
+                break;
+            }
+            case Phase::FadeIn: {
+                phaseTime_ += dt;
+                if (phaseTime_ >= fadeTime_) {
+                    phase_ = Phase::Hold;
+                    phaseTime_ = 0.0f;
+                }
+                break;
+            }
+            case Phase::Hold: {
+                phaseTime_ += dt;
+                if (phaseTime_ >= holdTime_) {
+                    phase_ = Phase::FadeOut;
+                    phaseTime_ = 0.0f;
+                }
+                break;
+            }
+            case Phase::FadeOut: {
+                phaseTime_ += dt;
+                if (phaseTime_ >= fadeTime_) {
+                    phase_ = Phase::Idle;
+                    phaseTime_ = 0.0f;
+                    presetIndex_ = -1;
+                    cooldown_ = RandomCooldown();
+                }
+                break;
+            }
+        }
+        return CurrentFaces();
+    }
+
+    /// 立刻随机抽一个小表情并开始播放（返回是否抽到了）。
+    bool Trigger() {
+        if (!StartPreset()) return false;
+        return true;
+    }
+
+    /// 触发一次 wink（单眼眨）。
+    void TriggerWink() { if (winkTime_ < 0.0f) winkTime_ = 0.0f; }
+
+    /// 当前小表情 id（空串 = 当前是中性）。
+    std::string CurrentId() const {
+        if (presetIndex_ < 0 || static_cast<std::size_t>(presetIndex_) >= presets_.size()) {
+            return std::string();
+        }
+        return presets_[static_cast<std::size_t>(presetIndex_)].id;
+    }
+
+    /// 距离下一次随机小表情还有多久（秒）。
+    float TimeToNext() const {
+        if (phase_ != Phase::Idle) return 0.0f;
+        return std::max(0.0f, cooldown_);
+    }
+
+private:
+    enum class Phase { Idle, FadeIn, Hold, FadeOut };
+
+    static constexpr float kWinkDuration = 0.18f;
+    static constexpr float kPulseDuration = 0.35f;
+    static constexpr char kWinkLeft[] = "ParamWinkL";
+    static constexpr char kWinkRight[] = "ParamWinkR";
+
+    /// 当前生效的小表情权重（按参数名聚合）。
+    std::vector<Face> CurrentFaces() const {
         std::vector<Face> out;
-        if (cooldown_ <= 0.0f && !candidates_.empty()) {
-            std::uniform_int_distribution<std::size_t> dist(0, candidates_.size() - 1);
-            const std::string name = candidates_[dist(rng_)];
-            std::uniform_real_distribution<float> w(0.2f, 0.5f);
-            out.push_back({name, w(rng_)});
-            std::uniform_real_distribution<float> c(4.0f, 10.0f);
-            cooldown_ = c(rng_);
+        // 预设权重：淡入淡出包络 × 预设目标值。
+        if (presetIndex_ >= 0 && static_cast<std::size_t>(presetIndex_) < presets_.size()) {
+            const float envelope = Envelope();
+            if (envelope > 0.0f) {
+                const FacePreset& preset = presets_[static_cast<std::size_t>(presetIndex_)];
+                for (const auto& kv : preset.params) {
+                    out.push_back({kv.first, kv.second * envelope});
+                }
+            }
+        }
+        // 单参数脉冲模式：一个瞬时小表情（权重随相位衰减）。
+        if (pulseTime_ >= 0.0f) {
+            const float ph = std::min(1.0f, pulseTime_ / kPulseDuration);
+            const float v = std::sin(ph * 3.14159265f);
+            if (!pulseName_.empty()) out.push_back({pulseName_, pulseWeight_ * v});
         }
         // wink 覆盖层：偶发单眼眨，权重随相位衰减。
         if (winkTime_ >= 0.0f) {
-            winkTime_ += dt;
-            const float ph = winkTime_ / kWinkDuration;
-            if (ph >= 1.0f) {
-                winkTime_ = -1.0f;
-            } else {
-                const float v = std::sin(ph * 3.14159265f);
-                out.push_back({kWinkLeft, v});
-                out.push_back({kWinkRight, v});
-            }
+            const float ph = std::min(1.0f, winkTime_ / kWinkDuration);
+            const float v = std::sin(ph * 3.14159265f);
+            out.push_back({kWinkLeft, v});
+            out.push_back({kWinkRight, v});
         }
         return out;
     }
 
-    /// 触发一次 wink。
-    void TriggerWink() { if (winkTime_ < 0.0f) winkTime_ = 0.0f; }
+    /// 当前包络权重 [0,1]。
+    float Envelope() const {
+        switch (phase_) {
+            case Phase::FadeIn:
+                return fadeTime_ > 0.0f ? std::min(1.0f, phaseTime_ / fadeTime_) : 1.0f;
+            case Phase::Hold:
+                return 1.0f;
+            case Phase::FadeOut:
+                return fadeTime_ > 0.0f
+                           ? std::max(0.0f, 1.0f - phaseTime_ / fadeTime_)
+                           : 0.0f;
+            case Phase::Idle:
+            default:
+                return 0.0f;
+        }
+    }
 
-private:
-    static constexpr float kWinkDuration = 0.18f;
-    static constexpr char kWinkLeft[] = "ParamWinkL";
-    static constexpr char kWinkRight[] = "ParamWinkR";
+    /// 随机挑一个预设并进入淡入阶段。
+    bool StartPreset() {
+        if (!presets_.empty()) {
+            std::uniform_int_distribution<std::size_t> dist(0, presets_.size() - 1);
+            presetIndex_ = static_cast<int>(dist(rng_));
+            phase_ = Phase::FadeIn;
+            phaseTime_ = 0.0f;
+            std::uniform_real_distribution<float> fade(0.25f, 0.5f);
+            std::uniform_real_distribution<float> hold(2.0f, 5.0f);
+            fadeTime_ = fade(rng_);
+            holdTime_ = hold(rng_);
+            return true;
+        }
+        // 单参数脉冲模式：只给一个候选参数一个瞬时权重。
+        if (!candidates_.empty()) {
+            std::uniform_int_distribution<std::size_t> dist(0, candidates_.size() - 1);
+            pulseName_ = candidates_[dist(rng_)];
+            std::uniform_real_distribution<float> w(0.2f, 0.5f);
+            pulseWeight_ = w(rng_);
+            pulseTime_ = 0.0f;
+            // 脉冲模式不走预设状态机，需要自己重置冷却，否则会每帧都触发。
+            cooldown_ = RandomCooldown();
+            return true;
+        }
+        return false;
+    }
 
+    /// 两次随机之间的等待时间。
+    float RandomCooldown() {
+        std::uniform_real_distribution<float> dist(min_, max_);
+        return dist(rng_);
+    }
+
+    std::vector<FacePreset> presets_;
     std::vector<std::string> candidates_;
+    bool enabled_ = true;
+    float min_ = 8.0f;   ///< 随机间隔下限（秒）
+    float max_ = 20.0f;  ///< 随机间隔上限（秒）
     float cooldown_ = 5.0f;
+
+    int presetIndex_ = -1;
+    Phase phase_ = Phase::Idle;
+    float phaseTime_ = 0.0f;
+    float fadeTime_ = 0.4f;
+    float holdTime_ = 3.0f;
+
+    std::string pulseName_;
+    float pulseWeight_ = 0.0f;
+    float pulseTime_ = -1.0f;
+
     float winkTime_ = -1.0f;
     std::mt19937 rng_{13579u};
 };

@@ -1168,6 +1168,20 @@ void VrmModel::BuildHumanoid() {
     bodyBone_ = boneOf("hips");
     if (bodyBone_ < 0) bodyBone_ = boneOf("spine");
 
+    // --- 待机动画用到的 humanoid 骨骼 ---
+    // VRM 1.0 的 humanoid 规范里这些名字是固定的，缺哪个就退化成「没有那个通道」。
+    spineBone_ = boneOf("spine");
+    chestBone_ = boneOf("chest");
+    if (chestBone_ < 0) chestBone_ = boneOf("upperChest");
+    leftUpperArmBone_ = boneOf("leftUpperArm");
+    rightUpperArmBone_ = boneOf("rightUpperArm");
+    leftLowerArmBone_ = boneOf("leftLowerArm");
+    rightLowerArmBone_ = boneOf("rightLowerArm");
+    leftUpperLegBone_ = boneOf("leftUpperLeg");
+    rightUpperLegBone_ = boneOf("rightUpperLeg");
+    // 躯干通道：优先 spine，没有就用 hips。
+    if (spineBone_ < 0) spineBone_ = bodyBone_;
+
     mesh_.headBoneIndex = headBone_;
     mesh_.leftEyeBoneIndex = leftEyeBone_;
     mesh_.rightEyeBoneIndex = rightEyeBone_;
@@ -1810,13 +1824,106 @@ void VrmModel::UpdateIdle(float dt) {
     idleTime_ += dt;
     idleYaw_ = std::sin(idleTime_ * kIdleSwaySpeed) * kIdleSwayYawAmp;
     idlePitch_ = std::sin(idleTime_ * kIdleBreathSpeed) * kIdleSwayPitchAmp;
-    if (bodyBone_ < 0 || static_cast<std::size_t>(bodyBone_) >= mesh_.bones.size()) return;
-    Bone& bone = mesh_.bones[static_cast<std::size_t>(bodyBone_)];
-    bone.currentLocal = bone.currentLocal * Mat4::RotationY(idleYaw_) * Mat4::RotationX(idlePitch_);
+
+    // 程序化待机：呼吸 / 重心 / 头部 / 手臂 / 随机小动作。
+    idlePose_ = idleAnimator_.Tick(dt);
+
+    // 内置骨骼动作（VRM-VPet 风格：点头 / 摇头 / 挥手）。
+    // 随机触发，播完自动回到待机；与上面的连续微摆叠加。
+    model::BonePose bonePose;
+    boneMotion_.Tick(dt, bonePose);
+    ApplyBoneMotion(bonePose);
+
+    const model::IdlePose& pose = idlePose_;
+
+    auto boneAt = [&](int index) -> Bone* {
+        if (index < 0 || static_cast<std::size_t>(index) >= mesh_.bones.size()) return nullptr;
+        return &mesh_.bones[static_cast<std::size_t>(index)];
+    };
+
+    // --- 躯干：重心转移 + 呼吸 ---
+    if (Bone* hips = boneAt(bodyBone_)) {
+        const Mat4 rot = Mat4::RotationY(pose.spineYaw + idleYaw_) *
+                         Mat4::RotationX(pose.spinePitch + idlePitch_) *
+                         Mat4::RotationZ(pose.spineRoll);
+        hips->currentLocal = hips->currentLocal * rot;
+    }
+    if (Bone* spine = boneAt(spineBone_)) {
+        const Mat4 rot = Mat4::RotationY(pose.spineYaw * 0.4f) *
+                         Mat4::RotationX(pose.spinePitch * 0.4f) *
+                         Mat4::RotationZ(pose.spineRoll * 0.4f);
+        spine->currentLocal = spine->currentLocal * rot;
+    }
+    // --- 胸腔：呼吸缩放 ---
+    if (Bone* chest = boneAt(chestBone_)) {
+        const float s = 1.0f + pose.chestScale;
+        chest->currentLocal = chest->currentLocal * Mat4::Scale(Vec3(s, s, s));
+    }
+    // --- 手臂：待机时自然摆动 ---
+    if (Bone* arm = boneAt(leftUpperArmBone_)) {
+        arm->currentLocal = arm->currentLocal * Mat4::RotationX(pose.leftArmPitch) *
+                            Mat4::RotationZ(pose.leftArmRoll);
+    }
+    if (Bone* arm = boneAt(rightUpperArmBone_)) {
+        arm->currentLocal = arm->currentLocal * Mat4::RotationX(pose.rightArmPitch) *
+                            Mat4::RotationZ(pose.rightArmRoll);
+    }
+    if (Bone* fore = boneAt(leftLowerArmBone_)) {
+        fore->currentLocal = fore->currentLocal * Mat4::RotationX(pose.leftForearmPitch);
+    }
+    if (Bone* fore = boneAt(rightLowerArmBone_)) {
+        fore->currentLocal = fore->currentLocal * Mat4::RotationX(pose.rightForearmPitch);
+    }
+    // --- 腿：重心转移时支撑腿略微屈曲 ---
+    if (Bone* leg = boneAt(leftUpperLegBone_)) {
+        leg->currentLocal = leg->currentLocal * Mat4::RotationX(pose.leftLegLift);
+    }
+    if (Bone* leg = boneAt(rightUpperLegBone_)) {
+        leg->currentLocal = leg->currentLocal * Mat4::RotationX(pose.rightLegLift);
+    }
+}
+
+void VrmModel::ApplyBoneMotion(const model::BonePose& pose) {
+    if (pose.entries.empty()) return;
+
+    auto boneAt = [&](int index) -> Bone* {
+        if (index < 0 || static_cast<std::size_t>(index) >= mesh_.bones.size()) return nullptr;
+        return &mesh_.bones[static_cast<std::size_t>(index)];
+    };
+
+    for (const model::BonePose::Entry& entry : pose.entries) {
+        // 动作里的骨骼名是「角色名」（head / leftArm / ...），
+        // 这里映射到 VRM 的 humanoid 骨骼。
+        int index = -1;
+        if (entry.bone == "head") {
+            index = headBone_;
+        } else if (entry.bone == "spine") {
+            index = spineBone_;
+        } else if (entry.bone == "chest") {
+            index = chestBone_;
+        } else if (entry.bone == "leftArm") {
+            index = leftUpperArmBone_;
+        } else if (entry.bone == "rightArm") {
+            index = rightUpperArmBone_;
+        } else if (entry.bone == "leftForearm") {
+            index = leftLowerArmBone_;
+        } else if (entry.bone == "rightForearm") {
+            index = rightLowerArmBone_;
+        }
+        Bone* bone = boneAt(index);
+        if (bone == nullptr) continue;
+
+        // 骨骼动作的角度单位是度，这里转成弧度。
+        constexpr float kDeg2Rad = 3.14159265358979323846f / 180.0f;
+        const Mat4 rot = Mat4::RotationY(entry.yaw * kDeg2Rad) *
+                         Mat4::RotationX(entry.pitch * kDeg2Rad) *
+                         Mat4::RotationZ(entry.roll * kDeg2Rad);
+        bone->currentLocal = bone->currentLocal * rot;
+    }
 }
 
 void VrmModel::UpdateGaze(const RenderContext& ctx, float dt) {
-    if (ctx.hasGlobalCursor) {
+    if (ctx.HasCursorTarget()) {
         // localCursor 已归一化到 [-1, 1]，y 向上为正（OpenGL 约定）。
         const float x = Clamp(ctx.localCursor.x, -1.0f, 1.0f);
         const float y = Clamp(ctx.localCursor.y, -1.0f, 1.0f);
@@ -1836,20 +1943,27 @@ void VrmModel::UpdateGaze(const RenderContext& ctx, float dt) {
 
     // 视线追踪统一用骨骼方式驱动（VRM lookAt.type == "expression" 的模型同样适用），
     // 找不到对应骨骼时直接跳过（优雅降级）。
+    //
+    // 头部朝向 = 视线追踪 + 程序化待机的头部微摆（两者相加）。
+    const model::IdlePose& pose = idlePose_;
     if (headBone_ >= 0 && static_cast<std::size_t>(headBone_) < mesh_.bones.size()) {
         Bone& bone = mesh_.bones[static_cast<std::size_t>(headBone_)];
-        bone.currentLocal = bone.currentLocal * Mat4::RotationY(gazeYaw_) *
-                            Mat4::RotationX(gazePitch_);
+        bone.currentLocal = bone.currentLocal * Mat4::RotationY(gazeYaw_ + pose.headYaw) *
+                            Mat4::RotationX(gazePitch_ + pose.headPitch) *
+                            Mat4::RotationZ(pose.headRoll);
     }
+    // 眼球：在头部转过的基础上再补一点额外转动（与 PMX 后端一致）。
+    const float eyeYaw = gazeYaw_ + pose.headYaw * 0.35f;
+    const float eyePitch = gazePitch_ + pose.headPitch * 0.35f;
     if (leftEyeBone_ >= 0 && static_cast<std::size_t>(leftEyeBone_) < mesh_.bones.size()) {
         Bone& bone = mesh_.bones[static_cast<std::size_t>(leftEyeBone_)];
-        bone.currentLocal = bone.currentLocal * Mat4::RotationY(gazeYaw_) *
-                            Mat4::RotationX(gazePitch_);
+        bone.currentLocal = bone.currentLocal * Mat4::RotationY(eyeYaw) *
+                            Mat4::RotationX(eyePitch);
     }
     if (rightEyeBone_ >= 0 && static_cast<std::size_t>(rightEyeBone_) < mesh_.bones.size()) {
         Bone& bone = mesh_.bones[static_cast<std::size_t>(rightEyeBone_)];
-        bone.currentLocal = bone.currentLocal * Mat4::RotationY(gazeYaw_) *
-                            Mat4::RotationX(gazePitch_);
+        bone.currentLocal = bone.currentLocal * Mat4::RotationY(eyeYaw) *
+                            Mat4::RotationX(eyePitch);
     }
 }
 
@@ -2131,7 +2245,22 @@ bool VrmModel::SetExpressionWeights(const std::vector<std::pair<std::string, flo
 }
 
 bool VrmModel::SetExpressionPreset(const std::string& id) {
-    return expressionDirector_.ApplyPreset(id);
+    const bool ok = expressionDirector_.ApplyPreset(id);
+    // 用户手动切换表情后进入保护期，避免刚选好就被随机表情改掉。
+    if (ok) expressionDirector_.NotifyManualChange();
+    return ok;
+}
+
+void VrmModel::SetRandomIdleExpression(bool enabled) {
+    expressionDirector_.SetRandomIdle(enabled);
+}
+
+bool VrmModel::RandomIdleExpression() const {
+    return expressionDirector_.RandomIdle();
+}
+
+bool VrmModel::TriggerRandomExpression() {
+    return expressionDirector_.TriggerRandomIdle();
 }
 
 std::vector<std::string> VrmModel::ExpressionPresetIds() const {
@@ -2342,6 +2471,8 @@ ModelDebugInfo VrmModel::DebugInfo() const {
                               " / 右眼 " + (mesh_.rightEyeBoneIndex >= 0 ? "命中" : "未找到"));
 
     info.expressionStatus = expressionDirector_.StatusText();
+    // 待机随机表情状态（诊断面板用）：开关 + 下次触发倒计时。
+    info.expressionStatus += expressionDirector_.RandomIdle() ? " / 随机表情：开" : " / 随机表情：关";
     info.expressionSummary = "预设 " + std::to_string(expressionDirector_.Presets().size()) +
                             " / 通道 " + std::to_string(expressionDirector_.ChannelCount()) +
                             " / 当前 " + (expressionDirector_.ActivePreset().empty()

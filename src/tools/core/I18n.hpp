@@ -103,6 +103,8 @@ struct Strings {
     std::string sayPhrase;        ///< 托盘「说一句」
     std::string expressionMenu;   ///< 托盘「表情」子菜单
     std::string bubble;           ///< 「台词气泡」开关
+    std::string randomExpression;      ///< 托盘「待机随机表情」开关
+    std::string randomExpressionNow;   ///< 托盘「立即随机表情」
     std::string debugTabExpression;  ///< 诊断面板「表情与说话」页签
     std::string expressionTitle;  ///< 表情标题
     std::string currentPhrase;    ///< 当前台词

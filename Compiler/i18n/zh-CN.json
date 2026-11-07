@@ -1,6 +1,5 @@
 {
   "_comment": "PPet 界面文案（简体中文）。Compiler/i18n_gen 会把本文件翻译成 C++ 内嵌表。键必须与 src/core/I18n.hpp 里 struct Strings 的成员名完全一致。",
-
   "alwaysOnTop": "@置顶",
   "ignoreMouseEvents": "忽略点击",
   "openAtLogin": "开机启动",
@@ -15,7 +14,6 @@
   "feedback": "反馈",
   "about": "关于",
   "quit": "退出",
-
   "modelList": "模型列表",
   "importModel": "导入模型",
   "importOnlineModel": "导入在线模型",
@@ -33,7 +31,6 @@
   "windowSection": "窗口",
   "settingsTitle": "PPet 设置",
   "noFontNote": "未找到中文字体，中文可能显示为方块",
-
   "importFailed": "导入模型失败",
   "removeFailed": "移除模型失败",
   "modelLoadFailed": "模型加载失败",
@@ -46,7 +43,6 @@
   "modelTypeVrm": "VRM",
   "noModel": "尚未加载模型",
   "trackingHint": "开启后，模型的眼睛与朝向会跟随整个屏幕范围内的鼠标位置",
-
   "debugPanel": "模型诊断",
   "debugTitle": "PPet 模型诊断",
   "debugTabOverview": "概览与渲染",
@@ -64,7 +60,6 @@
   "debugMissingNone": "无缺失资源",
   "debugMissingHint": "PMX 本身不包含图形数据，请把 .pmx 与贴图目录一起打包成 .zip 再导入",
   "debugGroupMissing": "缺失资源",
-
   "debugTabBones": "骨架信息",
   "debugTabImages": "图片渲染",
   "debugModelId": "模型 ID",
@@ -74,7 +69,6 @@
   "debugNoPreview": "暂无可预览的图片",
   "debugErrorGroup": "错误与警告（详细）",
   "debugNoErrors": "无错误",
-
   "errTitleFailed": "模型加载失败",
   "errTitleWarning": "模型加载警告",
   "errDetailGroup": "详细信息",
@@ -83,7 +77,6 @@
   "errLogHint": "日志：",
   "errCopy": "复制详情",
   "errCopied": "已复制",
-
   "sayPhrase": "说一句",
   "expressionMenu": "表情",
   "bubble": "台词气泡",
@@ -93,11 +86,12 @@
   "lipSyncLabel": "口型",
   "expressionStatusLabel": "表情状态",
   "noExpressions": "该模型不支持表情/口型",
-
   "expressionNeutral": "自然",
   "expressionHappy": "开心",
   "expressionRelaxed": "放松",
   "expressionAngry": "生气",
   "expressionSad": "难过",
-  "expressionSurprised": "惊讶"
+  "expressionSurprised": "惊讶",
+  "randomExpression": "待机随机表情",
+  "randomExpressionNow": "立即随机表情"
 }

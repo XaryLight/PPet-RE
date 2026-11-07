@@ -24,6 +24,16 @@ struct Live2DMotionGroup {
     std::vector<std::string> files; ///< 该组下的动作文件（.motion3.json）绝对路径
     std::vector<float> fadeInTimes;  ///< 与 files 一一对应，-1 = 未指定
     std::vector<float> fadeOutTimes; ///< 与 files 一一对应，-1 = 未指定
+    /// 与 files 一一对应的**文件名**（不含目录，例如 "idle.motion3.json"）。
+    ///
+    /// 为什么需要它：很多模型（尤其是国内常见的一体成型模型包）把所有动作
+    /// 都塞在 model3.json 的**空名组** `""` 下，组名完全不带语义：
+    ///   "Motions": { "": [ { "File": "motions/idle.motion3.json" },
+    ///                      { "File": "motions/touch_head.motion3.json" }, ... ] }
+    /// 这时只能靠**文件名**区分「待机动作」与「点击互动动作」。
+    /// 靠组名分类会让这类模型一个 Idle 组都没有——待机时一个动作都不播，
+    /// 表现为「模型完全不动」（本项目实际遇到过的真实模型）。
+    std::vector<std::string> fileNames;
 };
 
 /// 一个动画条目（model3.json 顶层的 Animations）。
@@ -45,6 +55,7 @@ struct Live2DManifest {
     std::string model3Path;   ///< .model3.json 的绝对路径
     std::string baseDir;      ///< 相对路径的基准目录（.model3.json 所在目录）
     std::string mocPath;      ///< moc3 文件的绝对路径
+    std::string physicsPath;  ///< physics3.json 的绝对路径（空串 = 模型没有物理）
     std::string displayName;  ///< 模型显示名（取自 model3.json 的 Name 字段，缺省用文件名）
 
     std::vector<std::string> texturePaths;    ///< 纹理绝对路径（顺序与 FileReferences.Textures 一致）

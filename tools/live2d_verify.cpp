@@ -104,7 +104,13 @@ int main(int argc, char** argv) {
     ctx.renderScale = 1.0f;
 
     // 渲染若干帧，让 idle 动作 / 呼吸产生一个非默认姿态。
-    for (int f = 0; f < 20; ++f) {
+    //
+    // 帧数取 210（约 3.5 秒）：很多 Live2D 模型的光效/背景部件由
+    // 待机动作里的参数控制（如「风运动」「高光摇摆」），默认参数下
+    // 它们是全开的（看起来像「渲染偏白」），必须让待机动作跑起来
+    // 才能看到模型真正的样子。20 帧只到 0.33 秒，光效还没收敛。
+    const int kFrames = 210;
+    for (int f = 0; f < kFrames; ++f) {
         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
         glClear(GL_COLOR_BUFFER_BIT);
         model.Update(ctx);

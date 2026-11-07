@@ -113,6 +113,12 @@ ctest --output-on-failure
 | `expression_director_unit` | 表情调度：预设 / 别名解析 / smoothstep 过渡 / 自动眨眼叠层 / 动作叠层淡出 / 二元量化 / 时间轴 |
 | `dialogue_system_unit` | 语言系统：台词分档抽取 / 不重复 / 气泡优先级与冷却 / UTF-8 字数截断 / 口型音节包络与情绪嘴形 |
 | `live2d_stage_unit` | Live2D 分层：参数栈层序仲裁 / 姿态总线 / 三通道视线 / 待机包络 / 小表情 / 热区 z 优先 / 口型导演 |
+| `idle_animator_unit` | 程序化待机：各通道幅度 / `masterAmount` 静音 / 频率互质 / 小动作钟形包络与随机触发 / 同种子可复现 / dt 钳制 |
+| `bone_motion_unit` | 骨骼动作：内置点头·摇头·挥手结构 / 关键帧插值 / 播放进度 / 淡入淡出 / 播完自动结束 / 随机触发 / 手臂骨骼映射 |
+| `live2d_physics_unit` | Live2D 物理：两种 `physics3.json` 格式解析 / 输入归一化 / 摆锤链收敛 / 输出换算与权重混合 |
+| `live2d_motion_group_unit` | 动作分组回归：**空名组按文件名推断** / 命中区抽取 / `Meta.Loop` 循环 / 官方 `Segments` 三点贝塞尔语义 / 旧版 `Curve` 数组 |
+| `live2d_manifest_unit` | `model3.json` 解析：动作组数组写法 / `HitAreas` / `FadeIn`/`FadeOut` 元数据链 |
+| `motion_director_unit` | 动作调度状态机：优先级打断 / 待机冷却 / 命中区路由 / fade 权重 |
 | `zip_package_test` | 生成测试用 zip（fixture） |
 | `zip_import_test` | 解压中央目录、定位包内模型、幂等重导入、非法输入 |
 | `pmx_package_gen` | 生成 4 种 PMX 包（fixture）：完整 / 缺贴图 / 大小写 / 子目录 |
@@ -122,8 +128,29 @@ ctest --output-on-failure
 | `error_dialog_smoke` | 失败弹窗：分类/摘要/逐条明细/建议/日志、复制按钮、警告型标题（offscreen） |
 | `render_verify_pmx` / `render_verify_vrm` | 用渲染验证 CLI 对仓库素材跑「加载 → 渲染 → 读回像素 → 判定」（xvfb） |
 
-共 **28 项**测试（含 fixture）。调试面板冒烟测试还会校验 7 个页签、骨架/图片/详细错误区与
+共 **32 项**测试（含 fixture）。调试面板冒烟测试还会校验 7 个页签、骨架/图片/详细错误区与
 表情与说话页；气泡冒烟测试校验无边框气泡的显隐、文本与定位。
+
+### 三配置构建矩阵
+
+项目必须在三种配置下都能干净构建并全绿：
+
+| 配置 | 命令 | 用途 |
+| --- | --- | --- |
+| **Release + Cubism 桩** | `cmake -S . -B build -DPPET_WITH_CUBISM=OFF -DPPET_WITH_CUBISM_STUB=ON` | 默认配置，无 Cubism SDK 也能开发 |
+| **Release + 真实 Cubism SDK** | `cmake -S . -B build_cubism -DPPET_WITH_CUBISM=ON` | 需把 SDK Core 解压到 `api/live2d/csdk/` |
+| **Debug + 完全无 Cubism 后端** | `cmake -S . -B build_nocubism -DCMAKE_BUILD_TYPE=Debug -DPPET_WITH_CUBISM=OFF -DPPET_WITH_CUBISM_STUB=OFF` | 验证 Live2D 后端是真正可选的 |
+
+```bash
+for d in build build_cubism build_nocubism; do
+    cmake --build "$d" -j"$(nproc)" 2>&1 | grep -E '(warning|error):' && echo "$d 有警告"
+    (cd "$d" && ctest --output-on-failure)
+done
+```
+
+> **纯逻辑优先**：待机动画、骨骼动作、Live2D 物理、动作分组这几块的实现
+> 都刻意做成「不碰 GL / Qt / 文件 IO」的纯逻辑模块，因此上面三种配置都能编译并运行
+> 对应单测，不需要为每种配置单独维护测试分支。
 
 渲染验证 CLI（可单独用于人工核验或 CI）：
 

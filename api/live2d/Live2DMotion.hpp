@@ -7,6 +7,10 @@
 //   且与本项目的 OpenGL 渲染管线耦合很深），因此自己实现动作解析与插值。
 //
 // 【motion3.json 格式】
+//   官方规范（Live2D/CubismSpecs · FileFormats/motion3.json.md）有两种曲线写法，
+//   本项目两种都支持：
+//
+//   1) Cubism 3 / 4 的「关键帧数组」写法：
 //   {
 //     "Version": 3,
 //     "Meta": { "Duration": 3.0, "Fps": 30.0, "CurveCount": 2, "ParameterCount": 2 },
@@ -21,11 +25,31 @@
 //     ]
 //   }
 //
-//   每个关键帧的 Time / Value 是绝对时间与绝对值；
-//   In / Out 描述**从该关键帧出发**的插值方式：
+//   2) Cubism 5 的「扁平数组」写法（官方称之为 Segments）：
+//   {
+//     "Version": 3,
+//     "Meta": { "Duration": 3.0, "Fps": 30.0, "CurveCount": 1 },
+//     "Curves": [
+//       { "Target": "Parameter", "Id": "ParamAngleX",
+//         "Segments": [ 0.0, 0.0, 1, 0.4, 12.0, 0.8, 20.0, 1.0, 30.0, 0 ] }
+//     ]
+//   }
+//
+//   Segments 是一个扁平数组，元素含义（官方规范原文）：
+//     · 一个「点（point）」是 2 个数：第一个是时间 t（秒），第二个是 t 处的值；
+//     · 一个「段标识（segment identifier）」是 1 个数：
+//         0 = 线性段，1 = 三次贝塞尔段，2 = 阶跃段，3 = 反向阶跃段；
+//     · 每条曲线以「第一个点 + 段标识」开始，因此第一个段标识是数组的第 3 个数；
+//     · 贝塞尔段在段标识之后额外带 4 个数（控制点 x1,y1,x2,y2，绝对时间/绝对值）。
+//
+//   本项目早期只支持第 1 种写法，遇到 Cubism 5 导出的模型时
+//   **所有动作都解析失败**（表现为模型完全不动），因此这里补齐第 2 种。
+//
+//   两种写法里每个关键帧的 Time / Value 都是绝对时间与绝对值；
+//   In / Out（或者 Segments 里的段标识）描述**从该关键帧出发**的插值方式：
 //     - "linear"：线性
 //     - "stepped"：阶跃（保持当前值直到下一个关键帧）
-//     - "bezier"：三次贝塞尔，控制点由 Bezier 字段给出
+//     - "bezier"：三次贝塞尔，控制点由 Bezier 字段（或 Segments 里的 4 个数）给出
 #pragma once
 
 #include <string>
@@ -47,7 +71,8 @@ struct MotionKey {
     CurveType inType = CurveType::Linear;  ///< 从上一帧到本帧的插值方式
     CurveType outType = CurveType::Linear; ///< 从本帧到下一帧的插值方式
     /// 贝塞尔控制点（4 个：x1,y1,x2,y2），仅当插值方式为 Bezier 时有效。
-    /// 控制点横坐标归一化到 [0,1]（相对本关键帧到下一关键帧的时间段）。
+    /// x1 / x2 归一化到 [0,1]（相对本关键帧到下一关键帧的时间段），
+    /// y1 / y2 是**绝对值**（与曲线值同量纲）。
     float bezier[4] = {0.0f, 0.0f, 1.0f, 1.0f};
 };
 
@@ -66,6 +91,12 @@ struct Motion {
     /// 缺省 0 表示不淡入淡出。动作切换时用它们做参数混合，避免姿态跳变。
     float fadeInTime = 0.0f;
     float fadeOutTime = 0.0f;
+    /// 是否循环播放（motion3.json 的 Meta.Loop）。
+    ///
+    /// 待机动画几乎总是循环的（如 "idle"：6 秒一轮反复摇摆）。
+    /// 不识别这个字段会让待机动画播一轮就停住，末尾参数被下一帧的
+    /// ResetParametersToDefault 抹掉，表现为「动作只动一下就不动了」。
+    bool loop = false;
     std::vector<MotionCurve> curves;
 
     /// 按时间采样，返回该时刻各曲线的值。

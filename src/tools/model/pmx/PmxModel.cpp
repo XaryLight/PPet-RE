@@ -628,6 +628,8 @@ ModelDebugInfo PmxModel::DebugInfo() const {
     info.renderingOk = loaded_ && gpuReady_ && meshOk && info.glError == 0;
 
     info.expressionStatus = expressionDirector_.StatusText();
+    // 待机随机表情状态（诊断面板用）：开关 + 下次触发倒计时。
+    info.expressionStatus += expressionDirector_.RandomIdle() ? " / 随机表情：开" : " / 随机表情：关";
     info.expressionSummary = "预设 " + std::to_string(expressionDirector_.Presets().size()) +
                             " / 通道 " + std::to_string(expressionDirector_.ChannelCount()) +
                             " / 当前 " + (expressionDirector_.ActivePreset().empty()
@@ -668,6 +670,15 @@ void PmxModel::FindControlBones() {
     leftEyeBone_ = -1;
     rightEyeBone_ = -1;
     bodyBone_ = -1;
+    centerBone_ = -1;
+    spineBone_ = -1;
+    chestBone_ = -1;
+    leftArmBone_ = -1;
+    rightArmBone_ = -1;
+    leftElbowBone_ = -1;
+    rightElbowBone_ = -1;
+    leftLegBone_ = -1;
+    rightLegBone_ = -1;
 
     // 头部优先用「頭 / head」，其次才是「首 / neck」：
     // 转动真正的头骨比转动脖子自然，但脖子同样能表达视线方向，作为回退。
@@ -696,10 +707,39 @@ void PmxModel::FindControlBones() {
         const bool isBody = NameContains(src.name, "上半身") ||
                             NameContains(src.nameEn, "upper body") ||
                             NameContains(src.nameEn, "upper_body") || NameContains(src.nameEn, "torso");
+        // --- 待机动画用到的骨骼 ---
+        // 名字匹配按「更具体的优先」排序，因此先收集，最后再统一挑选。
+        const bool isCenter = NameContains(src.name, "センター") || NameContains(src.name, "センター") ||
+                             NameContains(src.nameEn, "center") || NameContains(src.nameEn, "root");
+        const bool isChest = NameContains(src.name, "胸") || NameContains(src.nameEn, "chest");
+        const bool isLeftArm = NameContains(src.name, "左腕") || NameContains(src.nameEn, "arm_l") ||
+                               NameContains(src.nameEn, "left arm") ||
+                               NameContains(src.nameEn, "left_arm") || NameContains(src.nameEn, "l_arm");
+        const bool isRightArm = NameContains(src.name, "右腕") || NameContains(src.nameEn, "arm_r") ||
+                                NameContains(src.nameEn, "right arm") ||
+                                NameContains(src.nameEn, "right_arm") || NameContains(src.nameEn, "r_arm");
+        const bool isLeftElbow = NameContains(src.name, "左ひじ") || NameContains(src.nameEn, "elbow_l") ||
+                                 NameContains(src.nameEn, "left elbow") ||
+                                 NameContains(src.nameEn, "left_elbow") || NameContains(src.nameEn, "l_elbow");
+        const bool isRightElbow = NameContains(src.name, "右ひじ") || NameContains(src.nameEn, "elbow_r") ||
+                                  NameContains(src.nameEn, "right elbow") ||
+                                  NameContains(src.nameEn, "right_elbow") || NameContains(src.nameEn, "r_elbow");
+        const bool isLeftLeg = NameContains(src.name, "左足") || NameContains(src.nameEn, "leg_l") ||
+                               NameContains(src.nameEn, "left leg") || NameContains(src.nameEn, "left_leg");
+        const bool isRightLeg = NameContains(src.name, "右足") || NameContains(src.nameEn, "leg_r") ||
+                                NameContains(src.nameEn, "right leg") || NameContains(src.nameEn, "right_leg");
 
         if (leftEyeBone_ < 0 && isEyeL) leftEyeBone_ = static_cast<int>(i);
         if (rightEyeBone_ < 0 && isEyeR) rightEyeBone_ = static_cast<int>(i);
         if (bodyBone_ < 0 && isBody) bodyBone_ = static_cast<int>(i);
+        if (centerBone_ < 0 && isCenter) centerBone_ = static_cast<int>(i);
+        if (chestBone_ < 0 && isChest) chestBone_ = static_cast<int>(i);
+        if (leftArmBone_ < 0 && isLeftArm) leftArmBone_ = static_cast<int>(i);
+        if (rightArmBone_ < 0 && isRightArm) rightArmBone_ = static_cast<int>(i);
+        if (leftElbowBone_ < 0 && isLeftElbow) leftElbowBone_ = static_cast<int>(i);
+        if (rightElbowBone_ < 0 && isRightElbow) rightElbowBone_ = static_cast<int>(i);
+        if (leftLegBone_ < 0 && isLeftLeg) leftLegBone_ = static_cast<int>(i);
+        if (rightLegBone_ < 0 && isRightLeg) rightLegBone_ = static_cast<int>(i);
     }
 
     // 躯干骨骼缺失时退而使用根骨骼做摆动（根骨骼一定存在，除非模型没有骨骼）。
@@ -711,6 +751,10 @@ void PmxModel::FindControlBones() {
             }
         }
     }
+    // 躯干（spine）优先用「上半身」，没有就用 bodyBone_。
+    if (spineBone_ < 0) spineBone_ = bodyBone_;
+    // 中心骨骼缺失时用躯干骨骼代替（位移效果会略强，但不至于没有）。
+    if (centerBone_ < 0) centerBone_ = spineBone_;
 
     mesh_.headBoneIndex = headBone_;
     mesh_.leftEyeBoneIndex = leftEyeBone_;
@@ -734,9 +778,8 @@ void PmxModel::Update(const RenderContext& ctx) {
     UpdateSkinningMatrices();
     UpdateExpression(dt);
 }
-
 void PmxModel::UpdateGaze(const RenderContext& ctx, float dt) {
-    if (!ctx.hasGlobalCursor) {
+    if (!ctx.HasCursorTarget()) {
         targetGazeYaw_ = 0.0f;
         targetGazePitch_ = 0.0f;
     } else {
@@ -762,6 +805,52 @@ void PmxModel::UpdateIdle(float dt) {
     idleTime_ += dt;
     idleYaw_ = std::sin(idleTime_ * kIdleSwaySpeed) * kIdleSwayYawAmp;
     idlePitch_ = std::sin(idleTime_ * kIdleBreathSpeed) * kIdleSwayPitchAmp;
+
+    // 程序化待机：呼吸 / 重心 / 头部 / 手臂 / 随机小动作。
+    idlePose_ = idleAnimator_.Tick(dt);
+
+    // 内置骨骼动作（VRM-VPet 风格：点头 / 摇头 / 挥手）。
+    // 这里只**采样**结果，实际的骨骼变换在 ApplyBoneTransforms 里施加
+    // （那里会先把骨骼复位到绑定姿态）。
+    boneMotion_.Tick(dt, boneMotionPose_);
+}
+
+void PmxModel::ApplyBoneMotion(const model::BonePose& pose) {
+    if (pose.entries.empty()) return;
+
+    auto boneAt = [&](int index) -> Bone* {
+        if (index < 0 || static_cast<std::size_t>(index) >= mesh_.bones.size()) return nullptr;
+        return &mesh_.bones[static_cast<std::size_t>(index)];
+    };
+
+    for (const model::BonePose::Entry& entry : pose.entries) {
+        // 动作里的骨骼名是「角色名」（head / leftArm / ...），映射到 PMX 骨骼。
+        int index = -1;
+        if (entry.bone == "head") {
+            index = headBone_;
+        } else if (entry.bone == "spine") {
+            index = spineBone_;
+        } else if (entry.bone == "chest") {
+            index = chestBone_;
+        } else if (entry.bone == "leftArm") {
+            index = leftArmBone_;
+        } else if (entry.bone == "rightArm") {
+            index = rightArmBone_;
+        } else if (entry.bone == "leftForearm") {
+            index = leftElbowBone_;
+        } else if (entry.bone == "rightForearm") {
+            index = rightElbowBone_;
+        }
+        Bone* bone = boneAt(index);
+        if (bone == nullptr) continue;
+
+        // 骨骼动作的角度单位是度，这里转成弧度。
+        constexpr float kDeg2Rad = 3.14159265358979323846f / 180.0f;
+        const Mat4 rot = Mat4::RotationY(entry.yaw * kDeg2Rad) *
+                         Mat4::RotationX(entry.pitch * kDeg2Rad) *
+                         Mat4::RotationZ(entry.roll * kDeg2Rad);
+        bone->currentLocal = bone->currentLocal * rot;
+    }
 }
 
 void PmxModel::ApplyBoneTransforms() {
@@ -770,22 +859,46 @@ void PmxModel::ApplyBoneTransforms() {
         bone.currentLocal = bone.localBindPose;
     }
 
-    // 躯干摆动：轻微左右转 + 呼吸般的上下点头。
-    if (bodyBone_ >= 0 && static_cast<std::size_t>(bodyBone_) < mesh_.bones.size()) {
-        Bone& bone = mesh_.bones[static_cast<std::size_t>(bodyBone_)];
-        const Mat4 rot = Mat4::RotationY(idleYaw_) * Mat4::RotationX(idlePitch_);
-        bone.currentLocal = bone.localBindPose * rot;
+    const model::IdlePose& pose = idlePose_;
+
+    // --- 整体位移与重心（センター / center）---
+    if (centerBone_ >= 0 && static_cast<std::size_t>(centerBone_) < mesh_.bones.size()) {
+        Bone& bone = mesh_.bones[static_cast<std::size_t>(centerBone_)];
+        // 重心左右偏移 + 呼吸起伏。左右偏移用模型高度的千分之一量级，
+        // 换算到 PMX 模型单位（通常模型高 10~20 单位）刚好是「几毫米到一厘米」。
+        const float scale = modelHeight_ > 0.0f ? modelHeight_ * 0.012f : 0.02f;
+        Vec3 offset(pose.weightShift * scale, pose.spineLift * scale, 0.0f);
+        bone.currentLocal = bone.currentLocal * Mat4::Translation(offset);
     }
 
-    // 视线追踪：头部先转，眼球再补一点额外的转动。
-    // 找不到对应骨骼时直接跳过（优雅降级）。
-    if (headBone_ >= 0 && static_cast<std::size_t>(headBone_) < mesh_.bones.size()) {
-        Bone& bone = mesh_.bones[static_cast<std::size_t>(headBone_)];
-        const Mat4 rot = Mat4::RotationY(gazeYaw_) * Mat4::RotationX(gazePitch_);
+    // --- 躯干（重心的主要体现）---
+    if (spineBone_ >= 0 && static_cast<std::size_t>(spineBone_) < mesh_.bones.size()) {
+        Bone& bone = mesh_.bones[static_cast<std::size_t>(spineBone_)];
+        const Mat4 rot = Mat4::RotationY(pose.spineYaw + idleYaw_) *
+                         Mat4::RotationX(pose.spinePitch + idlePitch_) *
+                         Mat4::RotationZ(pose.spineRoll);
         bone.currentLocal = bone.currentLocal * rot;
     }
-    const float eyeYaw = gazeYaw_ * (kMaxEyeYaw / kMaxHeadYaw);
-    const float eyePitch = gazePitch_ * (kMaxEyePitch / kMaxHeadPitch);
+
+    // --- 胸部（呼吸）---
+    if (chestBone_ >= 0 && static_cast<std::size_t>(chestBone_) < mesh_.bones.size()) {
+        Bone& bone = mesh_.bones[static_cast<std::size_t>(chestBone_)];
+        const float s = 1.0f + pose.chestScale;
+        bone.currentLocal = bone.currentLocal * Mat4::Scale(Vec3(s, s, s));
+    }
+
+    // --- 头部：视线追踪 + 待机微摆 ---
+    if (headBone_ >= 0 && static_cast<std::size_t>(headBone_) < mesh_.bones.size()) {
+        Bone& bone = mesh_.bones[static_cast<std::size_t>(headBone_)];
+        const Mat4 rot = Mat4::RotationY(gazeYaw_ + pose.headYaw) *
+                         Mat4::RotationX(gazePitch_ + pose.headPitch) *
+                         Mat4::RotationZ(pose.headRoll);
+        bone.currentLocal = bone.currentLocal * rot;
+    }
+
+    // --- 眼球：在头部转过的基础上再补一点额外转动 ---
+    const float eyeYaw = (gazeYaw_ + pose.headYaw * 0.35f) * (kMaxEyeYaw / kMaxHeadYaw);
+    const float eyePitch = (gazePitch_ + pose.headPitch * 0.35f) * (kMaxEyePitch / kMaxHeadPitch);
     if (leftEyeBone_ >= 0 && static_cast<std::size_t>(leftEyeBone_) < mesh_.bones.size()) {
         Bone& bone = mesh_.bones[static_cast<std::size_t>(leftEyeBone_)];
         bone.currentLocal = bone.currentLocal * Mat4::RotationY(eyeYaw) * Mat4::RotationX(eyePitch);
@@ -794,6 +907,40 @@ void PmxModel::ApplyBoneTransforms() {
         Bone& bone = mesh_.bones[static_cast<std::size_t>(rightEyeBone_)];
         bone.currentLocal = bone.currentLocal * Mat4::RotationY(eyeYaw) * Mat4::RotationX(eyePitch);
     }
+
+    // --- 手臂：待机时自然小幅摆动 ---
+    if (leftArmBone_ >= 0 && static_cast<std::size_t>(leftArmBone_) < mesh_.bones.size()) {
+        Bone& bone = mesh_.bones[static_cast<std::size_t>(leftArmBone_)];
+        bone.currentLocal = bone.currentLocal * Mat4::RotationX(pose.leftArmPitch) *
+                            Mat4::RotationZ(pose.leftArmRoll);
+    }
+    if (rightArmBone_ >= 0 && static_cast<std::size_t>(rightArmBone_) < mesh_.bones.size()) {
+        Bone& bone = mesh_.bones[static_cast<std::size_t>(rightArmBone_)];
+        bone.currentLocal = bone.currentLocal * Mat4::RotationX(pose.rightArmPitch) *
+                            Mat4::RotationZ(pose.rightArmRoll);
+    }
+    if (leftElbowBone_ >= 0 && static_cast<std::size_t>(leftElbowBone_) < mesh_.bones.size()) {
+        Bone& bone = mesh_.bones[static_cast<std::size_t>(leftElbowBone_)];
+        bone.currentLocal = bone.currentLocal * Mat4::RotationX(pose.leftForearmPitch);
+    }
+    if (rightElbowBone_ >= 0 && static_cast<std::size_t>(rightElbowBone_) < mesh_.bones.size()) {
+        Bone& bone = mesh_.bones[static_cast<std::size_t>(rightElbowBone_)];
+        bone.currentLocal = bone.currentLocal * Mat4::RotationX(pose.rightForearmPitch);
+    }
+
+    // --- 腿：重心转移时支撑腿略微屈曲 ---
+    if (leftLegBone_ >= 0 && static_cast<std::size_t>(leftLegBone_) < mesh_.bones.size()) {
+        Bone& bone = mesh_.bones[static_cast<std::size_t>(leftLegBone_)];
+        bone.currentLocal = bone.currentLocal * Mat4::RotationX(pose.leftLegLift);
+    }
+    if (rightLegBone_ >= 0 && static_cast<std::size_t>(rightLegBone_) < mesh_.bones.size()) {
+        Bone& bone = mesh_.bones[static_cast<std::size_t>(rightLegBone_)];
+        bone.currentLocal = bone.currentLocal * Mat4::RotationX(pose.rightLegLift);
+    }
+
+    // --- 内置骨骼动作（点头 / 摇头 / 挥手）---
+    // 放在最后：动作是「显式的肢体动作」，优先级高于持续性的待机微摆。
+    ApplyBoneMotion(boneMotionPose_);
 }
 
 void PmxModel::UpdateSkinningMatrices() {
@@ -851,7 +998,22 @@ void PmxModel::UpdateExpression(float dt) {
 }
 
 bool PmxModel::SetExpressionPreset(const std::string& id) {
-    return expressionDirector_.ApplyPreset(id);
+    const bool ok = expressionDirector_.ApplyPreset(id);
+    // 用户手动切换表情后进入保护期，避免刚选好就被随机表情改掉。
+    if (ok) expressionDirector_.NotifyManualChange();
+    return ok;
+}
+
+void PmxModel::SetRandomIdleExpression(bool enabled) {
+    expressionDirector_.SetRandomIdle(enabled);
+}
+
+bool PmxModel::RandomIdleExpression() const {
+    return expressionDirector_.RandomIdle();
+}
+
+bool PmxModel::TriggerRandomExpression() {
+    return expressionDirector_.TriggerRandomIdle();
 }
 
 bool PmxModel::SetExpressionWeights(const std::vector<std::pair<std::string, float>>& weights) {

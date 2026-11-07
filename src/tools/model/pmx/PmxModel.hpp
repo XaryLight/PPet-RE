@@ -33,6 +33,8 @@
 #include <vector>
 
 #include <src/tools/core/Math.hpp>
+#include <src/tools/model/BoneMotion.hpp>
+#include <src/tools/model/IdleAnimator.hpp>
 #include <src/tools/model/ExpressionDirector.hpp>
 #include <src/tools/model/Model.hpp>
 #include <src/tools/model/SkinnedMesh.hpp>
@@ -80,6 +82,10 @@ public:
 
     /// 表情系统（ExpressionDirector 驱动 morph 顶点变形）。
     bool SetExpressionPreset(const std::string& id) override;
+    /// 待机随机表情（对齐 VRM-VPet 的随机表情）。
+    void SetRandomIdleExpression(bool enabled) override;
+    bool RandomIdleExpression() const override;
+    bool TriggerRandomExpression() override;
     bool SetExpressionWeights(const std::vector<std::pair<std::string, float>>& weights) override;
     std::vector<std::string> ExpressionPresetIds() const override;
 
@@ -104,6 +110,8 @@ private:
     void UpdateIdle(float dt);
     /// 把动画结果写入骨骼局部变换（先复位为绑定姿态，再叠加待机与视线旋转）。
     void ApplyBoneTransforms();
+    /// 应用内置骨骼动作（点头 / 摇头 / 挥手）。
+    void ApplyBoneMotion(const model::BonePose& pose);
     /// 按当前骨骼姿态重算蒙皮矩阵。
     void UpdateSkinningMatrices();
 
@@ -141,6 +149,16 @@ private:
     int rightEyeBone_ = -1;
     /// 躯干骨骼（用于待机摆动），-1 表示未找到。
     int bodyBone_ = -1;
+    /// 待机动画用到的其它骨骼（-1 表示未找到）。
+    int centerBone_ = -1;      ///< センター / center（整体位移与重心）
+    int spineBone_ = -1;       ///< 上半身 / spine
+    int chestBone_ = -1;       ///< 胸 / chest
+    int leftArmBone_ = -1;     ///< 左腕 / arm_l
+    int rightArmBone_ = -1;    ///< 右腕 / arm_r
+    int leftElbowBone_ = -1;   ///< 左ひじ / elbow_l
+    int rightElbowBone_ = -1;  ///< 右ひじ / elbow_r
+    int leftLegBone_ = -1;     ///< 左足 / leg_l
+    int rightLegBone_ = -1;    ///< 右足 / leg_r
 
     /// 累计动画时间。
     float time_ = 0.0f;
@@ -155,6 +173,15 @@ private:
     float idlePitch_ = 0.0f;
     /// 待机动画累计时间（独立于 time_，便于单独调节节奏）。
     float idleTime_ = 0.0f;
+
+    /// 程序化待机动画器（呼吸 / 重心 / 头部 / 手臂 / 小动作）。
+    model::IdleAnimator idleAnimator_;
+    /// 程序化待机的当前姿态。
+    model::IdlePose idlePose_;
+    /// 内置骨骼动作播放器（VRM-VPet 风格：点头 / 摇头 / 挥手）。
+    model::BoneMotionPlayer boneMotion_;
+    /// 骨骼动作的采样结果（在 ApplyBoneTransforms 里施加）。
+    model::BonePose boneMotionPose_;
 
     /// 模型中心与包围盒高度，用于自动取景。
     Vec3 center_{0.0f, 0.0f, 0.0f};

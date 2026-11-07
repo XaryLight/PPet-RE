@@ -60,6 +60,18 @@ struct RenderContext {
     /// 全局鼠标是否有效（例如在无头环境或权限不足时为 false）。
     bool hasGlobalCursor = false;
 
+    /// 窗口内鼠标位置（窗口局部坐标，单位：像素，原点左上、y 向下）。
+    /// 这是**全屏追踪不可用时的兜底**：至少当鼠标在桌宠窗口内移动时，
+    /// 模型依然会看向它，不会出现「眼睛追踪完全没有」的观感。
+    Vec2 windowCursor{0.0f, 0.0f};
+
+    /// 窗口内鼠标位置是否有效。
+    bool hasWindowCursor = false;
+
+    /// 是否存在可用的视线目标（全局优先，回退到窗口内）。
+    /// 后端据此决定是否驱动眼球/头部参数。
+    bool HasCursorTarget() const { return hasGlobalCursor || hasWindowCursor; }
+
     /// 渲染缩放：>1 表示模型在窗口中显示得更大，<1 表示更小。
     /// 取景时用它调整正交视体的半高（除以该系数即等比放大模型）。
     float renderScale = 1.0f;
@@ -239,6 +251,17 @@ public:
 
     /// 可用的表情预设 id 列表（供 UI 构建表情按钮）。无表情系统的后端返回空。
     virtual std::vector<std::string> ExpressionPresetIds() const { return {}; }
+
+    /// 开关「待机随机表情」。
+    ///
+    /// 桌宠待机时每隔一段时间自己换一个表情（对齐 VRM-VPet 的随机表情）：
+    /// 换一个表情 → 停留几秒 → 回到中性。用户手动选过表情后会进入保护期。
+    virtual void SetRandomIdleExpression(bool enabled) { (void)enabled; }
+    virtual bool RandomIdleExpression() const { return false; }
+
+    /// 立刻随机抽一个表情并切换过去。
+    /// @return 是否成功切换（没有可用表情时返回 false）。
+    virtual bool TriggerRandomExpression() { return false; }
 };
 
 using ModelPtr = std::shared_ptr<IModel>;

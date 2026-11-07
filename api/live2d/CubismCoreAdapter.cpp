@@ -259,11 +259,19 @@ bool OpenModel(Model* model, const std::string& mocPath, std::string& error) {
 void UpdateModel(Model* model) {
 #if defined(PPET_WITH_CUBISM) || defined(PPET_WITH_CUBISM_STUB)
     if (!model || !model->model_) return;
-    // 调用顺序与官方 Cubism Framework 的 CubismModel::Update() 一致：
-    // 先更新顶点（Core 在此刻把「与上一帧的差异」写进动态标志），
-    // 再复位动态标志，为下一帧的差异检测做准备。
-    csmUpdateModel(model->model_);
+    // 调用顺序必须与官方 Cubism Framework 一致：**先复位动态标志，再更新模型**。
+    //
+    // 官方 Core API Reference 的说明是「动态标志的状态在调用 csmUpdateModel
+    // 之后、调用 csmResetDrawableDynamicFlags 之前有效」，
+    // 而官方 Framework 的 CubismModel::Update() 采用的是
+    // 「reset → update → 读标志」的顺序：
+    //   reset 把上一帧的标志清空，update 在重算顶点的同时按当前状态重写标志
+    //   （例如部件当前是否可见），读标志拿到的就是本帧的真实状态。
+    //
+    // 反过来（先 update 后 reset）会让标志在本帧读取时永远是 0，
+    // 结果是「所有部件都不可见」——模型整个消失。
     csmResetDrawableDynamicFlags(model->model_);
+    csmUpdateModel(model->model_);
 #else
     (void)model;
 #endif
@@ -404,6 +412,20 @@ int DrawableCount(const Model* model) {
 #endif
 }
 
+std::string DrawableId(const Model* model, int index) {
+#if defined(PPET_WITH_CUBISM) || defined(PPET_WITH_CUBISM_STUB)
+    if (!model || !model->model_) return std::string();
+    const char** ids = csmGetDrawableIds(model->model_);
+    if (!ids || index < 0) return std::string();
+    const char* id = ids[index];
+    return id ? std::string(id) : std::string();
+#else
+    (void)model;
+    (void)index;
+    return std::string();
+#endif
+}
+
 bool GetDrawable(const Model* model, int index, Drawable& out) {
 #if defined(PPET_WITH_CUBISM) || defined(PPET_WITH_CUBISM_STUB)
     if (!model || !model->model_) return false;
@@ -474,16 +496,94 @@ bool GetDrawable(const Model* model, int index, Drawable& out) {
     }
 
     // --- 可见性 ---
+    //
+    // 动态标志里的「可见」位（Core 4+ 名为 csmDynamicDrawableVisible，值 1）。
+    // 官方 Core API Reference 的用法是
+    //   isVisible = (dynamicFlags[d] & csmIsVisible) == csmIsVisible;
+    //
+    // 少数 Core 版本在复位后不会写这一位（标志始终为 0），此时会误判成
+    // 「全部不可见」→ 模型整个消失。因此这里加一层兜底：
+    // 当没有任何部件带可见位、但确实存在不透明度大于 0 的部件时，
+    // 退回到「不透明度 > 0 即视为可见」。
     const csmFlags* dynamicFlags = csmGetDrawableDynamicFlags(model->model_);
     out.visible = true;
     if (dynamicFlags) {
         out.visible = (dynamicFlags[index] & csmIsVisible) != 0;
+        if (!out.visible) {
+            static bool s_warned = false;
+            bool anyVisibleBit = false;
+            bool anyOpaque = false;
+            const int count = csmGetDrawableCount(model->model_);
+            const float* ops = csmGetDrawableOpacities(model->model_);
+            for (int i = 0; i < count; ++i) {
+                if (dynamicFlags[i] & csmIsVisible) {
+                    anyVisibleBit = true;
+                    break;
+                }
+                if (ops && ops[i] > 0.0f) anyOpaque = true;
+            }
+            if (!anyVisibleBit && anyOpaque) {
+                // 本版本 Core 不提供可见位：按不透明度判断。
+                out.visible = (ops && ops[index] > 0.0f);
+                if (!s_warned) {
+                    s_warned = true;
+                    std::fprintf(stderr,
+                                 "[Live2D] 该 Cubism Core 未提供部件可见标志，"
+                                 "已退回到按不透明度判断可见性。\n");
+                }
+            }
+        }
     }
 
     return true;
 #else
     (void)model;
     (void)index;
+    (void)out;
+    return false;
+#endif
+}
+
+bool GetDrawableMasks(const Model* model, int drawableIndex,
+                      std::vector<MaskRef>& out) {
+    out.clear();
+#if defined(PPET_WITH_CUBISM) || defined(PPET_WITH_CUBISM_STUB)
+    if (!model || !model->model_) return false;
+    if (drawableIndex < 0 || drawableIndex >= csmGetDrawableCount(model->model_)) {
+        return false;
+    }
+
+    // Core 的遮罩 API：
+    //   csmGetDrawableMaskCounts(model) -> 每个部件的遮罩数量
+    //   csmGetDrawableMasks(model)      -> 锯齿数组，第 d 项是该部件自己的遮罩编号
+    // 注意「数量为 0」的部件，其编号指针可能指向别的部件的数组中间，
+    // 因此必须严格按数量读取，不能越界。
+    const int* counts = csmGetDrawableMaskCounts(model->model_);
+    const int** lists = csmGetDrawableMasks(model->model_);
+    if (!counts || !lists) return false;
+
+    const int count = counts[drawableIndex];
+    if (count <= 0) return false;
+    const int* indices = lists[drawableIndex];
+    if (!indices) return false;
+
+    // 反转遮罩标志在**遮罩部件自己**的常量标志里
+    // （Core 4.0 起的 csmIsInvertedMask）。
+    const csmFlags* constantFlags = csmGetDrawableConstantFlags(model->model_);
+    const int drawableCount = csmGetDrawableCount(model->model_);
+
+    for (int i = 0; i < count; ++i) {
+        const int maskIndex = indices[i];
+        if (maskIndex < 0 || maskIndex >= drawableCount) continue;
+        MaskRef ref;
+        ref.drawableIndex = maskIndex;
+        ref.inverted = constantFlags && (constantFlags[maskIndex] & csmIsInvertedMask) != 0;
+        out.push_back(ref);
+    }
+    return !out.empty();
+#else
+    (void)model;
+    (void)drawableIndex;
     (void)out;
     return false;
 #endif
