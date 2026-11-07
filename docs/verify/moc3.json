@@ -1,0 +1,45 @@
+{
+  "conclusion": "模型已加载并渲染出可见像素，GL 无错误",
+  "model": {
+    "bone_sample": [],
+    "bones": 0,
+    "display_name": "Hiyori.model3",
+    "format_version": "Cubism 5（.moc3 + .model3.json）",
+    "from_zip": false,
+    "materials": 0,
+    "missing_resources": [],
+    "resolved_path": "/tmp/verify_models/Hiyori/Hiyori.model3.json",
+    "source_archive": "",
+    "textures_loaded": 2,
+    "textures_referenced": 2,
+    "triangles": 0,
+    "type": "Live2D",
+    "vertices": 0
+  },
+  "platform": {
+    "compiler": "GCC 13.3.0",
+    "gl_renderer": "llvmpipe (LLVM 20.1.2, 256 bits)",
+    "gl_vendor": "Mesa",
+    "gl_version": "4.5 (Core Profile) Mesa 25.2.8-0ubuntu0.24.04.4",
+    "os": "Linux"
+  },
+  "render": {
+    "coverage_percent": 15.609,
+    "frames": 30,
+    "gl_error": 0,
+    "gpu_ready": true,
+    "height": 640,
+    "model_status": "正常渲染",
+    "non_black_pixels": 47801,
+    "non_transparent_pixels": 47952,
+    "rendering_ok": true,
+    "screenshot": "docs/verify/moc3.png",
+    "screenshot_written": true,
+    "width": 480
+  },
+  "requested_model": "/tmp/verify_models/Hiyori/Hiyori.model3.json",
+  "result": "PASS",
+  "tool": "ppet_render_verify",
+  "version": 1,
+  "warnings": []
+}

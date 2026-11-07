@@ -8,38 +8,34 @@
 
 ```
 PPet-RE/
-├── CMakeLists.txt            # 构建配置（C++23、模型层 / 平台层 / 主程序 / 测试）
+├── CMakeLists.txt            # 构建配置（C++23 / Qt6 / Cubism / 测试）
 ├── README.md                 # 项目主页（概览 + 快速开始 + 文档索引）
 ├── docs/                     # 分类文档（本目录）
-├── src/
-│   ├── main.cpp              # 程序入口：QApplication → Logger::Init → App
-│   ├── core/
-│   │   ├── Config.*          # 配置持久化（JSON，字段缺失回退默认值）
-│   │   ├── I18n.*            # 界面文案结构（值由翻译器生成的 .inl 填充）
-│   │   ├── Log.*             # 结构化日志（毫秒时间戳 / source_location / 双阈值 / 互斥写）
-│   │   ├── FileIO.*          # 跨平台 UTF-8 路径与文件读写
-│   │   ├── ZipArchive.*      # ZIP 中央目录解析 + zlib inflate 解压
-│   │   ├── ModelPackage.*    # 模型包导入、内容统计、包内模型定位
-│   │   └── Math.hpp          # Vec2/3/4、Mat4
-│   ├── model/
-│   │   ├── Model.*           # IModel 接口、ModelDebugInfo、模型工厂、类型探测
-│   │   ├── SkinnedMesh.*     # 统一蒙皮网格表示
-│   │   ├── pmx/              # PMX 2.0/2.1 解析、转换为网格、贴图路径容错
-│   │   ├── vrm/              # GLB/glTF + VRM 扩展解析
-│   │   └── live2d/           # Live2D Cubism 后端（可选）
-│   ├── render/               # toon 着色渲染管线、相机、GL 错误检查
-│   ├── platform/             # 窗口、托盘、全局光标追踪、开机启动、文件对话框
-│   ├── ui/
-│   │   ├── SettingsPanel.*   # Qt 6 设置面板
-│   │   └── DebugPanel.*      # Qt 6 模型诊断面板
-│   └── app/App.*             # 主循环、配置/模型/托盘编排、运行时状态采集
-├── src/csdk/                 # Cubism SDK Core（可选，需自备，已 gitignore）
+├── src/                      # 产品源码：只有 ui / tools 两个文件夹
+│   ├── ui/                   # ★ 全部 Qt GUI 实现
+│   │   ├── SettingsPanel.*   #   设置窗口
+│   │   ├── DebugPanel.*      #   模型诊断面板（6 页签）
+│   │   └── ErrorDialog.*     #   模型加载失败/警告弹窗
+│   └── tools/                # ★ 全部非 GUI 实现
+│       ├── main.cpp          #   程序入口：QApplication → Logger::Init → App
+│       ├── core/             #   Config / I18n / Log / FileIO / ZipArchive / ModelPackage / Math
+│       ├── model/            #   IModel + ModelDebugInfo + ModelError、SkinnedMesh、pmx/ vrm/
+│       ├── platform/         #   窗口、托盘、光标追踪、开机启动、文件对话框
+│       ├── render/           #   Renderer / Camera / RenderUtils / FrameCapture
+│       └── app/              #   App 主循环、托盘菜单、运行时状态采集
+├── api/                      # ★ 外部 SDK / 第三方库引用层
+│   ├── live2d/               #   Cubism SDK 集成（model3.json / moc3 / 动作 / Live2DModel）
+│   │   └── csdk/             #   自备 Cubism Core（已 gitignore）
+│   └── vendor/               #   Json.hpp / ImageIo.hpp / Compression.hpp 统一引用头
 ├── Compiler/
 │   ├── i18n/                 # zh-CN.json / en-US.json（文案唯一来源）
 │   └── i18n_gen/             # 文案翻译器源码与单元测试
 ├── third_party/              # nlohmann/json、stb、zlib（源码随仓库）
-└── tools/                    # 测试程序与测试素材生成脚本
+└── tools/                    # 测试程序、素材生成、render_verify.cpp、windows_verify.ps1
 ```
+
+头文件统一用**根索引**（`#include <src/tools/core/Log.hpp>`），
+CMake 把项目根目录加进 include 路径。完整约定见 [架构文档](architecture.md)。
 
 ## 架构分层
 
@@ -85,7 +81,7 @@ PPet-RE/
 | `std::source_location` | `core/Log.*` | 日志宏自动带文件:行号:函数 |
 | `std::string::contains` | `core/ModelPackage.cpp`、`model/Model.cpp` | 带 `#if __cpp_lib_string_contains` 回退 |
 | `std::to_underlying` | `core/Log.cpp` | 带 `__cpp_lib_to_underlying` 回退 |
-| `std::string_view::starts_with` | `src/main.cpp` | 解析 `--log-level=` |
+| `std::string_view::starts_with` | `src/tools/main.cpp` | 解析 `--log-level=` |
 | `std::size` / 结构化绑定 / CTAD | 各处 | — |
 
 CMake 要求 3.20+，配置阶段用
@@ -118,6 +114,19 @@ ctest --output-on-failure
 | `pmx_package_gen` | 生成 4 种 PMX 包（fixture）：完整 / 缺贴图 / 大小写 / 子目录 |
 | `pmx_package_test` | PMX 包统计、缺失贴图诊断、贴图大小写与目录容错 |
 | `unicode_path_test` | 中文路径读写、目录遍历、ZIP 条目名编码归一化 |
+| `model_error_unit` | 结构化错误：分类名/建议、真实错误串分类推断、明细与报告组装 |
+| `error_dialog_smoke` | 失败弹窗：分类/摘要/逐条明细/建议/日志、复制按钮、警告型标题（offscreen） |
+| `render_verify_pmx` / `render_verify_vrm` | 用渲染验证 CLI 对仓库素材跑「加载 → 渲染 → 读回像素 → 判定」（xvfb） |
+
+共 **19 项**测试（含 fixture）。调试面板冒烟测试还会校验 6 个页签、骨架/图片/详细错误区。
+
+渲染验证 CLI（可单独用于人工核验或 CI）：
+
+```bash
+./build/ppet_render_verify --model <.vrm|.pmx|.zip|.model3.json|.moc3> \
+    --shot shot.png --report report.json --frames 30
+# Windows 11 真机一键验收见 docs/windows-test.md 与 tools/windows_verify.ps1
+```
 
 测试素材由脚本生成（CMake 会自动作为 fixture 调用）：
 
@@ -153,8 +162,8 @@ cmake -S . -B build \
   -DPPET_I18N_EN=Compiler/i18n/en-US.csv
 ```
 
-> 新增文案需要同时改三处：`Compiler/i18n/zh-CN.json`、`en-US.json`、`src/core/I18n.hpp` 的
-> `struct Strings`。`src/core/I18n.cpp` 用 X 宏赋值，**不需要改**。
+> 新增文案需要同时改三处：`Compiler/i18n/zh-CN.json`、`en-US.json`、`src/tools/core/I18n.hpp` 的
+> `struct Strings`。`src/tools/core/I18n.cpp` 用 X 宏赋值，**不需要改**。
 > CMake 会扫描所有目标，凡是编译了 `I18n.cpp` 的都会自动加上生成依赖与头文件路径。
 
 详见 [Compiler/README.md](../Compiler/README.md)。
@@ -175,4 +184,6 @@ cmake -S . -B build \
 
 ## 相关文档
 
-- [构建指南](build.md) · [模型格式与导入](models.md) · [使用与配置](usage.md) · [调试与日志](debugging.md)
+- [项目结构与头文件索引](architecture.md) · [构建指南](build.md) · [Windows 真机验收](windows-test.md)
+- [模型格式与导入](models.md) · [使用与配置](usage.md) · [调试与日志](debugging.md)
+- [api/ 集成层说明](../api/README.md) · [文案翻译器](../Compiler/README.md)

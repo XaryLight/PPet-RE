@@ -7,9 +7,9 @@
 #include <string>
 #include <vector>
 
-#include "model/SkinnedMesh.hpp"
-#include "model/pmx/PmxModel.hpp"
-#include "model/pmx/PmxParser.hpp"
+#include <src/tools/model/SkinnedMesh.hpp>
+#include <src/tools/model/pmx/PmxModel.hpp>
+#include <src/tools/model/pmx/PmxParser.hpp>
 
 using namespace ppet;
 using namespace ppet::pmx;

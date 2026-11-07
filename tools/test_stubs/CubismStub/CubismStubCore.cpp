@@ -13,7 +13,7 @@
 //
 // 差异仅在数据内容：真实 SDK 解析二进制 .moc3，本桩解析本项目自定义的
 // 二进制桩格式（格式说明见 CubismStubCore.h 顶部注释）。
-#include "CubismStubCore.h"
+#include <tools/test_stubs/CubismStub/CubismStubCore.h>
 
 #include <cmath>
 #include <cstring>

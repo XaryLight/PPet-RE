@@ -6,7 +6,7 @@
 //   - 不需要第二个 GL 上下文，彻底消除「ImGui 初始化失败 / 污染主窗口渲染」；
 //   - 每帧由 App 调用 PumpEvents() 驱动 Qt 事件分发，与 GLFW 主循环共用主线程；
 //   - 所有信号用 lambda 连接，本类不是 QObject，无需 moc / AUTOMOC。
-#include "ui/SettingsPanel.hpp"
+#include <src/ui/SettingsPanel.hpp>
 
 #include <QApplication>
 #include <QCheckBox>
@@ -26,7 +26,7 @@
 #include <QTextEdit>
 #include <QVBoxLayout>
 
-#include "core/Log.hpp"
+#include <src/tools/core/Log.hpp>
 
 namespace ppet {
 

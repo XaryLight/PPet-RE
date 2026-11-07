@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-#include "model/pmx/PmxParser.hpp"
+#include <src/tools/model/pmx/PmxParser.hpp>
 
 using namespace ppet::pmx;
 

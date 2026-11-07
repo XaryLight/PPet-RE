@@ -15,9 +15,11 @@
 
 #include <QApplication>
 #include <QPushButton>
+#include <QTabWidget>
+#include <QTextEdit>
 
-#include "core/I18n.hpp"
-#include "ui/DebugPanel.hpp"
+#include <src/tools/core/I18n.hpp>
+#include <src/ui/DebugPanel.hpp>
 
 int main(int argc, char** argv) {
     QApplication qtApp(argc, argv);
@@ -76,6 +78,28 @@ int main(int argc, char** argv) {
     model.properties.push_back("渲染管线=蒙皮网格 + toon 着色");
     model.missingResources.push_back("/tmp/models/tex/body.png");
     model.missingResources.push_back("/tmp/models/tex/face.png");
+    // 新增区域：模型 ID / 骨架明细 / 图片明细 / 详细错误
+    model.modelId = "PPET-0123456789ABCDEF";
+    for (int i = 0; i < 5; ++i) {
+        ppet::ModelDebugInfo::BoneInfo bone;
+        bone.index = i;
+        bone.name = (i == 0 ? "root" : "bone_" + std::to_string(i));
+        bone.parentIndex = i == 0 ? -1 : 0;
+        bone.depth = i == 0 ? 0 : 1;
+        bone.flags = i == 0 ? "-" : "可位移";
+        model.bones.push_back(bone);
+    }
+    for (int i = 0; i < 3; ++i) {
+        ppet::ModelDebugInfo::TextureInfo tex;
+        tex.name = "tex/part" + std::to_string(i) + ".png";
+        tex.path = "/tmp/models/tex/part" + std::to_string(i) + ".png";
+        tex.loaded = i < 2;
+        tex.note = tex.loaded ? "磁盘贴图" : "文件不存在";
+        model.textures.push_back(tex);
+    }
+    model.errorCategory = "模型图片缺失";
+    model.errorDetails.push_back("缺少 2 张贴图，可能出现白模");
+    model.errorDetails.push_back("建议把 .pmx 与贴图目录打包成 .zip");
     for (int i = 0; i < 8; ++i) {
         ppet::ModelDebugInfo::Part part;
         part.name = "材质 #" + std::to_string(i);
@@ -98,10 +122,22 @@ int main(int argc, char** argv) {
     runtime.desktopHeight = 1080;
     runtime.glError = 0;
     runtime.logPath = "./last.log";
+    // 不存在的路径：验证「暂无可预览的图片」分支不会崩。
+    runtime.renderPreviewPath = "/tmp/ppet_no_such_frame.png";
+    runtime.renderPreviewNote = "渲染帧抓取失败：测试占位";
 
     panel.Show();
     if (!panel.IsVisible()) {
         std::printf("debug_panel_smoke: Show() 后应可见\n");
+        return 1;
+    }
+    if (auto* tabs = panel.Handle()->findChild<QTabWidget*>()) {
+        if (tabs->count() != 6) {
+            std::printf("debug_panel_smoke: 应有 6 个页签，实际 %d\n", tabs->count());
+            return 1;
+        }
+    } else {
+        std::printf("debug_panel_smoke: 未找到 QTabWidget\n");
         return 1;
     }
     if (!panel.ShouldRefresh()) {
@@ -111,6 +147,18 @@ int main(int argc, char** argv) {
 
     panel.Update(model, runtime);
     for (int i = 0; i < 10; ++i) panel.PumpEvents();
+
+    // 详细错误区应包含分类与逐条明细。
+    if (auto* errors = panel.Handle()->findChild<QTextEdit*>("ppetErrorDetailsView")) {
+        const QString text = errors->toPlainText();
+        if (!text.contains("模型图片缺失") || !text.contains("打包成 .zip")) {
+            std::printf("debug_panel_smoke: 详细错误区内容不完整\n");
+            return 1;
+        }
+    } else {
+        std::printf("debug_panel_smoke: 未找到详细错误区\n");
+        return 1;
+    }
 
     // 紧接着的同一时刻不应重复刷新（200 ms 节流）。
     panel.Update(model, runtime);

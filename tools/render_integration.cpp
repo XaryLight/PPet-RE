@@ -21,10 +21,10 @@
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 
-#include "model/Model.hpp"
-#include "model/pmx/PmxModel.hpp"
-#include "model/vrm/VrmModel.hpp"
-#include "render/RenderUtils.hpp"
+#include <src/tools/model/Model.hpp>
+#include <src/tools/model/pmx/PmxModel.hpp>
+#include <src/tools/model/vrm/VrmModel.hpp>
+#include <src/tools/render/RenderUtils.hpp>
 
 namespace {
 

@@ -24,9 +24,9 @@
 #include <memory>
 #include <string>
 
-#include "core/I18n.hpp"
-#include "core/Math.hpp"
-#include "model/Model.hpp"
+#include <src/tools/core/I18n.hpp>
+#include <src/tools/core/Math.hpp>
+#include <src/tools/model/Model.hpp>
 
 class QWidget;
 
@@ -50,6 +50,9 @@ struct RuntimeStats {
     /// 桌面尺寸（虚拟桌面，多显示器时是总范围）。
     int desktopWidth = 0;
     int desktopHeight = 0;
+    /// 当前渲染帧的 PNG 路径（App 在面板可见时抓取，供「图片渲染」页预览）。
+    std::string renderPreviewPath;
+    std::string renderPreviewNote;
 };
 
 class DebugPanel {

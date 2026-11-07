@@ -29,11 +29,11 @@
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 
-#include "core/Math.hpp"
-#include "model/SkinnedMesh.hpp"
-#include "render/Camera.hpp"
-#include "render/RenderUtils.hpp"
-#include "render/Renderer.hpp"
+#include <src/tools/core/Math.hpp>
+#include <src/tools/model/SkinnedMesh.hpp>
+#include <src/tools/render/Camera.hpp>
+#include <src/tools/render/RenderUtils.hpp>
+#include <src/tools/render/Renderer.hpp>
 
 namespace {
 

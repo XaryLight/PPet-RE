@@ -13,7 +13,7 @@
 
 ## 为什么需要它
 
-以前中英文文案直接写在 `src/core/I18n.cpp` 里，两个 `if` 分支各抄一遍：
+以前中英文文案直接写在 `src/tools/core/I18n.cpp` 里，两个 `if` 分支各抄一遍：
 
 - 加一条文案要改两个地方，**漏改一处界面上就是空白**；
 - 两份手抄的内容迟早会不一致；
@@ -29,7 +29,7 @@
 
 ## 生成的产物长什么样
 
-`core/I18nStrings.inl` 里同时有两样东西，且**由同一份 X 宏展开**，
+`src/tools/core/I18nStrings.inl` 里同时有两样东西，且**由同一份 X 宏展开**，
 所以不可能出现「表里有、赋值时却没有」的不一致：
 
 ```cpp
@@ -44,7 +44,7 @@ inline constexpr I18nEntry kI18nTable[] = {
 };
 ```
 
-`src/core/I18n.cpp` 用同一个 X 宏给结构体赋值：
+`src/tools/core/I18n.cpp` 用同一个 X 宏给结构体赋值：
 
 ```cpp
 #define PPET_I18N_ASSIGN(key, zh, en) s.key = chinese ? zh : en;
@@ -62,7 +62,7 @@ inline constexpr I18nEntry kI18nTable[] = {
 
 新增一条文案要同时做两件事：
 
-- 在 `src/core/I18n.hpp` 的 `struct Strings` 里加一个 `std::string` 成员；
+- 在 `src/tools/core/I18n.hpp` 的 `struct Strings` 里加一个 `std::string` 成员；
 - 在两个 JSON 里各加一条同名条目。
 
 **顺序无所谓，但两边必须齐**——少一边构建就会报错，并明确告诉你是哪条、哪个语言缺了：
@@ -108,14 +108,14 @@ cmake --build build --target ppet_i18n_gen_run
 # 直接跑翻译器
 ./build/ppet_i18n_gen \
   --out  out.inl \
-  --struct src/core/I18n.hpp \
+  --struct src/tools/core/I18n.hpp \
   --zh    Compiler/i18n/zh-CN.json \
   --en    Compiler/i18n/en-US.json
 
 # 只比对不写文件（CI 用：检查生成物是否已过期）
 ./build/ppet_i18n_gen \
   --out  build/generated/core/I18nStrings.inl \
-  --struct src/core/I18n.hpp \
+  --struct src/tools/core/I18n.hpp \
   --zh    Compiler/i18n/zh-CN.json \
   --en    Compiler/i18n/en-US.json \
   --check

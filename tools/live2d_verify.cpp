@@ -15,9 +15,9 @@
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 
-#include "core/Math.hpp"
-#include "model/Model.hpp"
-#include "model/live2d/Live2DModel.hpp"
+#include <src/tools/core/Math.hpp>
+#include <src/tools/model/Model.hpp>
+#include <api/live2d/Live2DModel.hpp>
 
 // 注意：STBI_WRITE_NO_STDIO 必须在包含头文件之前定义，
 // 否则带 stdio 的接口（stbi_write_png_to_file）不会被声明。

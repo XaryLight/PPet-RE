@@ -20,13 +20,13 @@
 #include <thread>
 #include <vector>
 
-#include "core/Math.hpp"
-#include "platform/AutoStart.hpp"
-#include "platform/FileDialog.hpp"
-#include "platform/GlobalCursorTracker.hpp"
-#include "platform/OpenExternal.hpp"
-#include "platform/Tray.hpp"
-#include "platform/Window.hpp"
+#include <src/tools/core/Math.hpp>
+#include <src/tools/platform/AutoStart.hpp>
+#include <src/tools/platform/FileDialog.hpp>
+#include <src/tools/platform/GlobalCursorTracker.hpp>
+#include <src/tools/platform/OpenExternal.hpp>
+#include <src/tools/platform/Tray.hpp>
+#include <src/tools/platform/Window.hpp>
 
 #if !defined(_WIN32) && !defined(__APPLE__)
 // glfw3native.h 需要先包含 glfw3.h（它依赖 GLFWAPI 宏）。

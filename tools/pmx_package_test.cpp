@@ -13,10 +13,10 @@
 #include <string>
 #include <vector>
 
-#include "core/FileIO.hpp"
-#include "core/Log.hpp"
-#include "core/ModelPackage.hpp"
-#include "model/pmx/PmxModel.hpp"
+#include <src/tools/core/FileIO.hpp>
+#include <src/tools/core/Log.hpp>
+#include <src/tools/core/ModelPackage.hpp>
+#include <src/tools/model/pmx/PmxModel.hpp>
 
 namespace {
 

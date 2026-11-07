@@ -37,7 +37,9 @@ deploy_key*
 
 # ===== Cubism SDK（专有许可软件，不可随仓库分发）=====
 # 把 CubismSdkForNative-x.y.z.zip 解压后，把其中的 Core 目录放到
-# src/csdk/Core/ 即可，CMake 会自动识别并启用 Live2D 后端。
+# api/live2d/csdk/Core/ 即可，CMake 会自动识别并启用 Live2D 后端。
+# 旧位置 src/csdk/ 与 third_party/Cubism/ 仍兼容，一并忽略。
+api/live2d/csdk/
 src/csdk/
 third_party/Cubism/
 
@@ -53,3 +55,5 @@ imgui.ini
 
 # 运行时调试日志（程序自动写入当前工作目录）
 last.log
+ppet_render_verify.log
+verify_report/

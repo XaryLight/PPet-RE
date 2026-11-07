@@ -1,6 +1,6 @@
 // PPet - C++ 移植版
 // Compiler/ 文案翻译器 —— 实现。
-#include "i18n_gen.hpp"
+#include <Compiler/i18n_gen/i18n_gen.hpp>
 
 #include <algorithm>
 #include <fstream>

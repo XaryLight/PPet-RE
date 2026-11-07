@@ -70,7 +70,7 @@ endif()
 #                             无 SDK 环境下验证 UI / 构建链路，不能加载真实模型）
 #   两者都不开时，加载 Live2D 模型会给出「请启用 Cubism SDK」的友好提示。
 #
-# 自动识别：只要在 src/csdk/（或 third_party/Cubism/Core/）下检测到
+# 自动识别：只要在 api/live2d/csdk/（或 third_party/Cubism/Core/）下检测到
 # Live2DCubismCore.h，就自动开启真实 SDK 后端，无需手工传 CMake 选项。
 # ---------------------------------------------------------------------------
 # 区分「用户显式写了 -DPPET_WITH_CUBISM=ON/OFF」与「option() 的默认值 OFF」。
@@ -92,24 +92,26 @@ else()
     set(_ppet_cubism_explicit FALSE)
 endif()
 
-option(PPET_WITH_CUBISM "启用 Live2D 后端：需自行下载 Cubism SDK for Native 并放入 src/csdk" OFF)
+option(PPET_WITH_CUBISM "启用 Live2D 后端：需自行下载 Cubism SDK for Native 并放入 api/live2d/csdk" OFF)
 option(PPET_WITH_CUBISM_STUB "使用内置 Cubism Core 桩（无需 SDK，仅供测试/验证构建链路）" OFF)
 option(PPET_CUBISM_AUTODETECT "自动检测本机 Cubism SDK 并启用 Live2D 后端（显式设置 PPET_WITH_CUBISM 时以显式值为准）" ON)
 set(PPET_CUBISM_ROOT "" CACHE PATH
     "Cubism SDK Core 目录所在位置（可指向 Core 目录本身或其上层）")
 
-# 自动检测：SDK 已解压到 src/csdk/ 时自动启用，避免用户漏配 CMake 选项。
+# 自动检测：SDK 已解压到 api/live2d/csdk/ 时自动启用，避免用户漏配 CMake 选项。
 # 用户的显式设置（-DPPET_WITH_CUBISM=OFF/ON）优先级更高，不会被这里覆盖。
 if(NOT PPET_WITH_CUBISM AND NOT PPET_WITH_CUBISM_STUB
    AND PPET_CUBISM_AUTODETECT AND NOT _ppet_cubism_explicit)
     foreach(_auto_root
             ${PPET_CUBISM_ROOT}
             ${PPET_CUBISM_ROOT}/Core
+            ${CMAKE_CURRENT_SOURCE_DIR}/api/live2d/csdk/Core
+            ${CMAKE_CURRENT_SOURCE_DIR}/api/live2d/csdk
             ${CMAKE_CURRENT_SOURCE_DIR}/src/csdk/Core
             ${CMAKE_CURRENT_SOURCE_DIR}/src/csdk
             ${CMAKE_CURRENT_SOURCE_DIR}/third_party/Cubism/Core)
         if(_auto_root AND EXISTS "${_auto_root}/include/Live2DCubismCore.h")
-            set(PPET_WITH_CUBISM ON CACHE BOOL "启用 Live2D 后端：需自行下载 Cubism SDK for Native 并放入 src/csdk" FORCE)
+            set(PPET_WITH_CUBISM ON CACHE BOOL "启用 Live2D 后端：需自行下载 Cubism SDK for Native 并放入 api/live2d/csdk" FORCE)
             message(STATUS "检测到 Cubism SDK（${_auto_root}），自动启用 Live2D 后端")
             break()
         endif()
@@ -123,7 +125,7 @@ endif()
 # 统一开启严格警告，尽早暴露问题。
 add_compile_options(-Wall -Wextra)
 
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 
 # OpenGL 库要先找出来：渲染层（Renderer.cpp）要直接调用 GL 入口点，
@@ -202,13 +204,13 @@ endif()
 # 模型后端静态库
 # ---------------------------------------------------------------------------
 set(PPET_MODEL_SOURCES
-    src/core/FileIO.cpp
-    src/model/SkinnedMesh.cpp
-    src/model/pmx/PmxParser.cpp
-    src/model/pmx/PmxModel.cpp
-    src/model/vrm/GltfParser.cpp
-    src/model/vrm/VrmImage.cpp
-    src/model/vrm/VrmModel.cpp
+    src/tools/core/FileIO.cpp
+    src/tools/model/SkinnedMesh.cpp
+    src/tools/model/pmx/PmxParser.cpp
+    src/tools/model/pmx/PmxModel.cpp
+    src/tools/model/vrm/GltfParser.cpp
+    src/tools/model/vrm/VrmImage.cpp
+    src/tools/model/vrm/VrmModel.cpp
 )
 
 # ---------------------------------------------------------------------------
@@ -242,24 +244,24 @@ else()
 endif()
 
 # 渲染层实现（主协调者提供）。缺失时用测试桩顶上，保证库仍可链接。
-if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src/render/Renderer.cpp)
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src/tools/render/Renderer.cpp)
     list(APPEND PPET_MODEL_SOURCES
-        src/render/Renderer.cpp
-        src/render/Camera.cpp
-        src/render/RenderUtils.cpp
+        src/tools/render/Renderer.cpp
+        src/tools/render/Camera.cpp
+        src/tools/render/RenderUtils.cpp
     )
 else()
-    message(STATUS "src/render/Renderer.cpp 尚未提供，使用测试桩 RendererStub.cpp")
+    message(STATUS "src/tools/render/Renderer.cpp 尚未提供，使用测试桩 RendererStub.cpp")
     list(APPEND PPET_MODEL_SOURCES tools/test_stubs/RendererStub.cpp)
 endif()
 
 # Live2D Cubism 后端：开启真实 SDK 或桩时，把 live2d 源编入模型库。
 if(PPET_WITH_CUBISM OR PPET_WITH_CUBISM_STUB)
     list(APPEND PPET_MODEL_SOURCES
-        src/model/live2d/Live2DModel.cpp
-        src/model/live2d/Live2DMotion.cpp
-        src/model/live2d/Live2DManifest.cpp
-        src/model/live2d/CubismCoreAdapter.cpp
+        api/live2d/Live2DModel.cpp
+        api/live2d/Live2DMotion.cpp
+        api/live2d/Live2DManifest.cpp
+        api/live2d/CubismCoreAdapter.cpp
     )
 endif()
 if(PPET_WITH_CUBISM_STUB)
@@ -269,7 +271,7 @@ if(PPET_WITH_CUBISM_STUB)
 endif()
 
 add_library(ppet_model STATIC ${PPET_MODEL_SOURCES})
-target_include_directories(ppet_model PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_include_directories(ppet_model PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 # 渲染层直接调用 gl* 入口点，链接关系对外 PUBLIC，
 # 这样测试目标只要链 ppet_model 就自动拿到 GL。
 target_link_libraries(ppet_model PUBLIC ${PPET_GLEW_TARGET} ${OPENGL_LIBRARIES})
@@ -283,13 +285,15 @@ if(PPET_WITH_CUBISM)
     # 真实 Cubism SDK for Native 的 Core 目录（只含 include/ 与 lib/）。
     #
     # 支持多个放置位置，按优先级查找，第一个命中的生效：
-    #   1. src/csdk/Core            —— 推荐：把 SDK 的 Core 目录解压到这里
-    #   2. src/csdk                 —— 直接把 Core 的内容解压到这个目录
+    #   1. api/live2d/csdk/Core            —— 推荐：把 SDK 的 Core 目录解压到这里
+    #   2. api/live2d/csdk                 —— 直接把 Core 的内容解压到这个目录
     #   3. third_party/Cubism/Core  —— 旧位置，保持兼容
     #   4. 外部路径 -DPPET_CUBISM_ROOT=<dir> —— 指向 Core 目录或其上层
     #
     # 这样「把 SDK 解压到 src/ 下即可被自动识别」，无需手工配置头文件路径。
     set(_cubism_root_candidates
+        ${CMAKE_CURRENT_SOURCE_DIR}/api/live2d/csdk/Core
+        ${CMAKE_CURRENT_SOURCE_DIR}/api/live2d/csdk
         ${CMAKE_CURRENT_SOURCE_DIR}/src/csdk/Core
         ${CMAKE_CURRENT_SOURCE_DIR}/src/csdk
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/Cubism/Core
@@ -312,7 +316,7 @@ if(PPET_WITH_CUBISM)
     if(NOT CUBISM_CORE_INCLUDE_DIR)
         message(FATAL_ERROR
             "未找到 Live2DCubismCore.h。请把 Cubism SDK for Native 解压到 "
-            "src/csdk/（即 src/csdk/Core/include/Live2DCubismCore.h 存在），"
+            "api/live2d/csdk/（即 api/live2d/csdk/Core/include/Live2DCubismCore.h 存在），"
             "或用 -DPPET_CUBISM_ROOT=<Core 目录> 指定位置。")
     endif()
 
@@ -525,12 +529,12 @@ endif()
 # 平台层静态库（窗口 / 托盘 / 开机启动 / 外部链接 / 文件对话框）
 # ---------------------------------------------------------------------------
 set(PPET_PLATFORM_SOURCES
-    src/platform/Window.cpp
-    src/platform/Tray.cpp
-    src/platform/AutoStart.cpp
-    src/platform/OpenExternal.cpp
-    src/platform/FileDialog.cpp
-    src/platform/GlobalCursorTracker.cpp
+    src/tools/platform/Window.cpp
+    src/tools/platform/Tray.cpp
+    src/tools/platform/AutoStart.cpp
+    src/tools/platform/OpenExternal.cpp
+    src/tools/platform/FileDialog.cpp
+    src/tools/platform/GlobalCursorTracker.cpp
 )
 
 # MSVC CRT 兼容层：历史遗留的安全网。
@@ -548,12 +552,12 @@ set(PPET_PLATFORM_SOURCES
 #   - 用动态库（DLL 导入库）时不需要本文件，DLL 内部已解决全部依赖；
 #   - 用 MSVC 编译时也不需要，文件内部有 #error 保护避免与 MSVC CRT 冲突。
 if(MINGW AND PPET_WITH_CUBISM AND NOT CUBISM_CORE_DLL)
-    list(APPEND PPET_PLATFORM_SOURCES src/platform/MsvcCrtCompat.cpp)
+    list(APPEND PPET_PLATFORM_SOURCES src/tools/platform/MsvcCrtCompat.cpp)
     message(STATUS "Live2D 后端：启用 MSVC CRT 兼容层（MinGW + Cubism 静态库）")
 endif()
 
 add_library(ppet_platform STATIC ${PPET_PLATFORM_SOURCES})
-target_include_directories(ppet_platform PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_include_directories(ppet_platform PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(ppet_platform PUBLIC ${PPET_GLFW_TARGET} ${PPET_GLEW_TARGET} ${OPENGL_LIBRARIES} ${PPET_X11_LIBRARIES})
 
 if(UNIX AND NOT APPLE)
@@ -597,7 +601,7 @@ endif()
 
 if(APPLE)
     # 窗口层与托盘层使用 Cocoa，需要以 Objective-C++ 编译。
-    set_source_files_properties(src/platform/Window.cpp src/platform/Tray.cpp
+    set_source_files_properties(src/tools/platform/Window.cpp src/tools/platform/Tray.cpp
                                 PROPERTIES LANGUAGE OBJCXX)
     target_link_libraries(ppet_platform PRIVATE "-framework Cocoa"
                           "-framework ApplicationServices")
@@ -620,9 +624,9 @@ find_package(Qt6 REQUIRED COMPONENTS Widgets)
 # Compiler/：文案翻译器
 #
 # 把 Compiler/i18n/*.json 里的界面文案「翻译」成 C++ 内嵌表
-# （constexpr 表 + X 宏），生成到构建目录下的 core/I18nStrings.inl。
+# （constexpr 表 + X 宏），生成到构建目录下的 src/tools/core/I18nStrings.inl。
 #
-# 这样中英文文案只有一份来源（JSON），不再在 src/core/I18n.cpp 里手抄两遍；
+# 这样中英文文案只有一份来源（JSON），不再在 src/tools/core/I18n.cpp 里手抄两遍；
 # 生成器还会在构建期校验「文案键 ↔ struct Strings 成员」一一对应，
 # 拼错键、少翻译都会立刻报错，而不是等到界面上出现空白。
 # ---------------------------------------------------------------------------
@@ -652,21 +656,21 @@ set(PPET_I18N_ZH ${CMAKE_CURRENT_SOURCE_DIR}/Compiler/i18n/zh-CN.json CACHE FILE
     "中文文案源文件（.json 或 .csv）")
 set(PPET_I18N_EN ${CMAKE_CURRENT_SOURCE_DIR}/Compiler/i18n/en-US.json CACHE FILEPATH
     "英文文案源文件（.json 或 .csv）")
-set(PPET_I18N_STRUCT_HEADER ${CMAKE_CURRENT_SOURCE_DIR}/src/core/I18n.hpp CACHE FILEPATH
+set(PPET_I18N_STRUCT_HEADER ${CMAKE_CURRENT_SOURCE_DIR}/src/tools/core/I18n.hpp CACHE FILEPATH
     "struct Strings 所在的头文件（用于校验文案键与成员一一对应）")
 set(PPET_I18N_GEN_DIR ${CMAKE_BINARY_DIR}/generated)
-set(PPET_I18N_INL ${PPET_I18N_GEN_DIR}/core/I18nStrings.inl)
+set(PPET_I18N_INL ${PPET_I18N_GEN_DIR}/src/tools/core/I18nStrings.inl)
 
 add_custom_command(
     OUTPUT ${PPET_I18N_INL}
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${PPET_I18N_GEN_DIR}/core
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${PPET_I18N_GEN_DIR}/src/tools/core
     COMMAND ppet_i18n_gen
             --out ${PPET_I18N_INL}
             --struct ${PPET_I18N_STRUCT_HEADER}
             --zh ${PPET_I18N_ZH}
             --en ${PPET_I18N_EN}
     DEPENDS ppet_i18n_gen ${PPET_I18N_ZH} ${PPET_I18N_EN} ${PPET_I18N_STRUCT_HEADER}
-    COMMENT "翻译界面文案：Compiler/i18n/*.json -> core/I18nStrings.inl"
+    COMMENT "翻译界面文案：Compiler/i18n/*.json -> src/tools/core/I18nStrings.inl"
     VERBATIM)
 add_custom_target(ppet_i18n_gen_run DEPENDS ${PPET_I18N_INL})
 message(STATUS "文案翻译器：${PPET_I18N_ZH} + ${PPET_I18N_EN} -> ${PPET_I18N_INL}")
@@ -675,20 +679,25 @@ message(STATUS "文案翻译器：${PPET_I18N_ZH} + ${PPET_I18N_EN} -> ${PPET_I1
 # 主程序
 # ---------------------------------------------------------------------------
 set(PPET_CORE_SOURCES
-    src/core/Config.cpp
-    src/core/I18n.cpp
-    src/core/Log.cpp
-    src/core/ModelPackage.cpp
-    src/core/ZipArchive.cpp
-    src/model/Model.cpp
-    src/app/App.cpp
+    src/tools/core/Config.cpp
+    src/tools/core/I18n.cpp
+    src/tools/core/Log.cpp
+    src/tools/core/ModelPackage.cpp
+    src/tools/core/ZipArchive.cpp
+    src/tools/model/Model.cpp
+    src/tools/app/App.cpp
+    # 渲染帧抓图：stb_image_write 的实现宏只在这个翻译单元定义一次，
+    # 因此只编入 ppet 主程序，不放进 ppet_model（避免与其它测试目标重复定义）。
+    src/tools/render/FrameCapture.cpp
     src/ui/SettingsPanel.cpp
     src/ui/SettingsPanel.hpp
     src/ui/DebugPanel.cpp
     src/ui/DebugPanel.hpp
+    src/ui/ErrorDialog.cpp
+    src/ui/ErrorDialog.hpp
 )
 
-add_executable(ppet ${PPET_CORE_SOURCES} src/main.cpp)
+add_executable(ppet ${PPET_CORE_SOURCES} src/tools/main.cpp)
 target_link_libraries(ppet PRIVATE ppet_model ppet_platform ppet_zlib Qt6::Widgets)
 set_target_properties(ppet PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -774,12 +783,12 @@ set_tests_properties(platform_smoke PROPERTIES SKIP_RETURN_CODE 2)
 if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/render_smoke.cpp)
     add_executable(ppet_render_smoke
         tools/render_smoke.cpp
-        src/core/FileIO.cpp
-        src/render/Renderer.cpp
-        src/render/Camera.cpp
-        src/render/RenderUtils.cpp
+        src/tools/core/FileIO.cpp
+        src/tools/render/Renderer.cpp
+        src/tools/render/Camera.cpp
+        src/tools/render/RenderUtils.cpp
     )
-    target_include_directories(ppet_render_smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_include_directories(ppet_render_smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(ppet_render_smoke PRIVATE ${PPET_GLEW_TARGET} ${PPET_GLFW_TARGET} ${OPENGL_LIBRARIES})
 endif()
 
@@ -787,18 +796,18 @@ endif()
 if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/render_integration.cpp)
     add_executable(ppet_render_integration
         tools/render_integration.cpp
-        src/core/FileIO.cpp
-        src/model/SkinnedMesh.cpp
-        src/model/pmx/PmxParser.cpp
-        src/model/pmx/PmxModel.cpp
-        src/model/vrm/GltfParser.cpp
-        src/model/vrm/VrmImage.cpp
-        src/model/vrm/VrmModel.cpp
-        src/render/Renderer.cpp
-        src/render/Camera.cpp
-        src/render/RenderUtils.cpp
+        src/tools/core/FileIO.cpp
+        src/tools/model/SkinnedMesh.cpp
+        src/tools/model/pmx/PmxParser.cpp
+        src/tools/model/pmx/PmxModel.cpp
+        src/tools/model/vrm/GltfParser.cpp
+        src/tools/model/vrm/VrmImage.cpp
+        src/tools/model/vrm/VrmModel.cpp
+        src/tools/render/Renderer.cpp
+        src/tools/render/Camera.cpp
+        src/tools/render/RenderUtils.cpp
     )
-    target_include_directories(ppet_render_integration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_include_directories(ppet_render_integration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(ppet_render_integration PRIVATE ${PPET_GLEW_TARGET} ${PPET_GLFW_TARGET} ${OPENGL_LIBRARIES})
 endif()
 
@@ -818,10 +827,10 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/settings_panel_smoke.cpp)
     add_executable(ppet_settings_panel_smoke
         tools/settings_panel_smoke.cpp
         src/ui/SettingsPanel.cpp
-        src/core/I18n.cpp
-        src/core/Log.cpp
+        src/tools/core/I18n.cpp
+        src/tools/core/Log.cpp
     )
-    target_include_directories(ppet_settings_panel_smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_include_directories(ppet_settings_panel_smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(ppet_settings_panel_smoke PRIVATE Qt6::Widgets)
 endif()
 
@@ -831,10 +840,10 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/debug_panel_smoke.cpp)
     add_executable(ppet_debug_panel_smoke
         tools/debug_panel_smoke.cpp
         src/ui/DebugPanel.cpp
-        src/core/I18n.cpp
-        src/core/Log.cpp
+        src/tools/core/I18n.cpp
+        src/tools/core/Log.cpp
     )
-    target_include_directories(ppet_debug_panel_smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_include_directories(ppet_debug_panel_smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(ppet_debug_panel_smoke PRIVATE Qt6::Widgets)
 endif()
 
@@ -843,11 +852,36 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/settings_panel_screenshot.cpp)
     add_executable(ppet_settings_panel_screenshot
         tools/settings_panel_screenshot.cpp
         src/ui/SettingsPanel.cpp
-        src/core/I18n.cpp
-        src/core/Log.cpp
+        src/tools/core/I18n.cpp
+        src/tools/core/Log.cpp
     )
-    target_include_directories(ppet_settings_panel_screenshot PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_include_directories(ppet_settings_panel_screenshot PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(ppet_settings_panel_screenshot PRIVATE Qt6::Widgets)
+endif()
+
+# ---------------------------------------------------------------------------
+# 统一渲染验证工具（T1）
+#
+# 对一个模型走「加载 -> 渲染 N 帧 -> glReadPixels -> 截图 PNG -> JSON 报告」，
+# 支持 .vrm / .pmx / .zip（PMX 包）/ .model3.json / .moc3 / 目录。
+# Windows 真机验收脚本 tools/windows_verify.ps1 会对三类模型各跑一次并汇总。
+# ---------------------------------------------------------------------------
+add_executable(ppet_render_verify
+    tools/render_verify.cpp
+    src/tools/model/Model.cpp
+    src/tools/core/ModelPackage.cpp
+    src/tools/core/ZipArchive.cpp
+    src/tools/core/Log.cpp
+)
+target_link_libraries(ppet_render_verify PRIVATE
+    ppet_model
+    ppet_zlib
+    ${PPET_GLEW_TARGET}
+    ${PPET_GLFW_TARGET}
+    ${OPENGL_LIBRARIES})
+if(NOT MSVC)
+    set_source_files_properties(tools/render_verify.cpp
+                                PROPERTIES COMPILE_OPTIONS "-w")
 endif()
 
 # Live2D 渲染验证工具：仅真实 Cubism SDK 模式下构建（桩无法加载真实模型）。
@@ -881,10 +915,10 @@ target_link_libraries(ppet_pmx_test PRIVATE ppet_model)
 # ZIP 模型包导入测试：解压、定位模型、幂等性与非法输入。
 add_executable(ppet_zip_test
     tools/zip_test.cpp
-    src/core/FileIO.cpp
-    src/core/Log.cpp
-    src/core/ModelPackage.cpp
-    src/core/ZipArchive.cpp
+    src/tools/core/FileIO.cpp
+    src/tools/core/Log.cpp
+    src/tools/core/ModelPackage.cpp
+    src/tools/core/ZipArchive.cpp
 )
 target_link_libraries(ppet_zip_test PRIVATE ppet_zlib)
 
@@ -892,14 +926,14 @@ target_link_libraries(ppet_zip_test PRIVATE ppet_zlib)
 # 系统 ANSI 代码页破坏（Windows 上尤其关键）。
 add_executable(ppet_unicode_path_test
     tools/unicode_path_test.cpp
-    src/core/FileIO.cpp
-    src/core/Log.cpp
-    src/core/ModelPackage.cpp
-    src/core/ZipArchive.cpp
+    src/tools/core/FileIO.cpp
+    src/tools/core/Log.cpp
+    src/tools/core/ModelPackage.cpp
+    src/tools/core/ZipArchive.cpp
 )
 target_link_libraries(ppet_unicode_path_test PRIVATE ppet_zlib)
 
-add_executable(ppet_pmx_fuzz tools/pmx_fuzz.cpp src/model/pmx/PmxParser.cpp)
+add_executable(ppet_pmx_fuzz tools/pmx_fuzz.cpp src/tools/model/pmx/PmxParser.cpp)
 target_link_libraries(ppet_pmx_fuzz PRIVATE ppet_model)
 
 add_executable(ppet_pmx_dump tools/pmx_dump.cpp)
@@ -939,11 +973,32 @@ add_test(NAME vrm_unit
 # 结构化日志测试：时间精度、字段完整性、级别阈值、UTF-8、多线程原子写出。
 add_executable(ppet_log_test
     tools/log_test.cpp
-    src/core/Log.cpp
+    src/tools/core/Log.cpp
 )
 add_test(NAME log_unit
          COMMAND ppet_log_test
          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# 结构化模型加载错误：分类推断 / 明细 / 建议（纯头文件，无需链接模型层）。
+add_executable(ppet_model_error_test tools/model_error_test.cpp)
+add_test(NAME model_error_unit
+         COMMAND ppet_model_error_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# 模型加载失败弹窗冒烟测试（Qt 6 / offscreen）。
+add_executable(ppet_error_dialog_smoke
+    tools/error_dialog_smoke.cpp
+    src/ui/ErrorDialog.cpp
+    src/tools/core/I18n.cpp
+    src/tools/core/Log.cpp
+)
+target_link_libraries(ppet_error_dialog_smoke PRIVATE Qt6::Widgets)
+add_test(NAME error_dialog_smoke
+         COMMAND $<TARGET_FILE:ppet_error_dialog_smoke>
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(error_dialog_smoke PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    SKIP_RETURN_CODE 2)
 
 # ---------------------------------------------------------------------------
 # 文案翻译器（Compiler/i18n_gen）的单元测试
@@ -1050,9 +1105,9 @@ endif()
 # 测试覆盖：完整包 / 缺贴图诊断 / 贴图大小写不一致 / 贴图在子目录。
 add_executable(ppet_pmx_package_test
     tools/pmx_package_test.cpp
-    src/core/ModelPackage.cpp
-    src/core/ZipArchive.cpp
-    src/core/Log.cpp
+    src/tools/core/ModelPackage.cpp
+    src/tools/core/ZipArchive.cpp
+    src/tools/core/Log.cpp
 )
 target_link_libraries(ppet_pmx_package_test PRIVATE ppet_model ppet_zlib)
 
@@ -1081,21 +1136,37 @@ if(TARGET ppet_unicode_path_test)
              WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
 
+# 渲染验证工具自身也进 ctest：对仓库自带素材跑一次
+# 「加载 -> 渲染 -> glReadPixels -> 判定」，需要 xvfb 提供虚拟显示。
+# Linux 真机/Windows 上的完整三类模型验收见 tools/windows_verify.ps1。
+if(TARGET ppet_render_verify AND PPET_XVFB_RUN)
+    foreach(_rv IN ITEMS pmx vrm)
+        add_test(NAME render_verify_${_rv}
+                 COMMAND ${PPET_XVFB_RUN} -a $<TARGET_FILE:ppet_render_verify>
+                         --model ${CMAKE_CURRENT_SOURCE_DIR}/tools/testdata/test.${_rv}
+                         --shot ${CMAKE_CURRENT_BINARY_DIR}/verify_${_rv}.png
+                         --report ${CMAKE_CURRENT_BINARY_DIR}/verify_${_rv}.json
+                         --width 320 --height 400 --frames 10
+                 WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+        set_tests_properties(render_verify_${_rv} PROPERTIES SKIP_RETURN_CODE 2)
+    endforeach()
+endif()
+
 # ---------------------------------------------------------------------------
 # 文案翻译器的消费方登记
 #
-# src/core/I18n.cpp 会 include 生成出来的 core/I18nStrings.inl，
+# src/tools/core/I18n.cpp 会 include 生成出来的 src/tools/core/I18nStrings.inl，
 # 因此凡是编译了 I18n.cpp 的目标，都需要：
 #   1) 依赖 ppet_i18n_gen_run —— 保证 .inl 已经生成；
 #   2) 把生成目录加进头文件搜索路径。
 #
 # 这里统一扫描全部目标来登记，避免以后新增目标时漏掉（漏了就是
-# "fatal error: core/I18nStrings.inl: No such file or directory"）。
+# "fatal error: src/tools/core/I18nStrings.inl: No such file or directory"）。
 # ---------------------------------------------------------------------------
 get_property(_ppet_all_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
 foreach(_ppet_t IN LISTS _ppet_all_targets)
     get_target_property(_ppet_t_sources ${_ppet_t} SOURCES)
-    if(_ppet_t_sources AND "src/core/I18n.cpp" IN_LIST _ppet_t_sources)
+    if(_ppet_t_sources AND "src/tools/core/I18n.cpp" IN_LIST _ppet_t_sources)
         add_dependencies(${_ppet_t} ppet_i18n_gen_run)
         target_include_directories(${_ppet_t} PRIVATE ${PPET_I18N_GEN_DIR})
         message(STATUS "文案翻译器：目标 ${_ppet_t} 依赖生成的内嵌表")

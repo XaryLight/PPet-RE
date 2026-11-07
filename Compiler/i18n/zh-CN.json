@@ -62,5 +62,24 @@
   "debugAutoRefresh": "面板可见时每 200 ms 自动刷新；复制摘要可直接粘贴到 issue。",
   "debugMissingNone": "无缺失资源",
   "debugMissingHint": "PMX 本身不包含图形数据，请把 .pmx 与贴图目录一起打包成 .zip 再导入",
-  "debugGroupMissing": "缺失资源"
+  "debugGroupMissing": "缺失资源",
+
+  "debugTabBones": "骨架信息",
+  "debugTabImages": "图片渲染",
+  "debugModelId": "模型 ID",
+  "debugNoBones": "该模型没有骨骼信息",
+  "debugTextureGroup": "模型图片 / 贴图",
+  "debugRenderGroup": "当前渲染帧",
+  "debugNoPreview": "暂无可预览的图片",
+  "debugErrorGroup": "错误与警告（详细）",
+  "debugNoErrors": "无错误",
+
+  "errTitleFailed": "模型加载失败",
+  "errTitleWarning": "模型加载警告",
+  "errDetailGroup": "详细信息",
+  "errAdvice": "建议",
+  "errClose": "关闭",
+  "errLogHint": "日志：",
+  "errCopy": "复制详情",
+  "errCopied": "已复制"
 }

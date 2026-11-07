@@ -18,10 +18,10 @@
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 
-#include "core/Math.hpp"
-#include "model/Model.hpp"
-#include "platform/GlobalCursorTracker.hpp"
-#include "render/RenderUtils.hpp"
+#include <src/tools/core/Math.hpp>
+#include <src/tools/model/Model.hpp>
+#include <src/tools/platform/GlobalCursorTracker.hpp>
+#include <src/tools/render/RenderUtils.hpp>
 
 #include "stb_image_write.h"
 

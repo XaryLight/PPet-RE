@@ -7,7 +7,7 @@
 //
 // 注意：一旦 src/render/Renderer.cpp 落地（主协调者提供），本文件就不再参与
 // 编译（CMake 中按文件是否存在决定），避免重复定义。
-#include "render/Renderer.hpp"
+#include <src/tools/render/Renderer.hpp>
 
 #include <utility>
 

@@ -90,7 +90,7 @@ cmake -S . -B build -DCMAKE_PREFIX_PATH=<Qt6 安装路径>
 | --- | --- | --- |
 | `PPET_WITH_CUBISM` | `OFF` | 启用真实 Live2D Cubism SDK 后端 |
 | `PPET_WITH_CUBISM_STUB` | `OFF` | 用内置 Cubism Core 桩验证构建链路（不能加载真实模型） |
-| `PPET_CUBISM_AUTODETECT` | `ON` | 自动检测 `src/csdk/` 下的 SDK；**显式传 `PPET_WITH_CUBISM=ON/OFF` 时以显式值为准** |
+| `PPET_CUBISM_AUTODETECT` | `ON` | 自动检测 `api/live2d/csdk/` 下的 SDK；**显式传 `PPET_WITH_CUBISM=ON/OFF` 时以显式值为准** |
 | `PPET_CUBISM_ROOT` | 空 | 手动指定 Core 目录（可指向 Core 本身或其上层） |
 | `PPET_I18N_ZH` / `PPET_I18N_EN` | `Compiler/i18n/*.json` | 文案源文件，可改成 CSV |
 
@@ -101,13 +101,13 @@ cmake -S . -B build -DCMAKE_PREFIX_PATH=<Qt6 安装路径>
 Live2D Cubism SDK 为**专有许可软件，不可随本仓库分发**。若要支持 `.model3.json`，用的是 **Cubism SDK for Native** 的 **Core 层**：
 
 1. 从 <https://www.live2d.com/en/sdk/download/> 下载 **Cubism SDK for Native**（只需其中的 **Core** 目录）；
-2. 把 **Core 目录**放到 **`src/csdk/`**（或 `third_party/Cubism/`，或用 `-DPPET_CUBISM_ROOT=<目录>` 指定），最终结构应含：
-   - `src/csdk/Core/include/Live2DCubismCore.h`
-   - `src/csdk/Core/lib/linux/x86_64/libLive2DCubismCore.a`（Linux）
-   - `src/csdk/Core/lib/macos/libLive2DCubismCore.a`（macOS）
+2. 把 **Core 目录**放到 **`api/live2d/csdk/`**（或 `third_party/Cubism/`，或用 `-DPPET_CUBISM_ROOT=<目录>` 指定），最终结构应含：
+   - `api/live2d/csdk/Core/include/Live2DCubismCore.h`
+   - `api/live2d/csdk/Core/lib/linux/x86_64/libLive2DCubismCore.a`（Linux）
+   - `api/live2d/csdk/Core/lib/macos/libLive2DCubismCore.a`（macOS）
    - Windows（见下）：
-     - `src/csdk/Core/dll/windows/x86_64/Live2DCubismCore.dll` + `Live2DCubismCore.lib`（**推荐，MinGW 必用**）
-     - `src/csdk/Core/lib/windows/x86_64/<版本号>/Live2DCubismCore_MD.lib`（MSVC 可用）
+     - `api/live2d/csdk/Core/dll/windows/x86_64/Live2DCubismCore.dll` + `Live2DCubismCore.lib`（**推荐，MinGW 必用**）
+     - `api/live2d/csdk/Core/lib/windows/x86_64/<版本号>/Live2DCubismCore_MD.lib`（MSVC 可用）
 3. 重新配置并构建：
 
    ```bash
@@ -115,7 +115,7 @@ Live2D Cubism SDK 为**专有许可软件，不可随本仓库分发**。若要�
    cmake --build build
    ```
 
-**CMake 会自动检测 `src/csdk/` 下的 SDK 并启用 Live2D 后端**，无需手工传 `-DPPET_WITH_CUBISM=ON`。
+**CMake 会自动检测 `api/live2d/csdk/` 下的 SDK 并启用 Live2D 后端**，无需手工传 `-DPPET_WITH_CUBISM=ON`。
 配置阶段会打印 `检测到 Cubism SDK（...），自动启用 Live2D 后端` 以示确认。
 
 > **显式传 `-DPPET_WITH_CUBISM=OFF` 时自动检测会被跳过**，后端保持关闭。
@@ -126,7 +126,7 @@ Live2D Cubism SDK 为**专有许可软件，不可随本仓库分发**。若要�
 > `option()` 与 `-D` 在 `CMakeCache.txt` 里长得一模一样（都是 `FOO:BOOL=OFF`），
 > 旧版本无法区分，只能用 `FORCE` 覆盖，导致用户明明写了 OFF 仍被改回 ON。
 >
-> `src/csdk/` 与 `third_party/Cubism/` 已加入 `.gitignore`，专有 SDK 不会被提交。
+> `api/live2d/csdk/` 与 `third_party/Cubism/` 已加入 `.gitignore`，专有 SDK 不会被提交。
 
 不下载 SDK 也能验证构建与 UI 链路：`-DPPET_WITH_CUBISM_STUB=ON` 会启用内置的
 Cubism Core **桩**（同名同签名的 `csm*` 函数），可编译出带 Live2D 入口的程序，但不能加载真实模型。
@@ -203,3 +203,24 @@ Qt 6 的依赖仍需用 `windeployqt` 部署到 `bin/` 目录。
 | `CMake Error: 未找到 Live2DCubismCore.h` | SDK 目录结构不对 | 确认 `<SDK>/include/Live2DCubismCore.h` 存在，或用 `-DPPET_CUBISM_ROOT=<Core 目录>` 显式指定 |
 | `CXX_STANDARD is set to invalid value '23'` | CMake 版本过老（< 3.20） | 升级 CMake 到 3.20+（CLion 自带版本通常已满足） |
 | 当前编译器不支持 C++23 | 编译器版本过低 | 升级到表「环境要求」列出的最低版本 |
+
+---
+
+## 渲染验证与真机验收
+
+构建会额外产出 `ppet_render_verify`（统一渲染验证 CLI）：
+
+```bash
+./build/ppet_render_verify --model <.vrm|.pmx|.zip|.model3.json|.moc3> \
+    --shot shot.png --report report.json --frames 30
+```
+
+它创建隐藏 GL 上下文，加载模型、渲染若干帧、用 `glReadPixels` 统计非透明覆盖率与 GL 错误，
+输出 PNG 截图和 JSON 报告（`result` = `PASS` / `PASS_WITH_WARNINGS` / `FAIL`）。
+`ctest` 里的 `render_verify_pmx` / `render_verify_vrm` 会对仓库自带素材自动跑一次（需 xvfb）。
+
+**Windows 11 + N 卡 + llvm-mingw + Qt6 + Live2D SDK 5.x 的完整验收**（全编译 → 试运行 →
+三类模型加载 → 渲染截图）见 **[Windows 真机验收](windows-test.md)** 与
+[`tools/windows_verify.ps1`](../tools/windows_verify.ps1)。
+
+项目目录与头文件索引约定见 [架构文档](architecture.md)。

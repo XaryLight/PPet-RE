@@ -1,7 +1,8 @@
 // PPet - C++ 移植版
 // 模型调试/诊断面板实现。详见 DebugPanel.hpp。
-#include "ui/DebugPanel.hpp"
+#include <src/ui/DebugPanel.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <sstream>
@@ -17,8 +18,14 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QIcon>
 #include <QLabel>
+#include <QListWidget>
+#include <QListWidgetItem>
+#include <QPixmap>
 #include <QPushButton>
+#include <QScrollArea>
+#include <QSize>
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QTableWidgetItem>
@@ -93,8 +100,10 @@ QTextEdit* MakeReportView(QWidget* parent) {
 enum TabIndex {
     kTabOverview = 0,
     kTabParams = 1,
-    kTabParts = 2,
-    kTabResources = 3,
+    kTabBones = 2,
+    kTabImages = 3,
+    kTabParts = 4,
+    kTabResources = 5,
 };
 
 }  // namespace
@@ -105,12 +114,21 @@ struct DebugPanel::Impl {
 
     QTextEdit* overviewView = nullptr;
     QTextEdit* paramsView = nullptr;
+    QTableWidget* bonesTable = nullptr;
+    QLabel* bonesSummary = nullptr;
+    QListWidget* textureList = nullptr;
+    QLabel* renderPreviewLabel = nullptr;
+    QLabel* renderPreviewNote = nullptr;
     QTableWidget* partsTable = nullptr;
     QTextEdit* propertiesView = nullptr;
     QTableWidget* missingTable = nullptr;
+    QTextEdit* errorsView = nullptr;
+    QLabel* groupMissingLabel = nullptr;
+    QLabel* groupTexturesLabel = nullptr;
+    QLabel* groupRenderLabel = nullptr;
+    QLabel* groupErrorsLabel = nullptr;
     QLabel* logLabel = nullptr;
     QLabel* hintLabel = nullptr;
-    QLabel* groupMissingLabel = nullptr;
     QPushButton* copyBtn = nullptr;
 
     // 节流与增量重建
@@ -151,7 +169,67 @@ void DebugPanel::BuildUi() {
         impl_->tabs->addTab(page, ToQString(s.debugTabParams));
     }
 
-    // --- Tab 3：模型部分（子网格 / 材质）---
+    // --- Tab 3：骨架信息（逐根骨骼：ID / 名称 / 父级 / 层级 / 属性）---
+    {
+        auto* page = new QWidget(dialog);
+        auto* layout = new QVBoxLayout(page);
+        impl_->bonesSummary = new QLabel(page);
+        impl_->bonesSummary->setObjectName("ppetBonesSummary");
+        impl_->bonesSummary->setWordWrap(true);
+        layout->addWidget(impl_->bonesSummary);
+
+        impl_->bonesTable = new QTableWidget(page);
+        impl_->bonesTable->setObjectName("ppetBonesTable");
+        impl_->bonesTable->setColumnCount(5);
+        impl_->bonesTable->setHorizontalHeaderLabels(
+            {"ID", "名称 Name", "父骨骼 Parent", "层级 Depth", "属性 Flags"});
+        impl_->bonesTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        impl_->bonesTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+        impl_->bonesTable->setAlternatingRowColors(true);
+        impl_->bonesTable->verticalHeader()->setVisible(false);
+        impl_->bonesTable->horizontalHeader()->setStretchLastSection(true);
+        layout->addWidget(impl_->bonesTable);
+        impl_->tabs->addTab(page, ToQString(s.debugTabBones));
+    }
+
+    // --- Tab 4：图片渲染（贴图缩略图 + 当前渲染帧）---
+    {
+        auto* page = new QWidget(dialog);
+        auto* layout = new QVBoxLayout(page);
+
+        impl_->groupTexturesLabel = new QLabel(ToQString(s.debugTextureGroup), page);
+        layout->addWidget(impl_->groupTexturesLabel);
+        impl_->textureList = new QListWidget(page);
+        impl_->textureList->setObjectName("ppetTextureList");
+        impl_->textureList->setViewMode(QListWidget::IconMode);
+        impl_->textureList->setIconSize(QSize(96, 96));
+        impl_->textureList->setResizeMode(QListWidget::Adjust);
+        impl_->textureList->setSpacing(8);
+        impl_->textureList->setMovement(QListWidget::Static);
+        impl_->textureList->setMinimumHeight(130);
+        impl_->textureList->setMaximumHeight(200);
+        layout->addWidget(impl_->textureList);
+
+        impl_->groupRenderLabel = new QLabel(ToQString(s.debugRenderGroup), page);
+        layout->addWidget(impl_->groupRenderLabel);
+        auto* scroll = new QScrollArea(page);
+        scroll->setWidgetResizable(true);
+        impl_->renderPreviewLabel = new QLabel(scroll);
+        impl_->renderPreviewLabel->setObjectName("ppetRenderPreview");
+        impl_->renderPreviewLabel->setAlignment(Qt::AlignCenter);
+        impl_->renderPreviewLabel->setMinimumHeight(180);
+        impl_->renderPreviewLabel->setStyleSheet("background:#202020;color:#aaa;");
+        scroll->setWidget(impl_->renderPreviewLabel);
+        layout->addWidget(scroll, 1);
+        impl_->renderPreviewNote = new QLabel(page);
+        impl_->renderPreviewNote->setWordWrap(true);
+        impl_->renderPreviewNote->setStyleSheet("color:#777;");
+        layout->addWidget(impl_->renderPreviewNote);
+
+        impl_->tabs->addTab(page, ToQString(s.debugTabImages));
+    }
+
+    // --- Tab 5：模型部分（子网格 / 材质）---
     {
         auto* page = new QWidget(dialog);
         auto* layout = new QVBoxLayout(page);
@@ -168,7 +246,7 @@ void DebugPanel::BuildUi() {
         impl_->tabs->addTab(page, ToQString(s.debugTabParts));
     }
 
-    // --- Tab 4：性质与资源 ---
+    // --- Tab 6：性质与资源（含详细错误）---
     {
         auto* page = new QWidget(dialog);
         auto* layout = new QVBoxLayout(page);
@@ -176,6 +254,13 @@ void DebugPanel::BuildUi() {
         impl_->propertiesView = MakeReportView(page);
         impl_->propertiesView->setMaximumHeight(230);
         layout->addWidget(impl_->propertiesView);
+
+        impl_->groupErrorsLabel = new QLabel(ToQString(s.debugErrorGroup), page);
+        layout->addWidget(impl_->groupErrorsLabel);
+        impl_->errorsView = MakeReportView(page);
+        impl_->errorsView->setObjectName("ppetErrorDetailsView");
+        impl_->errorsView->setMaximumHeight(150);
+        layout->addWidget(impl_->errorsView);
 
         impl_->groupMissingLabel = new QLabel(ToQString(s.debugGroupMissing), page);
         layout->addWidget(impl_->groupMissingLabel);
@@ -209,6 +294,7 @@ void DebugPanel::BuildUi() {
             const RuntimeStats& r = impl_->lastRuntime;
             os << "PPet 模型诊断摘要\n"
                << "================\n"
+               << "ID: " << m.modelId << "\n"
                << "模型: " << m.displayName << "\n"
                << "类型: " << ModelTypeName(m.type) << " / " << m.formatVersion << "\n"
                << "路径: " << m.path << "\n"
@@ -283,12 +369,21 @@ void DebugPanel::Shutdown() {
     impl_->tabs = nullptr;
     impl_->overviewView = nullptr;
     impl_->paramsView = nullptr;
+    impl_->bonesTable = nullptr;
+    impl_->bonesSummary = nullptr;
+    impl_->textureList = nullptr;
+    impl_->renderPreviewLabel = nullptr;
+    impl_->renderPreviewNote = nullptr;
     impl_->partsTable = nullptr;
     impl_->propertiesView = nullptr;
     impl_->missingTable = nullptr;
+    impl_->errorsView = nullptr;
     impl_->logLabel = nullptr;
     impl_->hintLabel = nullptr;
     impl_->groupMissingLabel = nullptr;
+    impl_->groupTexturesLabel = nullptr;
+    impl_->groupRenderLabel = nullptr;
+    impl_->groupErrorsLabel = nullptr;
     impl_->copyBtn = nullptr;
     impl_->lastModelKey.clear();
     impl_->everUpdated = false;
@@ -339,12 +434,23 @@ void DebugPanel::Refresh() {
                                                                  : s.debugTitle));
     impl_->tabs->setTabText(kTabOverview, ToQString(s.debugTabOverview));
     impl_->tabs->setTabText(kTabParams, ToQString(s.debugTabParams));
+    impl_->tabs->setTabText(kTabBones, ToQString(s.debugTabBones));
+    impl_->tabs->setTabText(kTabImages, ToQString(s.debugTabImages));
     impl_->tabs->setTabText(kTabParts, ToQString(s.debugTabParts));
     impl_->tabs->setTabText(kTabResources, ToQString(s.debugTabResources));
     if (impl_->copyBtn) impl_->copyBtn->setText(ToQString(s.debugCopy));
     if (impl_->hintLabel) impl_->hintLabel->setText(ToQString(s.debugAutoRefresh));
     if (impl_->groupMissingLabel) {
         impl_->groupMissingLabel->setText(ToQString(s.debugGroupMissing));
+    }
+    if (impl_->groupTexturesLabel) {
+        impl_->groupTexturesLabel->setText(ToQString(s.debugTextureGroup));
+    }
+    if (impl_->groupRenderLabel) {
+        impl_->groupRenderLabel->setText(ToQString(s.debugRenderGroup));
+    }
+    if (impl_->groupErrorsLabel) {
+        impl_->groupErrorsLabel->setText(ToQString(s.debugErrorGroup));
     }
     impl_->everUpdated = false;  // 强制下一帧重刷（含文案）
 }
@@ -391,6 +497,8 @@ void DebugPanel::Update(const ModelDebugInfo& model, const RuntimeStats& runtime
     // --- Tab 1：概览与渲染 ---
     {
         std::vector<std::pair<std::string, std::string>> rows;
+        rows.emplace_back(s.debugModelId.empty() ? "模型 ID" : s.debugModelId,
+                          model.modelId.empty() ? "-" : model.modelId);
         rows.emplace_back("模型名 Name", model.displayName.empty() ? "-" : model.displayName);
         rows.emplace_back("类型 Type", std::string(ModelTypeName(model.type)) +
                                           (model.formatVersion.empty()
@@ -458,12 +566,96 @@ void DebugPanel::Update(const ModelDebugInfo& model, const RuntimeStats& runtime
         impl_->paramsView->setHtml(ToQString(HtmlRows(rows)));
     }
 
-    // --- Tab 3/4 的列表只在模型变化时重建，避免每 200 ms 闪烁 ---
-    const std::string key = model.path + "|" + std::to_string(model.parts.size()) + "|" +
-                            std::to_string(model.materialCount) + "|" +
-                            std::to_string(model.missingResources.size());
+    // --- Tab 4：当前渲染帧（每次刷新都更新，体现实时画面）---
+    // 必须放在下面的「模型变化才重建」短路之前，否则截图永远停在第一帧。
+    {
+        QLabel* label = impl_->renderPreviewLabel;
+        if (label) {
+            QPixmap shot;
+            if (!runtime.renderPreviewPath.empty()) {
+                shot.load(QString::fromStdString(runtime.renderPreviewPath));
+            }
+            if (!shot.isNull()) {
+                label->setPixmap(
+                    shot.scaled(360, 300, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+            } else {
+                label->setText(ToQString(s.debugNoPreview));
+            }
+        }
+        if (impl_->renderPreviewNote) {
+            impl_->renderPreviewNote->setText(ToQString(
+                runtime.renderPreviewNote.empty() ? s.debugAutoRefresh
+                                                 : runtime.renderPreviewNote));
+        }
+    }
+
+    // --- Tab 3/5/6 的列表只在模型变化时重建，避免每 200 ms 闪烁 ---
+    const std::string key =
+        model.path + "|" + model.modelId + "|" + std::to_string(model.parts.size()) + "|" +
+        std::to_string(model.materialCount) + "|" + std::to_string(model.bones.size()) + "|" +
+        std::to_string(model.textures.size()) + "|" +
+        std::to_string(model.missingResources.size()) + "|" +
+        std::to_string(model.errorDetails.size());
     if (key == impl_->lastModelKey) return;
     impl_->lastModelKey = key;
+
+    // --- Tab 3：骨架信息 ---
+    {
+        QTableWidget* table = impl_->bonesTable;
+        table->setRowCount(static_cast<int>(model.bones.size()));
+        int maxDepth = 0;
+        for (std::size_t i = 0; i < model.bones.size(); ++i) {
+            const ModelDebugInfo::BoneInfo& b = model.bones[i];
+            maxDepth = std::max(maxDepth, b.depth);
+            table->setItem(static_cast<int>(i), 0,
+                           new QTableWidgetItem(QString::number(b.index)));
+            table->setItem(static_cast<int>(i), 1,
+                           new QTableWidgetItem(ToQString(b.name)));
+            table->setItem(static_cast<int>(i), 2,
+                           new QTableWidgetItem(
+                               b.parentIndex >= 0 ? QString::number(b.parentIndex) : "—"));
+            table->setItem(static_cast<int>(i), 3,
+                           new QTableWidgetItem(QString::number(b.depth)));
+            table->setItem(static_cast<int>(i), 4,
+                           new QTableWidgetItem(ToQString(b.flags)));
+        }
+        if (model.bones.empty()) {
+            table->setRowCount(1);
+            table->setItem(0, 0, new QTableWidgetItem(ToQString(s.debugNoBones)));
+        }
+        table->resizeColumnsToContents();
+        if (impl_->bonesSummary) {
+            impl_->bonesSummary->setText(ToQString(
+                "骨骼总数 " + std::to_string(model.bones.size()) +
+                " / 最大层级 " + std::to_string(maxDepth) +
+                "（父级为 — 表示根骨骼；层级由父链长度推算）"));
+        }
+    }
+
+    // --- Tab 4：模型图片 / 贴图缩略图 ---
+    {
+        QListWidget* list = impl_->textureList;
+        list->clear();
+        for (std::size_t i = 0; i < model.textures.size(); ++i) {
+            const ModelDebugInfo::TextureInfo& t = model.textures[i];
+            auto* item = new QListWidgetItem(
+                ToQString(t.name.empty() ? ("#" + std::to_string(i)) : t.name));
+            QPixmap pm;
+            if (!t.path.empty()) pm.load(QString::fromStdString(t.path));
+            if (!pm.isNull()) {
+                item->setIcon(QIcon(pm.scaled(QSize(96, 96), Qt::KeepAspectRatio,
+                                              Qt::SmoothTransformation)));
+            }
+            item->setToolTip(ToQString(
+                (t.path.empty() ? t.name : t.path) + "\n" +
+                (t.loaded ? "已加载" : "未加载") +
+                (t.note.empty() ? "" : " / " + t.note)));
+            list->addItem(item);
+        }
+        if (model.textures.empty()) {
+            list->addItem(new QListWidgetItem(ToQString(s.debugNoPreview)));
+        }
+    }
 
     {
         QTableWidget* table = impl_->partsTable;
@@ -516,6 +708,35 @@ void DebugPanel::Update(const ModelDebugInfo& model, const RuntimeStats& runtime
             table->setToolTip(ToQString(s.debugMissingHint));
         }
         table->resizeColumnsToContents();
+    }
+
+    // --- Tab 6：错误与警告（详细）---
+    {
+        if (impl_->errorsView) {
+            const bool clean = model.errorDetails.empty() && model.errorCategory.empty() &&
+                               model.missingResources.empty() && model.glError == 0;
+            if (clean) {
+                impl_->errorsView->setPlainText(ToQString(s.debugNoErrors));
+            } else {
+                std::ostringstream os;
+                if (!model.errorCategory.empty()) {
+                    os << "分类：" << model.errorCategory << "\n";
+                }
+                os << "结论：" << model.renderStatus << "\n";
+                if (model.glError != 0) {
+                    os << "GL 错误码：" << model.glError << "\n";
+                }
+                for (std::size_t i = 0; i < model.errorDetails.size(); ++i) {
+                    os << "  [" << (i + 1) << "/" << model.errorDetails.size() << "] "
+                       << model.errorDetails[i] << "\n";
+                }
+                for (std::size_t i = 0; i < model.missingResources.size(); ++i) {
+                    os << "  [缺失资源 " << (i + 1) << "] "
+                       << model.missingResources[i] << "\n";
+                }
+                impl_->errorsView->setPlainText(ToQString(os.str()));
+            }
+        }
     }
 
     // --- 日志位置 ---

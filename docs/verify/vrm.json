@@ -1,0 +1,76 @@
+{
+  "conclusion": "模型已加载并渲染出可见像素，GL 无错误",
+  "model": {
+    "bone_sample": [
+      {
+        "depth": 0,
+        "index": 0,
+        "name": "Root",
+        "parent": -1
+      },
+      {
+        "depth": 1,
+        "index": 1,
+        "name": "hips",
+        "parent": 0
+      },
+      {
+        "depth": 1,
+        "index": 2,
+        "name": "hairRoot",
+        "parent": 0
+      },
+      {
+        "depth": 2,
+        "index": 3,
+        "name": "spine",
+        "parent": 1
+      },
+      {
+        "depth": 2,
+        "index": 4,
+        "name": "hairTip",
+        "parent": 2
+      }
+    ],
+    "bones": 8,
+    "display_name": "PPet 测试模型",
+    "format_version": "VRM 1.0",
+    "from_zip": false,
+    "materials": 2,
+    "missing_resources": [],
+    "resolved_path": "tools/testdata/test.vrm",
+    "source_archive": "",
+    "textures_loaded": 0,
+    "textures_referenced": 1,
+    "triangles": 3,
+    "type": "VRM",
+    "vertices": 7
+  },
+  "platform": {
+    "compiler": "GCC 13.3.0",
+    "gl_renderer": "llvmpipe (LLVM 20.1.2, 256 bits)",
+    "gl_vendor": "Mesa",
+    "gl_version": "4.5 (Core Profile) Mesa 25.2.8-0ubuntu0.24.04.4",
+    "os": "Linux"
+  },
+  "render": {
+    "coverage_percent": 29.29,
+    "frames": 30,
+    "gl_error": 0,
+    "gpu_ready": true,
+    "height": 640,
+    "model_status": "正常渲染",
+    "non_black_pixels": 89733,
+    "non_transparent_pixels": 89979,
+    "rendering_ok": true,
+    "screenshot": "docs/verify/vrm.png",
+    "screenshot_written": true,
+    "width": 480
+  },
+  "requested_model": "tools/testdata/test.vrm",
+  "result": "PASS",
+  "tool": "ppet_render_verify",
+  "version": 1,
+  "warnings": []
+}

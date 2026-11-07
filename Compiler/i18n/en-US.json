@@ -62,5 +62,24 @@
   "debugAutoRefresh": "Auto-refresh every 200 ms while visible; paste the copied report into an issue.",
   "debugMissingNone": "No missing resources",
   "debugMissingHint": "PMX files do not embed textures; package the .pmx together with its textures into a .zip",
-  "debugGroupMissing": "Missing resources"
+  "debugGroupMissing": "Missing resources",
+
+  "debugTabBones": "Skeleton",
+  "debugTabImages": "Images & Render",
+  "debugModelId": "Model ID",
+  "debugNoBones": "No skeleton data available",
+  "debugTextureGroup": "Textures",
+  "debugRenderGroup": "Current Render Frame",
+  "debugNoPreview": "No preview available",
+  "debugErrorGroup": "Errors & Warnings (Detailed)",
+  "debugNoErrors": "No errors",
+
+  "errTitleFailed": "Failed to Load Model",
+  "errTitleWarning": "Model Loaded with Warnings",
+  "errDetailGroup": "Details",
+  "errAdvice": "Advice",
+  "errClose": "Close",
+  "errLogHint": "Log: ",
+  "errCopy": "Copy Details",
+  "errCopied": "Copied"
 }

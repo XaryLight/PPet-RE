@@ -25,8 +25,8 @@
 #include <memory>
 #include <string>
 
-#include "core/Config.hpp"
-#include "core/I18n.hpp"
+#include <src/tools/core/Config.hpp>
+#include <src/tools/core/I18n.hpp>
 
 class QWidget;
 

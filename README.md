@@ -18,9 +18,11 @@
 | **透明置顶窗口** | 真·透明叠加层，支持点击穿透、窗口拖动、缩放 |
 | **系统托盘** | 置顶 / 忽略点击 / 切换模型 / 语言 / 开机启动 / 调试 / 模型诊断 / 关于 / 退出 |
 | **Qt 6 设置面板** | 模型管理、渲染缩放、全屏追踪参数、语言切换 |
-| **模型诊断面板** | 实时显示模型的部分、参数、性质与「是否正常渲染」，见 [调试与日志](docs/debugging.md) |
+| **模型诊断面板** | 6 个页签：概览与渲染、**模型 ID**、参数、**骨架信息**、**图片渲染（贴图缩略图 + 实时渲染帧）**、模型部分、性质与详细错误，见 [调试与日志](docs/debugging.md) |
+| **失败原因弹窗** | 添加模型失败时用 Qt 弹窗显示分类（未找到有效骨架 / 模型图片缺失 / 解析错误 / moc3 错误…）、逐条明细与建议 |
 | **结构化日志** | 毫秒级时间戳、源码位置、线程 ID、6 级分级，写到 `./last.log` |
 | **中英双语** | 界面文案由 [`Compiler/`](Compiler/README.md) 从 JSON 生成，改文案不必动 C++ |
+| **渲染验证工具** | `ppet_render_verify` 对 VRM / PMX(zip) / moc3 出图并输出 PNG + JSON 报告，见 [Windows 验收](docs/windows-test.md) |
 | **健壮的解析器** | 所有模型读取都有边界检查与索引越界防护，配套 ASAN 模糊测试 |
 
 ---
@@ -49,7 +51,7 @@ cmake --build build -j
 | --- | --- | --- | --- |
 | VRM 1.0 / 0.x | `.vrm` | 默认支持 | GLB/glTF2.0，含 MToon、humanoid、expressions、springBone |
 | PMX 2.0 / 2.1 | `.pmx` | 默认支持 | 二进制，含骨骼蒙皮、材质、变形、显示帧 |
-| Live2D | `.model3.json` | 可选 | 需自备 Cubism SDK for Native Core，放入 `src/csdk/` 自动启用 |
+| Live2D | `.model3.json` | 可选 | 需自备 Cubism SDK for Native Core，放入 `api/live2d/csdk/` 自动启用 |
 | 模型压缩包 | **`.zip`** | 默认支持 | 自动解压并定位包内模型，保留贴图目录结构 |
 
 > **PMX 请优先用 `.zip` 导入**：`.pmx` 文件只记录贴图的文件名，本身不含任何图形数据。
@@ -81,11 +83,14 @@ cmake --build build -j
 
 | 文档 | 内容 |
 | --- | --- |
+| [docs/architecture.md](docs/architecture.md) | **项目结构、根索引约定、`src/ui` / `src/tools` / `api` 分工**、旧新路径速查 |
 | [docs/build.md](docs/build.md) | 依赖、C++23 要求、编译步骤、Live2D 后端、Windows 工具链与故障排查 |
+| [docs/windows-test.md](docs/windows-test.md) | **Windows 11 + N 卡 + llvm-mingw + Qt6 + SDK 5.x 真机验收手册** |
 | [docs/models.md](docs/models.md) | 模型格式、**PMX 的 `.zip` 包规范**、压缩包导入流程、中文路径 |
 | [docs/usage.md](docs/usage.md) | 运行、托盘菜单、设置面板、全屏追踪、配置字段 |
-| [docs/debugging.md](docs/debugging.md) | 模型诊断面板、结构化日志格式与级别、常见问题排查 |
-| [docs/development.md](docs/development.md) | 项目结构、架构分层、测试清单、文案翻译器、C++23 使用点 |
+| [docs/debugging.md](docs/debugging.md) | 模型诊断面板、失败弹窗、结构化日志格式与级别、常见问题排查 |
+| [docs/development.md](docs/development.md) | 架构分层、测试清单、文案翻译器、C++23 使用点 |
+| [api/README.md](api/README.md) | Live2D SDK 集成层与第三方库引用头说明 |
 | [Compiler/README.md](Compiler/README.md) | 文案翻译器（JSON/CSV → C++ 内嵌表）的用法 |
 
 ---
@@ -94,23 +99,28 @@ cmake --build build -j
 
 ```
 PPet-RE/
-├── CMakeLists.txt            # 构建配置（模型层 / 平台层 / 主程序 / 测试）
-├── src/
-│   ├── core/                 # 配置、国际化、结构化日志、文件读写、ZIP 解压、模型包
-│   ├── model/                # 模型抽象 + PMX / VRM / Live2D 后端 + 统一蒙皮网格
-│   ├── render/               # toon 着色渲染管线、相机、工具
-│   ├── platform/             # 窗口、托盘、全局光标追踪、开机启动、文件对话框
-│   ├── ui/                   # Qt 6 设置面板与模型诊断面板
-│   ├── app/                  # 主循环与应用编排
-│   └── main.cpp              # 程序入口
-├── src/csdk/                 # Cubism SDK Core（可选，需自备，已 gitignore）
+├── CMakeLists.txt            # 构建配置（C++23 / Qt6 / Cubism / 测试）
+├── src/                      # 产品源码：只有 ui 与 tools 两个文件夹
+│   ├── ui/                   # ★ 所有 GUI 实现：SettingsPanel / DebugPanel / ErrorDialog
+│   └── tools/                # ★ 所有非 GUI 实现
+│       ├── main.cpp          # 程序入口
+│       ├── app/              # 主循环、托盘菜单、应用编排
+│       ├── core/             # 配置、i18n、结构化日志、文件 IO、ZIP、模型包
+│       ├── model/            # IModel 抽象、蒙皮网格、PMX / VRM 后端、错误模型
+│       ├── platform/         # 窗口、托盘、光标追踪、开机启动、文件对话框
+│       └── render/           # 渲染管线、相机、渲染帧抓图
+├── api/                      # ★ 外部 SDK / 第三方库引用层
+│   ├── live2d/               # Cubism SDK 集成（model3.json / moc3 / 动作）
+│   │   └── csdk/             # 自备的 Cubism Core（已 gitignore）
+│   └── vendor/               # nlohmann/json、stb、zlib 统一引用头
 ├── Compiler/                 # 文案翻译器：JSON/CSV → C++ 内嵌表
-├── docs/                     # 分类文档
-├── third_party/              # nlohmann/json、stb、zlib（源码随仓库）
-└── tools/                    # 测试素材生成脚本与测试程序
+├── docs/                     # 分类文档（含架构说明与 Windows 验收手册）
+├── third_party/              # 第三方源码（nlohmann / stb / zlib）
+└── tools/                    # 测试程序、素材生成、渲染验证 CLI、Windows 验收脚本
 ```
 
-详见 [开发文档](docs/development.md)。
+头文件统一使用**从根目录起算的尖括号索引**（`#include <src/ui/DebugPanel.hpp>`），
+详见 **[项目结构与头文件索引](docs/architecture.md)**。
 
 ---
 

@@ -15,10 +15,10 @@
 #include <string>
 #include <vector>
 
-#include "core/FileIO.hpp"
-#include "core/Log.hpp"
-#include "core/ModelPackage.hpp"
-#include "core/ZipArchive.hpp"
+#include <src/tools/core/FileIO.hpp>
+#include <src/tools/core/Log.hpp>
+#include <src/tools/core/ModelPackage.hpp>
+#include <src/tools/core/ZipArchive.hpp>
 
 namespace fs = std::filesystem;
 

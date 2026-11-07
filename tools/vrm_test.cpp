@@ -19,9 +19,9 @@
 #include <string>
 #include <vector>
 
-#include "model/SkinnedMesh.hpp"
-#include "model/vrm/GltfParser.hpp"
-#include "model/vrm/VrmModel.hpp"
+#include <src/tools/model/SkinnedMesh.hpp>
+#include <src/tools/model/vrm/GltfParser.hpp>
+#include <src/tools/model/vrm/VrmModel.hpp>
 
 using namespace ppet;
 using namespace ppet::vrm;

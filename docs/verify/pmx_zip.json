@@ -1,0 +1,76 @@
+{
+  "conclusion": "模型已加载并渲染出可见像素，GL 无错误",
+  "model": {
+    "bone_sample": [
+      {
+        "depth": 0,
+        "index": 0,
+        "name": "センター",
+        "parent": -1
+      },
+      {
+        "depth": 1,
+        "index": 1,
+        "name": "首",
+        "parent": 0
+      },
+      {
+        "depth": 2,
+        "index": 2,
+        "name": "上半身",
+        "parent": 1
+      },
+      {
+        "depth": 3,
+        "index": 3,
+        "name": "頭",
+        "parent": 2
+      },
+      {
+        "depth": 4,
+        "index": 4,
+        "name": "左目",
+        "parent": 3
+      }
+    ],
+    "bones": 6,
+    "display_name": "テストモデル",
+    "format_version": "PMX 2.0",
+    "from_zip": true,
+    "materials": 2,
+    "missing_resources": [],
+    "resolved_path": "/tmp/ppet_verify_cache/pmx_full_5d201a67/model/test.pmx",
+    "source_archive": "/tmp/verify_models/pmx_zip/pmx_full.zip",
+    "textures_loaded": 0,
+    "textures_referenced": 1,
+    "triangles": 12,
+    "type": "PMX",
+    "vertices": 24
+  },
+  "platform": {
+    "compiler": "GCC 13.3.0",
+    "gl_renderer": "llvmpipe (LLVM 20.1.2, 256 bits)",
+    "gl_vendor": "Mesa",
+    "gl_version": "4.5 (Core Profile) Mesa 25.2.8-0ubuntu0.24.04.4",
+    "os": "Linux"
+  },
+  "render": {
+    "coverage_percent": 63.446,
+    "frames": 30,
+    "gl_error": 0,
+    "gpu_ready": true,
+    "height": 640,
+    "model_status": "正常渲染",
+    "non_black_pixels": 194852,
+    "non_transparent_pixels": 194906,
+    "rendering_ok": true,
+    "screenshot": "docs/verify/pmx_zip.png",
+    "screenshot_written": true,
+    "width": 480
+  },
+  "requested_model": "/tmp/verify_models/pmx_zip/pmx_full.zip",
+  "result": "PASS",
+  "tool": "ppet_render_verify",
+  "version": 1,
+  "warnings": []
+}

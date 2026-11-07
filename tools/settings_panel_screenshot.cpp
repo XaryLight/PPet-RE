@@ -12,9 +12,9 @@
 #include <QPixmap>
 #include <QWidget>
 
-#include "core/Config.hpp"
-#include "core/I18n.hpp"
-#include "ui/SettingsPanel.hpp"
+#include <src/tools/core/Config.hpp>
+#include <src/tools/core/I18n.hpp>
+#include <src/ui/SettingsPanel.hpp>
 
 int main(int argc, char** argv) {
     if (argc < 2) {

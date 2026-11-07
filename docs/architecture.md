@@ -1,0 +1,108 @@
+# 项目结构与头文件索引
+
+本页说明 T2 结构优化后的目录约定。**所有路径都从 workspace 根目录起算**。
+
+```
+PPet/
+├── CMakeLists.txt          # 构建配置（C++23 / Qt6 / Cubism / 测试）
+├── README.md               # 概览 + 快速开始 + 文档索引
+├── src/                    # 产品源码（只有 ui / tools 两个文件夹）
+│   ├── ui/                 # ★ 所有 GUI 实现（Qt 6 Widgets）
+│   │   ├── SettingsPanel.*     # 设置窗口
+│   │   ├── DebugPanel.*        # 模型诊断面板（6 个页签）
+│   │   └── ErrorDialog.*       # 模型加载失败/警告弹窗
+│   └── tools/              # ★ 所有非 GUI 实现（按职责分子目录）
+│       ├── main.cpp            # 程序入口（QApplication + App）
+│       ├── app/                # 应用主控制器、托盘菜单、主循环
+│       ├── core/               # 配置、日志、i18n、文件 IO、ZIP 解析、模型包
+│       ├── model/              # IModel 抽象、SkinnedMesh、PMX / VRM 后端、错误模型
+│       ├── platform/           # 窗口、托盘、开机启动、光标追踪、文件对话框
+│       └── render/             # Renderer / Camera / RenderUtils / FrameCapture
+├── api/                    # ★ 外部 SDK / 第三方库的引用与适配层
+│   ├── live2d/             # Cubism SDK 集成：model3.json / moc3 / 动作 / Live2DModel
+│   │   └── csdk/           # 用户自备的 Cubism Core（gitignore，不入库）
+│   └── vendor/             # nlohmann/json、stb、zlib 的统一引用头
+├── third_party/            # 第三方源码（nlohmann / stb / zlib），随仓库分发
+├── tools/                  # 测试程序、素材生成脚本、Windows 验收脚本
+│   ├── test_stubs/         # Cubism / Renderer 测试桩
+│   ├── testdata/           # 测试用 .pmx / .vrm / .zip 素材
+│   ├── *_test.cpp / *_smoke.cpp
+│   ├── render_verify.cpp   # 统一渲染验证 CLI（截图 + JSON 报告）
+│   └── windows_verify.ps1  # Windows 11 真机一键验收
+├── Compiler/               # 文案翻译器（JSON/CSV -> C++ constexpr 表，见 Compiler/README.md）
+└── docs/                   # 文档（本页所在）
+```
+
+> **两个 `tools` 不要混淆**
+> - `src/tools/` —— 运行时**产品实现**（非 GUI 部分），会被编进 `ppet.exe`；
+> - `tools/` —— 根目录的**测试与工具**（测试程序、素材生成、验收脚本），不进产品。
+>
+> 这是按「`src/` 下只允许 `ui` 与 `tools` 两个文件夹」的要求落地的结果：
+> GUI 与逻辑分置 `ui` / `tools`，而验证工具留在根级，避免把 30 多个测试塞进产品源码树。
+
+## 头文件根索引
+
+全项目统一使用**从 workspace 根目录起算的尖括号索引**：
+
+```cpp
+#include <src/ui/DebugPanel.hpp>
+#include <src/tools/core/Log.hpp>
+#include <src/tools/model/Model.hpp>
+#include <api/live2d/Live2DManifest.hpp>
+#include <api/vendor/Json.hpp>
+```
+
+CMake 因此把 `CMAKE_CURRENT_SOURCE_DIR` 加入 include 路径（而不是 `src/`）：
+
+```cmake
+include_directories(${CMAKE_CURRENT_SOURCE_DIR})
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/third_party)
+```
+
+**例外**：第三方/系统头保留库名前缀，不套 `src/` ——
+`<nlohmann/json.hpp>`、`<stb/stb_image.h>`、`<GL/glew.h>`、`<GLFW/glfw3.h>`、`<QApplication>`。
+它们不是本工程源码；`api/vendor/` 提供的是可选的统一引用头，见 [`api/README.md`](../api/README.md)。
+
+生成物也遵循同一约定：文案翻译器输出到
+`<build>/generated/src/tools/core/I18nStrings.inl`，代码里写
+`#include <src/tools/core/I18nStrings.inl>`，把生成目录加进 include 路径即可。
+
+## 为什么这样分
+
+| 目标 | 做法 |
+| --- | --- |
+| GUI 与逻辑隔离 | `src/ui/` 只放 Qt 控件；`src/tools/` 不依赖 Qt（便于无头测试） |
+| 专有 SDK 隔离 | Cubism SDK 的适配全在 `api/live2d/`，SDK 本体放 `api/live2d/csdk/` 并被 gitignore |
+| 换第三方库不扩散 | `api/vendor/` 是单一引用点 |
+| 路径不随文件位置漂移 | 根索引：移动文件时 include 只改前缀，不需要 `../` 相对路径 |
+| 交叉编译友好 | `#include <src/...>` 只依赖一个 `-I <root>`，不受 `CMAKE_FIND_ROOT_PATH` 影响 |
+
+## 构建目标层次
+
+```
+ppet_zlib      (third_party/zlib)                 ─┐
+ppet_model     (core/FileIO + model/* + render/*  │
+                + api/live2d/* 若启用 SDK)         ├─> ppet (src/tools/main.cpp)
+ppet_platform  (platform/* + GLFW/Qt/X11/Win32)   │      + src/ui/*
+ppet_i18n_gen  (Compiler/，构建期生成 .inl)  ──────┘
+```
+
+`ppet_i18n_gen` 是宿主工具：凡编译了 `src/tools/core/I18n.cpp` 的目标，
+CMake 末尾会**自动扫描并登记**依赖与生成目录，新增目标不会漏。
+
+## 旧路径 → 新路径速查
+
+| 旧（重构前） | 新 |
+| --- | --- |
+| `src/core/X` | `src/tools/core/X` |
+| `src/model/X` | `src/tools/model/X` |
+| `src/model/live2d/X` | `api/live2d/X` |
+| `src/platform/X` | `src/tools/platform/X` |
+| `src/render/X` | `src/tools/render/X` |
+| `src/app/X` | `src/tools/app/X` |
+| `src/main.cpp` | `src/tools/main.cpp` |
+| `src/ui/X` | `src/ui/X`（不变） |
+| `src/csdk/Core` | `api/live2d/csdk/Core`（旧位置仍兼容） |
+| `#include "core/Log.hpp"` | `#include <src/tools/core/Log.hpp>` |
+
+迁移用 `git mv` 完成，文件历史保留；CMake 里所有源文件路径与 `EXISTS` 判断已同步更新。

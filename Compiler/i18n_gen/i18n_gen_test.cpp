@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-#include "i18n_gen.hpp"
+#include <Compiler/i18n_gen/i18n_gen.hpp>
 
 namespace fs = std::filesystem;
 
