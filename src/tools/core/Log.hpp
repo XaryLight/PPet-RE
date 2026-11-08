@@ -17,9 +17,11 @@
 //   - std::source_location 自动带出「文件:行号 函数」，不用手写 __FILE__/__LINE__；
 //   - 线程 ID 短哈希：Linux 托盘线程与主线程交错输出时能立刻区分；
 //   - 模块标签自动从源码文件名推导，也可显式用 PPET_LOG_TAG 指定；
-//   - 消息里的换行/制表符被转义，保证「一行一条」，grep / 日志采集不会串行；
+//   - 【多行消息】一条日志里含 \n 时按行拆开写：首行正常，续行消息前加 "> "，
+//     所有行共享同一时间戳与完整前缀，既保留可读性又仍可按级别/模块 grep。
+//     可用 Logger::SetMultiLine(false) 回到「换行转义成 \n 字面量」的严格单行模式；
 //   - 6 级分级 + 文件/控制台双阈值，环境变量 PPET_LOG_LEVEL 动态调整；
-//   - std::mutex 保护整行原子写出，多线程不会把两行搅在一起。
+//   - std::mutex 保护整条日志（含所有续行）原子写出，多线程不会把两行搅在一起。
 #pragma once
 
 #include <cstdarg>
@@ -69,6 +71,12 @@ public:
     static void SetConsoleLevel(LogLevel level);
     static LogLevel ConsoleLevel();
 
+    /// 多行消息开关（默认开启）。
+    /// 开启：消息里的 \n 拆成多行，续行以 "> " 开头，每行都带完整前缀；
+    /// 关闭：内部换行转义成 "\\n"，严格「一行一条」，兼容老的日志采集脚本。
+    static void SetMultiLine(bool enabled);
+    static bool MultiLine();
+
     /// 核心写出接口（由宏调用，自动带源码位置）。
     static void Write(LogLevel level, const std::source_location& loc,
                       const char* tag, const char* fmt, ...);
@@ -80,9 +88,15 @@ public:
     /// 当前日志文件路径（初始化后可用于错误提示）。
     static const std::string& Path();
 
-    /// 仅格式化成一行（不落盘、不打印），供单元测试与调试面板使用。
+    /// 仅格式化成**一行**（不落盘、不打印），内部换行/制表符一律转义。
+    /// 供单元测试与调试面板使用；与运行时开关无关，便于稳定断言。
     static std::string Format(LogLevel level, const std::source_location& loc,
                               const char* tag, std::string_view message);
+
+    /// 按运行时多行规则格式化（不落盘、不打印），可能返回多行文本。
+    /// 供单元测试预览真实写出效果。
+    static std::string FormatMultiLine(LogLevel level, const std::source_location& loc,
+                                       const char* tag, std::string_view message);
 };
 
 /// 变参包装：供宏调用（tag 为 nullptr 时自动从文件名推导）。
@@ -96,8 +110,14 @@ void Log_WriteV(LogLevel level, const std::source_location& loc,
 // ---------------------------------------------------------------------------
 // 日志宏
 //
-// 兼容说明：老代码里大量写成 PPET_LOG("...\n", args)。新实现会自动去掉尾部换行、
-// 把消息内部的换行转义成 "\\n"，因此这些调用不需要改动，输出仍是严格单行。
+// 兼容说明：老代码里大量写成 PPET_LOG("...\n", args)。尾部换行始终被去掉；
+// 内部换行默认按「多行日志」展开（续行以 "> " 开头），需要严格单行时调用
+// Logger::SetMultiLine(false)。多行写法示例：
+//   PPET_LOG_TAG("MODEL", "加载结果 as:\n%s\n%s", a, b);
+// 输出形如：
+//   <前缀> 加载结果 as:
+//   <前缀> > 第一行
+//   <前缀> > 第二行
 // ---------------------------------------------------------------------------
 #define PPET_LOG_TRACE(...) \
     ::ppet::Log_Write(::ppet::LogLevel::Trace, ::std::source_location::current(), nullptr, __VA_ARGS__)

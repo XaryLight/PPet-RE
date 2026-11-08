@@ -39,6 +39,16 @@ public:
     /// 把气泡放到屏幕坐标 (x, y) 附近（通常取桌宠窗口上方的位置）。
     void MoveTo(int x, int y);
 
+    /// 依据渲染窗口大小调整气泡最大宽度（同时等比调整字号）。
+    /// 桌宠窗口变宽后，固定 280px 的气泡会显得又小又挤；调用方每帧传入
+    /// 按窗口宽度算出的值即可，内部会短路相同值避免重复设置样式表。
+    void SetMaxWidth(int pixels);
+    int MaxWidth() const { return maxWidth_; }
+
+    /// 气泡窗口当前实际宽高（用于把它摆在渲染窗口正上方、水平居中）。
+    int Width() const;
+    int Height() const;
+
     /// 显隐开关（托盘「台词气泡」菜单项控制）。
     void SetVisible(bool visible);
     bool IsVisible() const;
@@ -52,6 +62,7 @@ public:
 private:
     QWidget* window_ = nullptr;
     QLabel* label_ = nullptr;
+    int maxWidth_ = 280;
 };
 
 }  // namespace ppet

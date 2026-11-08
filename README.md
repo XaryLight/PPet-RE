@@ -24,14 +24,19 @@
 | **待机随机表情** | 三种模型格式通用：换一个表情 → 停留 2~5 秒 → 自动回中性，间隔随机 8~20 秒；托盘可开关，也可立即触发 |
 | **语言功能** | 台词库（按状态分档）/ 台词气泡 / 音节包络口型同步，三种模型格式共用，见 [表情管理与语言功能](docs/expressions.md) |
 | **失败原因弹窗** | 添加模型失败时用 Qt 弹窗显示分类（未找到有效骨架 / 模型图片缺失 / 解析错误 / moc3 错误…）、逐条明细与建议 |
-| **结构化日志** | 毫秒级时间戳、源码位置、线程 ID、6 级分级，写到 `./last.log` |
+| **结构化日志** | 毫秒级时间戳、源码位置、线程 ID、6 级分级、**多行续行**，写到 `./last.log`；正常成功的控制台指令不再落盘 |
 | **中英双语** | 界面文案由 [`Compiler/`](Compiler/README.md) 从 JSON 生成，改文案不必动 C++ |
 | **渲染验证工具** | `ppet_render_verify` 对 VRM / PMX(zip) / moc3 出图并输出 PNG + JSON 报告，见 [Windows 验收](docs/windows-test.md) |
 | **健壮的解析器** | 所有模型读取都有边界检查与索引越界防护，配套 ASAN 模糊测试 |
 | **Live2D 物理** | 完整实现 Cubism 官方物理算法（Verlet 摆锤链 + 固定步长 + 输入/输出插值），头发与裙摆随头部转动甩动，见 [Live2D 分层运行时](docs/live2d-stage.md) |
 | **原生 C++ Live2D 渲染** | 参考纯 C++ / 无 Chromium 的 Live2D 项目设计重写：官方 `MotionQueueManager` 风格动作队列（交叉淡入淡出）+ 渲染计划「决策-执行分离」（三套 `glBlendFuncSeparate` / premultiplied 颜色），见 [Live2D 分层运行时 · 纯 C++ 渲染设计](docs/live2d-stage.md#native-render) |
-| **交互式控制台** | `--console` 开启后可输入指令：模型增删选列、模型分析调试信息、重载模型/渲染资源、动作播放停止、表情切换、气泡台词，见 [交互式控制台](docs/usage.md#交互式控制台) |
-| **功能截图对比验证** | `ppet_feature_verify` 对同一模型分别渲染「中性 / 表情 / 口型 / 动作」四态，按像素差异 + 参数快照判定，PMX 与 Live2D 实跑证据见 [docs/verify/feature/](docs/verify/feature/) |
+| **交互式控制台** | `--console` 开启后可输入指令：模型增删选列改名、模型分析调试信息、重载模型/渲染资源、动作播放停止、表情切换、气泡台词，见 [交互式控制台](docs/usage.md#交互式控制台) |
+| **功能截图对比验证** | `ppet_feature_verify` 对同一模型分别渲染「中性 / 表情 / 口型 / 动作」四态，按像素差异 + 参数快照判定，支持 `--auto-size` 按模型实际帧宽高比出图，PMX 与 Live2D 实跑证据见 [docs/verify/feature/](docs/verify/feature/) |
+| **模型命名与改名** | 导入后默认取文件名（去后缀），重名自动加 ` (2)` 序号；GUI 可选弹窗命名，控制台 `rename` 改名。全程纯字节处理、不碰 `std::filesystem`，含非法字节 / 中文路径也不抛异常 |
+| **动作平滑过渡** | PMX / VRM 骨骼动作切换做交叉淡入淡出（旧动作淡出 + 新动作淡入，按骨骼名合并），一次性动作播完自动淡出回待机；默认手臂自然下垂，动作播放时按权重让位 |
+| **窗口 / 气泡自适应** | 渲染窗口按模型实际内容宽高比调整（PMX/VRM 用网格包围盒，Live2D 用画布尺寸），避免横向模型被截断；台词气泡最大宽度与字号跟随渲染窗口 |
+| **全局光标 OS 级查询** | 点击穿透、关闭全屏追踪、光标不在桌宠窗口时，仍由系统 API 直接查询全局屏幕坐标，眼睛 / 头部追踪不中断 |
+| **长期运行稳定性** | 帧计数饱和递增不回绕、`dt` 对 NaN / Inf / 超大值钳制、待机相位用 `double` 计算、控制台队列有界 4096 条并计数丢弃 |
 
 ---
 
@@ -116,7 +121,7 @@ cmake --build build -j
 | [docs/expressions.md](docs/expressions.md) | **表情管理（预设 / 别名 / 过渡 / 叠加层）、语言功能（台词 / 气泡 / 口型）、待机随机表情** |
 | [docs/live2d-stage.md](docs/live2d-stage.md) | **Live2D 分层运行时：参数栈 / 姿态总线 / 三通道视线 / 待机 / 热区 / 口型 / 物理 / 动作分组 / 纯 C++ 渲染设计（参考项目）** |
 | [docs/usage.md](docs/usage.md) | 运行、托盘菜单、**交互式控制台指令手册**、**PMX / VRM 待机动画与骨骼动作**、设置面板、全屏追踪、配置字段 |
-| [docs/debugging.md](docs/debugging.md) | 模型诊断面板、失败弹窗、结构化日志格式与级别、常见问题排查 |
+| [docs/debugging.md](docs/debugging.md) | 模型诊断面板、失败弹窗、结构化日志（含多行续行）格式与级别、常见问题排查 |
 | [docs/development.md](docs/development.md) | 架构分层、测试清单、**三配置构建矩阵**、文案翻译器、C++23 使用点 |
 | [api/README.md](api/README.md) | Live2D SDK 集成层与第三方库引用头说明 |
 | [Compiler/README.md](Compiler/README.md) | 文案翻译器（JSON/CSV → C++ 内嵌表）的用法 |
@@ -134,7 +139,7 @@ PPet-RE/
 │       ├── main.cpp          # 程序入口
 │       ├── app/              # 主循环、托盘菜单、交互式控制台（ConsoleCommand / Console / AppConsole）、应用编排
 │       ├── agent/            # 语言系统：台词库 / 气泡状态机 / 口型
-│       ├── core/             # 配置、i18n、结构化日志、文件 IO、ZIP、模型包
+│       ├── core/             # 配置、i18n、结构化日志（多行）、ModelNaming / Stability、文件 IO、ZIP、模型包
 │       ├── model/            # IModel 抽象、蒙皮网格、表情调度器、程序化待机 / 骨骼动作、PMX / VRM 后端、错误模型
 │       ├── platform/         # 窗口、托盘、光标追踪、开机启动、文件对话框
 │       └── render/           # 渲染管线、相机、渲染帧抓图
@@ -160,7 +165,7 @@ cd build
 ctest --output-on-failure
 ```
 
-覆盖 PMX/VRM 解析、ZIP 模型包（含 PMX 贴图容错）、中文路径、渲染冒烟、Qt 界面、结构化日志、文案翻译器、表情调度、语言系统、Live2D 分层运行时、**官方动作队列 / 渲染计划 / 控制台指令解析**等，共 **35 项**（三配置构建矩阵下全部通过）。完整清单见 [开发文档 · 测试](docs/development.md#测试)。
+覆盖 PMX/VRM 解析、ZIP 模型包（含 PMX 贴图容错）、中文路径、渲染冒烟、Qt 界面、结构化日志（含多行）、文案翻译器、表情调度、语言系统、Live2D 分层运行时、**官方动作队列 / 渲染计划 / 控制台指令解析**、**模型命名 / 长期稳定性 / 控制台队列**等，共 **38 项**（三配置构建矩阵下全部通过）。完整清单见 [开发文档 · 测试](docs/development.md#测试)。
 
 ---
 

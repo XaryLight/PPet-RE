@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <mutex>
 #include <thread>
 
 #if defined(_WIN32)
@@ -277,6 +278,43 @@ void GlobalCursorTracker::Update() {
             lastPosition_ = state_.position;
         }
     }
+}
+
+bool GlobalCursorTracker::QueryCursor(Vec2& out) {
+#if defined(_WIN32)
+    POINT pt{};
+    if (!GetCursorPos(&pt)) return false;
+    // GetCursorPos 返回的是整个虚拟桌面坐标（多显示器时可为负），与钩子一致。
+    out = Vec2(static_cast<float>(pt.x), static_cast<float>(pt.y));
+    return true;
+#elif defined(__APPLE__)
+    NSScreen* screen = [NSScreen mainScreen];
+    if (!screen) return false;
+    const NSRect frame = [screen frame];
+    const NSPoint p = [NSEvent mouseLocation];
+    out = Vec2(static_cast<float>(p.x - frame.origin.x),
+               static_cast<float>(frame.origin.y - p.y));
+    return true;
+#else
+    // X11：进程级缓存一个 Display，避免每帧 XOpenDisplay 的握手开销。
+    // XQueryPointer 对 root 窗口查询的是全局坐标，即使指针在别的窗口、
+    // 或本窗口开启了点击穿透也照样有效。
+    static std::mutex xMutex;
+    static Display* cachedDisplay = nullptr;
+    std::lock_guard<std::mutex> lock(xMutex);
+    if (!cachedDisplay) cachedDisplay = XOpenDisplay(nullptr);
+    if (!cachedDisplay) return false;
+    Window root = DefaultRootWindow(cachedDisplay);
+    Window rootRet = 0, childRet = 0;
+    int rootX = 0, rootY = 0, winX = 0, winY = 0;
+    unsigned int mask = 0;
+    if (!XQueryPointer(cachedDisplay, root, &rootRet, &childRet, &rootX, &rootY, &winX,
+                       &winY, &mask)) {
+        return false;
+    }
+    out = Vec2(static_cast<float>(rootX), static_cast<float>(rootY));
+    return true;
+#endif
 }
 
 Vec2 GlobalCursorTracker::NormalizeAround(const Vec2& cursor, const Vec2& center,

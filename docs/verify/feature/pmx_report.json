@@ -1,17 +1,21 @@
 {
+  "auto_size": true,
+  "auto_size_aspect": 1.0,
+  "auto_size_width": 520,
+  "auto_size_width_before": 400,
   "comparisons": {
     "action": {
       "baseline": "neutral",
       "change_bbox": [
         0,
-        73,
-        397,
-        465
+        17,
+        517,
+        519
       ],
-      "changed_percent": 20.13,
-      "changed_pixels": 29669,
-      "comparable_pixels": 147373,
-      "mean_abs_diff": 8.41,
+      "changed_percent": 22.29,
+      "changed_pixels": 55374,
+      "comparable_pixels": 248464,
+      "mean_abs_diff": 11.225,
       "param_changed_count": 0,
       "param_samples": [],
       "param_total_delta": 0.0,
@@ -21,14 +25,14 @@
       "baseline": "neutral",
       "change_bbox": [
         0,
-        73,
-        397,
-        465
+        17,
+        517,
+        519
       ],
-      "changed_percent": 19.88,
-      "changed_pixels": 29424,
-      "comparable_pixels": 147975,
-      "mean_abs_diff": 6.541,
+      "changed_percent": 19.68,
+      "changed_pixels": 49087,
+      "comparable_pixels": 249423,
+      "mean_abs_diff": 8.318,
       "param_changed_count": 0,
       "param_samples": [],
       "param_total_delta": 0.0,
@@ -38,14 +42,14 @@
       "baseline": "neutral",
       "change_bbox": [
         0,
-        73,
-        397,
-        465
+        17,
+        517,
+        519
       ],
-      "changed_percent": 48.7,
-      "changed_pixels": 72061,
-      "comparable_pixels": 147974,
-      "mean_abs_diff": 9.603,
+      "changed_percent": 48.65,
+      "changed_pixels": 121359,
+      "comparable_pixels": 249441,
+      "mean_abs_diff": 12.294,
       "param_changed_count": 0,
       "param_samples": [],
       "param_total_delta": 0.0,
@@ -97,5 +101,5 @@
     }
   ],
   "tool": "ppet_feature_verify",
-  "width": 400
+  "width": 520
 }

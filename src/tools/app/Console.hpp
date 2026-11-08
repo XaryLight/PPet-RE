@@ -63,13 +63,22 @@ public:
     /// 开着交互式控制台的，不能用「线程还活着」来判断模式。
     bool Interactive() const { return interactive_; }
 
+    /// 【长期运行】被队列上限丢弃的命令条数。
+    /// 后台 stdin 线程可能比主循环消费得快（脚本灌入 / 卡帧），若队列无界增长，
+    /// 跑几天就会吃掉大量内存。超过 kMaxPending 时丢弃新行并在此计数。
+    std::size_t DroppedLines() const;
+
     /// 打印一行到 stdout（与日志 stderr 分离）。
     static void Print(const std::string& text);
 
 private:
     struct State {
+        /// 待执行命令队列上限。
+        static constexpr std::size_t kMaxPending = 4096;
         std::mutex mutex;
         std::deque<std::string> pending;
+        /// 由 mutex 保护（与 pending 同一临界区）。
+        std::size_t dropped = 0;
         std::atomic<bool> running{false};
         std::atomic<bool> stop{false};
     };

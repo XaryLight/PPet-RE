@@ -1,17 +1,21 @@
 {
+  "auto_size": true,
+  "auto_size_aspect": 0.8722946643829346,
+  "auto_size_width": 453,
+  "auto_size_width_before": 400,
   "comparisons": {
     "action": {
       "baseline": "neutral",
       "change_bbox": [
-        61,
-        118,
-        325,
-        387
+        69,
+        122,
+        369,
+        405
       ],
-      "changed_percent": 21.89,
-      "changed_pixels": 15579,
-      "comparable_pixels": 71183,
-      "mean_abs_diff": 2.469,
+      "changed_percent": 21.97,
+      "changed_pixels": 19972,
+      "comparable_pixels": 90925,
+      "mean_abs_diff": 2.834,
       "param_changed_count": 123,
       "param_samples": [
         "wuli: 0.000 -> -30.000",
@@ -29,15 +33,15 @@
     "expression": {
       "baseline": "neutral",
       "change_bbox": [
-        87,
-        186,
-        298,
-        323
+        99,
+        188,
+        340,
+        332
       ],
-      "changed_percent": 0.36,
-      "changed_pixels": 259,
-      "comparable_pixels": 70976,
-      "mean_abs_diff": 0.046,
+      "changed_percent": 0.4,
+      "changed_pixels": 363,
+      "comparable_pixels": 90663,
+      "mean_abs_diff": 0.053,
       "param_changed_count": 9,
       "param_samples": [
         "ParamEyeLSmile: 0.000 -> 1.000",
@@ -55,15 +59,15 @@
     "lipsync": {
       "baseline": "neutral",
       "change_bbox": [
-        87,
-        186,
-        298,
-        323
+        99,
+        188,
+        340,
+        332
       ],
-      "changed_percent": 0.33,
-      "changed_pixels": 231,
-      "comparable_pixels": 70976,
-      "mean_abs_diff": 0.041,
+      "changed_percent": 0.38,
+      "changed_pixels": 343,
+      "comparable_pixels": 90663,
+      "mean_abs_diff": 0.047,
       "param_changed_count": 6,
       "param_samples": [
         "ParamMouthOpenY: 0.019 -> 0.940",
@@ -130,5 +134,5 @@
     }
   ],
   "tool": "ppet_feature_verify",
-  "width": 400
+  "width": 453
 }

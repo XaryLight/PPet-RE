@@ -32,8 +32,27 @@ struct AppConfig {
     /// 模型列表。
     std::vector<std::string> modelList;
 
+    /// 模型显示名（与 modelList 一一对应）。
+    /// 空项表示「用文件名（去后缀）」；重名由 ModelNaming 自动加序号。
+    /// 旧配置没有这个字段时 Load() 会按路径补齐，向后兼容。
+    std::vector<std::string> modelNames;
+
     /// 渲染缩放（1.0 为原始大小）。
     float renderScale = 1.0f;
+
+    /// 加载模型后按「模型实际帧宽高比」自动调整渲染窗口尺寸。
+    /// 横向模型（宽 > 高）在固定的竖窗口里会被左右截断，开启后窗口自动变宽。
+    bool autoFitWindow = true;
+
+    /// 手臂自然下垂修正（度）。PMX 的 A-pose / VRM 的 T-pose 默认把手臂平举着，
+    /// 桌宠看起来「总抬着手」。0 = 由后端按模型类型自动选择（PMX 18° / VRM 55°），
+    /// 正数 = 强制使用指定角度，负数 = 关闭修正。
+    float armRestDropDeg = 0.0f;
+
+    /// 通过 GUI 导入模型后，是否弹出输入框让用户指定显示名。
+    /// 不填/取消则使用默认名（文件名去后缀，重名自动加序号）。
+    /// 脚本模式（--command）下自动跳过，避免阻塞无人值守运行。
+    bool askModelNameOnImport = true;
 
     /// 窗口位置与尺寸，用于恢复上次摆放。
     int windowX = 100;

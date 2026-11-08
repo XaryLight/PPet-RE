@@ -12,10 +12,17 @@
 
 #include <GLFW/glfw3.h>
 
+#include <QApplication>
+#include <QInputDialog>
+#include <QLineEdit>
+#include <QString>
+
 #include <src/tools/core/Math.hpp>
 #include <src/tools/core/FileIO.hpp>
 #include <src/tools/core/Log.hpp>
 #include <src/tools/core/ModelPackage.hpp>
+#include <src/tools/core/ModelNaming.hpp>
+#include <src/tools/core/Stability.hpp>
 #include <src/tools/render/FrameCapture.hpp>
 #include <src/ui/ErrorDialog.hpp>
 #include <src/tools/platform/AutoStart.hpp>
@@ -248,15 +255,49 @@ bool App::Initialize(std::string& error) {
         if (!LoadModel(path, err, true)) {
             PPET_LOG_ERR("%s: %s\n", strings_.importFailed.c_str(),
                          err.ToString().c_str());
-        } else {
-            SaveConfig();
+            return;
         }
+
+        auto& cfg = configStore_.config();
+        // 【添加模型后可以改名】GUI 导入时可选弹窗指定名字，预填默认名
+        // （文件名去后缀）。取消/留空就用默认名，重名自动标注序号。
+        // 脚本模式（--command / --console）不弹窗，避免阻塞无人值守运行。
+        if (cfg.askModelNameOnImport && consoleScript_.empty() && !consoleForce_ &&
+            QApplication::instance() != nullptr) {
+            const QString defaultName =
+                QString::fromStdString(model_naming::FileStem(path));
+            bool accepted = false;
+            const QString chosen = QInputDialog::getText(
+                nullptr, QString::fromUtf8("模型名称"),
+                QString::fromUtf8("给新模型起个名字（留空则使用默认名）："),
+                QLineEdit::Normal, defaultName, &accepted);
+            if (accepted && !chosen.isEmpty()) {
+                cfg.modelNames = model_naming::ResolveNames(cfg.modelList, cfg.modelNames);
+                for (std::size_t i = 0; i < cfg.modelList.size(); ++i) {
+                    if (cfg.modelList[i] != cfg.modelPath) continue;
+                    std::vector<std::string> others;
+                    for (std::size_t j = 0; j < cfg.modelNames.size(); ++j) {
+                        if (j != i) others.push_back(cfg.modelNames[j]);
+                    }
+                    cfg.modelNames[i] =
+                        model_naming::UniqueName(chosen.toStdString(), others);
+                    break;
+                }
+            }
+        }
+        SaveConfig();
+        RebuildTrayMenu();
     };
     settingsPanel_.onRemoveModel = [this](int index) {
-        auto& list = configStore_.config().modelList;
-        if (index >= 0 && index < static_cast<int>(list.size())) {
-            list.erase(list.begin() + index);
+        auto& cfg = configStore_.config();
+        if (index >= 0 && index < static_cast<int>(cfg.modelList.size())) {
+            cfg.modelList.erase(cfg.modelList.begin() + index);
+            // 名字列表必须同步删除，否则后续模型会显示成别人的名字。
+            if (index < static_cast<int>(cfg.modelNames.size())) {
+                cfg.modelNames.erase(cfg.modelNames.begin() + index);
+            }
             SaveConfig();
+            RebuildTrayMenu();
         }
     };
     settingsPanel_.onSelectModel = [this](int index) {
@@ -270,10 +311,12 @@ bool App::Initialize(std::string& error) {
         }
     };
     settingsPanel_.onClearSettings = [this]() {
-        // 保留当前模型，其余配置恢复默认。
-        const std::string keepModel = configStore_.config().modelPath;
+        // 保留当前模型与模型列表/名字，其余配置恢复默认。
+        const AppConfig previous = configStore_.config();
         configStore_.config() = AppConfig();
-        configStore_.config().modelPath = keepModel;
+        configStore_.config().modelPath = previous.modelPath;
+        configStore_.config().modelList = previous.modelList;
+        configStore_.config().modelNames = previous.modelNames;
         currentLanguage_ = configStore_.config().language;
         strings_ = GetStrings(currentLanguage_);
         settingsPanel_.Refresh();
@@ -403,10 +446,17 @@ void App::TickDialogue(float dt) {
         if (!text.empty()) {
             const Vec2 size = window_.Size();
             const Vec2 pos = window_.Position();
-            // 定位在桌宠窗口上方居中；by 取窗口顶边再上移一个气泡高度。
-            const int bubbleW = 220;
+            // 【气泡随渲染窗口缩放】窗口变宽后，固定 280px 的气泡会显得又小又挤。
+            // 最大宽度按窗口宽度按比例给（并留出 15% 余量），字号同步放大；
+            // 位置用气泡实际宽高居中、贴在窗口顶边上方，并钳制在虚拟桌面内。
+            const int bubbleMaxW =
+                static_cast<int>(std::clamp(size.x * 1.15f, 160.0f, 720.0f));
+            bubble_->SetMaxWidth(bubbleMaxW);
+            const int bubbleW = bubble_->Width();
+            const int bubbleH = bubble_->Height();
             const int bx = static_cast<int>(pos.x + size.x * 0.5f - bubbleW * 0.5f);
-            const int by = static_cast<int>(pos.y) - 46;
+            const IntRect desk = DesktopRect();
+            const int by = std::max(desk.y + 4, static_cast<int>(pos.y) - bubbleH - 8);
             bubble_->MoveTo(bx, by);
         }
     }
@@ -571,16 +621,57 @@ bool App::LoadModel(const std::string& path, ModelLoadError& out, bool notifyUse
     }
 
     model_ = model;
+    auto& cfg = configStore_.config();
+    model_->SetArmRestDrop(cfg.armRestDropDeg);
+
+    // 【渲染窗口按实际帧宽高比自适应】
+    // 3D 后端用包围盒 X/Y，Live2D 用 Cubism 画布尺寸。横向模型（宽 > 高）
+    // 在固定的竖窗口里会被左右截断，或被迫整体缩小到看不清；按内容宽高比
+    // 调整窗口后，模型既完整又占满画面。
+    if (cfg.autoFitWindow) {
+        const float aspect = model_->PreferredFrameAspect();
+        if (aspect > 0.05f && aspect < 20.0f) {
+            const Vec2 before = window_.Size();
+            const IntRect desk = DesktopRect();
+            const int maxW = std::max(160, desk.width - 24);
+            const int maxH = std::max(200, desk.height - 24);
+            int newH = std::clamp(static_cast<int>(before.y), 200, std::min(2000, maxH));
+            int newW = std::clamp(static_cast<int>(static_cast<float>(newH) * aspect * 1.08f),
+                                  160, maxW);
+            // 宽度被桌面限制时等比压低高度，保持宽高比不失真。
+            if (static_cast<float>(newW) / static_cast<float>(newH) < aspect) {
+                newH = std::max(160, static_cast<int>(static_cast<float>(newW) / aspect));
+            }
+            const int dw = newW > static_cast<int>(before.x)
+                               ? newW - static_cast<int>(before.x)
+                               : static_cast<int>(before.x) - newW;
+            const int dh = newH > static_cast<int>(before.y)
+                               ? newH - static_cast<int>(before.y)
+                               : static_cast<int>(before.y) - newH;
+            if (dw > 8 || dh > 8) {
+                window_.SetSize(newW, newH);
+                const Vec2 after = window_.Size();
+                cfg.windowWidth = static_cast<int>(after.x);
+                cfg.windowHeight = static_cast<int>(after.y);
+                ClampWindowToDesktop();
+                PPET_LOG_TAG("WINDOW", "按模型帧宽高比 %.2f 调整渲染窗口：%dx%d -> %dx%d",
+                             static_cast<double>(aspect), static_cast<int>(before.x),
+                             static_cast<int>(before.y), cfg.windowWidth, cfg.windowHeight);
+            }
+        }
+    }
+
     const Vec2 size = window_.Size();
     model_->OnResize(static_cast<int>(size.x), static_cast<int>(size.y));
 
-    auto& cfg = configStore_.config();
     // 保存「实际加载的模型文件」路径：zip 导入时这是解压后的模型文件，
     // 这样下次启动能直接加载，而不必再走一次解压。
     cfg.modelPath = cleanPath;
     if (std::find(cfg.modelList.begin(), cfg.modelList.end(), cleanPath) ==
         cfg.modelList.end()) {
         cfg.modelList.push_back(cleanPath);
+        // 名字列表留一个空位：Save() 时由 ModelNaming 自动补默认名并去重。
+        cfg.modelNames.resize(cfg.modelList.size());
     }
     return true;
 }
@@ -931,19 +1022,31 @@ RenderContext App::BuildRenderContext(float deltaTime) const {
     ctx.modelScreenCenter = Vec2(pos.x + size.x * 0.5f, pos.y + size.y * 0.5f);
     ctx.modelScreenRadius = std::max(size.x, size.y) * 0.5f;
 
+    // 【光标位置与窗口是否接收鼠标事件无关】
+    // 点击穿透开启后窗口收不到任何 GLFW 鼠标事件，全局钩子也可能因为
+    // fullscreenTracking 关闭 / 权限不足而没启动。此时直接向操作系统查询
+    // 光标在整个虚拟桌面上的绝对坐标：GetCursorPos / XQueryPointer /
+    // NSEvent.mouseLocation 不受窗口边界、穿透设置与其它应用遮挡影响。
+    // 这样「忽略鼠标点击」「鼠标不在桌宠窗口上」时视线追踪依然有效。
+    Vec2 cursor;
+    bool hasCursor = false;
     if (cursorTracker_.IsRunning() && cursorTracker_.HasPosition()) {
-        ctx.hasGlobalCursor = true;
-        ctx.globalCursor = cursorTracker_.Position();
+        cursor = cursorTracker_.Position();
+        hasCursor = true;
+    } else if (GlobalCursorTracker::QueryCursor(cursor)) {
+        hasCursor = true;
     }
 
-    // 【全屏追踪】把全局鼠标换算成相对模型中心的归一化方向。
-    // 关键点：这里用的是整个虚拟桌面的坐标，鼠标无论在哪个显示器、
-    // 哪个应用之上都能被追踪到，不再受模型窗口边界限制。
-    if (ctx.hasGlobalCursor) {
-        Vec2 normalized;
-        GlobalCursorTracker::NormalizeAround(ctx.globalCursor, ctx.modelScreenCenter,
-                                             configStore_.config().trackingRadius, &normalized);
-        ctx.localCursor = normalized;
+    if (hasCursor) {
+        ctx.hasGlobalCursor = true;
+        ctx.globalCursor = cursor;
+        // 全屏追踪开启时按配置半径；关闭时退化为以窗口尺寸为参照的较钝半径，
+        // 但数据源仍是全局坐标，不会因为鼠标移出窗口就丢失目标。
+        const float radius = configStore_.config().fullscreenTracking
+                                 ? configStore_.config().trackingRadius
+                                 : std::max(1.0f, std::max(size.x, size.y) * 0.75f);
+        GlobalCursorTracker::NormalizeAround(cursor, ctx.modelScreenCenter, radius,
+                                             &ctx.localCursor);
     } else if (hasWindowCursor_) {
         // 【兜底】全局追踪不可用（权限不足 / 被关闭 / 平台不支持）时，
         // 退化为「窗口内追踪」：鼠标在桌宠窗口内移动时模型照样看向它。
@@ -1019,15 +1122,18 @@ void App::Run() {
         const auto now = clock::now();
         const float dt = std::chrono::duration<float>(now - last).count();
         last = now;
-        // 限制 dt 上限，避免窗口被拖动/挂起后出现跳变。
-        const float deltaTime = std::min(dt, 0.1f);
+        // 限制 dt 上限，避免窗口被拖动/挂起后出现跳变；
+        // 同时把 NaN / 负数 / Inf 收敛掉，防止长期运行中出现一次坏帧污染姿态。
+        const float deltaTime = stability::ClampDelta(dt);
 
         // 帧统计用真实 dt（不 clamp），指数平滑后给诊断面板算 FPS / 帧时。
         const float frameMs = dt * 1000.0f;
         frameMsSmoothed_ = frameMsSmoothed_ <= 0.0f
                                ? frameMs
                                : frameMsSmoothed_ * 0.9f + frameMs * 0.1f;
-        ++frameCount_;
+        // 饱和递增：即使极端情况下到达 uint64 上限也不回绕，
+        // 否则「每 N 帧自检」的差值判断会瞬间变成天文数字。
+        frameCount_ = stability::SaturatingIncrement(frameCount_);
 
         window_.PollEvents();
         // 维持置顶：在独占全屏游戏中窗口会被压到后面，需要周期性提升。
@@ -1067,7 +1173,8 @@ void App::Run() {
         // 每 kEvidenceProbeFrames 帧做一次轻量读回自检，结果也写日志。
         // 这样「draw calls 正常但帧缓冲全空」不打开面板也能被发现。
         const bool refreshPanel = debugPanel_.ShouldRefresh();
-        if (refreshPanel || frameCount_ - lastEvidenceFrame_ >= kEvidenceProbeFrames) {
+        if (refreshPanel ||
+            stability::SafeDelta(frameCount_, lastEvidenceFrame_) >= kEvidenceProbeFrames) {
             CollectFrameEvidence(refreshPanel);
         }
 

@@ -122,6 +122,9 @@ ctest --output-on-failure
 | `motion_queue_unit` | 官方动作队列：`EasingSine` / 单动作 fade / 无 fade / **交叉淡入淡出** / `Loop` / `FinishPrimary` / `StopAll` / 优先级（32 项检查） |
 | `render_plan_unit` | 渲染计划：三套 `glBlendFuncSeparate` / premultiplied 颜色 / renderOrder 稳定排序 / 无效部件与遮罩过滤（20 项检查） |
 | `console_command_unit` | 控制台指令：分词与引号转义 / `Command` 解析 / `Idx Name Path` 表格 / 帮助文本（28 项检查） |
+| `model_naming_unit` | 模型命名：中文 / Windows 路径 / URL 查询 / 复合后缀 / **非法 UTF-8 字节路径不抛异常** / 重名序号 / 列表补齐 |
+| `stability_unit` | 长期稳定性：饱和递增 / 安全无符号差值 / `dt` 钳制 NaN·Inf·负数·超大值 / 30 年运行相位精度 |
+| `console_queue_unit` | 控制台队列有界：注入 5000 条命令验证上限 4096、丢弃计数、单帧最多 32 条、剩余命令最终消费完 |
 | `zip_package_test` | 生成测试用 zip（fixture） |
 | `zip_import_test` | 解压中央目录、定位包内模型、幂等重导入、非法输入 |
 | `pmx_package_gen` | 生成 4 种 PMX 包（fixture）：完整 / 缺贴图 / 大小写 / 子目录 |
@@ -132,9 +135,9 @@ ctest --output-on-failure
 | `render_verify_pmx` / `render_verify_vrm` | 用渲染验证 CLI 对仓库素材跑「加载 → 渲染 → 读回像素 → 判定」（xvfb） |
 | `render_verify_clear_contract` | 主循环每帧清屏契约：连续帧读回像素一致、无上一帧残影（xvfb） |
 
-共 **35 项**测试（含 fixture）。调试面板冒烟测试还会校验 7 个页签、骨架/图片/详细错误区与
+共 **38 项**测试（含 fixture）。调试面板冒烟测试还会校验 7 个页签、骨架/图片/详细错误区与
 表情与说话页；气泡冒烟测试校验无边框气泡的显隐、文本与定位。
-本轮实测：Release + 桩 / Release + 真实 SDK / Debug + 无后端 **三配置均 35/35 通过，0 警告**。
+本轮实测：Release + 桩 / Release + 真实 SDK / Debug + 无后端 **三配置均 38/38 通过，0 警告**。
 
 ### 三配置构建矩阵
 
@@ -172,9 +175,14 @@ done
 xvfb-run -a ./build_cubism/ppet_feature_verify \
     --model /path/to/model.model3.json \
     --out docs/verify/feature --prefix live2d \
-    --width 400 --height 520 --frames 60
+    --width 400 --height 520 --frames 60 --auto-size
 python3 tools/gen_feature_compare.py docs/verify/feature live2d
 ```
+
+`--auto-size` 会在创建 GL 窗口**之前**先加载一次模型、读取 `PreferredFrameAspect()`
+探测实际帧宽高比并换算窗口宽度（报告里的 `auto_size` / `auto_size_aspect` /
+`auto_size_width` / `auto_size_width_before` 字段），避免横向构图被 400px 固定宽度截断。
+工具与主程序共用同一套 `autoFitWindow` 逻辑。
 
 工具对同一模型分别以 `neutral / expression / lipsync / action` 四态**重新加载模型**，
 用相同 `dt` 序列与固定光标推进相同帧数，消除待机动画干扰；输出四张 PNG、JSON 报告、
@@ -182,12 +190,12 @@ python3 tools/gen_feature_compare.py docs/verify/feature live2d
 判定条件为「像素差异 ≥ 0.5% **或** 参数快照累计变化 > 0.01」——Live2D 的眉毛 / 嘴部
 只占画面极小区域，像素占比常低于 0.5%，必须靠 `ParameterSnapshot()` 的参数级证据判定。
 
-本轮实跑结论（[完整报告与证据图](verify/feature/)）：
+本轮用最终代码重新实跑的结论（[完整报告与证据图](verify/feature/)）：
 
-| 模型 | 表情 | 口型 | 动作 |
-| --- | --- | --- | --- |
-| PMX `test.pmx` | 19.88% PASS | 48.70% PASS | 20.13% PASS |
-| Live2D `nengdai_2` | 0.36% / 参数累计 4.163 PASS | 0.33% / 1.426 PASS | 21.89% / 338.076 PASS |
+| 模型 | 窗口（`--auto-size`） | 表情 | 口型 | 动作 |
+| --- | --- | --- | --- | --- |
+| PMX `test.pmx` | 400×520 → **520×520**（aspect 1.0） | 19.68% PASS | 48.65% PASS | 22.29% PASS |
+| Live2D `nengdai_2` | 400×520 → **453×520**（aspect 0.872） | 0.40% / 参数累计 4.163 PASS | 0.38% / 1.426 PASS | 21.97% / 338.076 PASS |
 
 Live2D 表情的 `ParamEyeLSmile / ParamEyeRSmile / ParamBrowLY / ParamBrowRY: 0 → 1.000`
 说明参数级表情预设确实写进了模型；差异高亮图里红色像素集中在眼眉区域。

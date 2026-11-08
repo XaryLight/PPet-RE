@@ -182,7 +182,7 @@ PMX / VRM 不受影响。调度器的正确性由 `motion_director_unit`（状�
 | 层 | 文件 | 职责 | 依赖 |
 | --- | --- | --- | --- |
 | 解析 | `src/tools/app/ConsoleCommand.hpp` | 分词（引号 / 转义空格）、`Command`、`FormatTable`（`Idx Name Path`）、`HelpText` | **纯 STL，零依赖** |
-| 传输 | `src/tools/app/Console.{hpp,cpp}` | 后台 stdin 线程把整行放进线程安全队列；`Poll()` 每帧最多取 32 条；`SubmitScript()` 脚本模式 | `std::thread` / `mutex` / `atomic` |
+| 传输 | `src/tools/app/Console.{hpp,cpp}` | 后台 stdin 线程把整行放进**有界**线程安全队列（上限 4096，超限计数 `DroppedLines()`）；`Poll()` 每帧最多取 32 条；`SubmitScript()` 脚本模式 | `std::thread` / `mutex` / `atomic` |
 | 执行 | `src/tools/app/AppConsole.cpp` | 模型增删选列、`debug` 分节模型分析、`re` 重载、`action` / `expression`、`speak`、`status` | App 状态（**渲染主线程**） |
 | 能力接口 | `src/tools/model/Model.hpp` | `MotionNames` / `PlayMotion` / `StopMotion` / `ReloadRenderer` / `RenderResources` / `ParameterSnapshot` 默认虚接口 | 无 |
 
@@ -193,9 +193,28 @@ PMX / VRM 不受影响。调度器的正确性由 `motion_director_unit`（状�
 - `IModel` 用默认虚接口暴露能力，App 不需要按模型类型 downcast；后端不实现也能编译，
   控制台会明确提示「该后端不支持此操作」，而不是静默返回空结果。
 - `--console` 打开交互模式；`--command='list;debug status;quit'` 用脚本模式做自动化验收
-  （命令与结果同时写 `last.log` 的 `[CONSOLE]` 标签）。
+  （**成功指令只回显 stdout**，失败 / 用法错误 / 异常才写 DEBUG 级 `[CONSOLE]` 日志）。
+- 命名与路径推导走 `src/tools/core/ModelNaming.hpp` 的纯字节函数，不调用 `std::filesystem`，
+  因此 Windows 上遇到非法 UTF-8 字节路径不会让 `list` 整条抛异常。
 
 指令手册见 **[使用与配置 · 交互式控制台](usage.md#交互式控制台)**。
+
+## 本轮新增的基础设施
+
+| 模块 | 文件 | 职责 |
+| --- | --- | --- |
+| 模型命名 | `src/tools/core/ModelNaming.hpp` | 纯字节切分推导显示名：默认名 = 文件名去后缀、重名加 ` (2)` 序号、URL 查询/片段与复合后缀处理；全程不访问磁盘、不做编码转换，对任意字节路径不抛异常 |
+| 长期稳定性 | `src/tools/core/Stability.hpp` | `SaturatingIncrement()`（帧计数不回绕）、`SafeDelta()`、`ClampDelta()`（`dt` 对 NaN/Inf/负数/超大值收敛）、`PhaseOf()`（`double` 相位，30 年运行仍保精度） |
+| 全局光标 | `src/tools/platform/GlobalCursorTracker.{hpp,cpp}` | 新增静态 `QueryCursor(Vec2&)`：Windows `GetCursorPos` / macOS `NSEvent.mouseLocation` / Linux `XQueryPointer`；点击穿透或追踪器未运行时由 `App::BuildRenderContext()` 兜底调用 |
+| 动作过渡 | `src/tools/model/BoneMotion.{hpp,cpp}` | `Weight()` / `SetCrossFade()` / `SetEndFade()` / `HasOutgoing()` + 淡出层 `outgoing_`，`Accumulate()` 按骨骼名合并新旧姿态；一次性动作结束自动淡出 |
+| 自然手臂 | `IModel::SetArmRestDrop()` / PMX·VRM 后端 | 给 A-pose / T-pose 上臂加静态 roll 放下胳膊（PMX 18°、VRM 55°），动作播放时按 `Weight()` 让位 |
+| 帧宽高比 | `IModel::PreferredFrameAspect()` | PMX / VRM 取网格包围盒 X/Y，Live2D 取 `canvas.sizeInPixels`；`App::LoadModel()` 据此调整 GLFW 窗口，`feature_verify --auto-size` 复用 |
+| 气泡自适应 | `src/ui/BubbleWidget.{hpp,cpp}` | `SetMaxWidth()` / `MaxWidth()` / `Width()` / `Height()`；最大宽度与字号跟随渲染窗口，相同宽度短路避免每帧重设样式 |
+| 多行日志 | `src/tools/core/Log.{hpp,cpp}` | `SetMultiLine()` / `MultiLine()` / `FormatMultiLine()`；续行以 `> ` 开头且每行保留完整前缀，`Format()` 仍保持严格单行 |
+
+新增单测：`model_naming_unit` / `stability_unit` / `console_queue_unit`，
+`bone_motion_unit` 另加 `TestCrossFade()` 与 `TestArmRotationGeometry()`（用
+`Mat4::RotationZ().TransformDirection()` 验证下垂方向），CTest 总数 38。
 
 ## 构建目标层次
 

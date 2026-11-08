@@ -56,7 +56,11 @@ bool Console::Start(bool force) {
             if (state->stop.load()) break;
             {
                 std::lock_guard<std::mutex> lock(state->mutex);
-                state->pending.push_back(line);
+                if (state->pending.size() < State::kMaxPending) {
+                    state->pending.push_back(line);
+                } else {
+                    ++state->dropped;
+                }
             }
         }
         state->running.store(false);
@@ -85,7 +89,17 @@ void Console::Stop() {
 void Console::SubmitLine(const std::string& line) {
     if (!state_) state_ = std::make_shared<State>();
     std::lock_guard<std::mutex> lock(state_->mutex);
-    state_->pending.push_back(line);
+    if (state_->pending.size() < State::kMaxPending) {
+        state_->pending.push_back(line);
+    } else {
+        ++state_->dropped;
+    }
+}
+
+std::size_t Console::DroppedLines() const {
+    if (!state_) return 0;
+    std::lock_guard<std::mutex> lock(state_->mutex);
+    return state_->dropped;
 }
 
 void Console::SubmitScript(const std::string& script) {

@@ -12,6 +12,8 @@
 #include <cstdio>
 #include <string>
 
+#include <src/tools/core/Math.hpp>
+
 namespace {
 
 int g_failures = 0;
@@ -207,6 +209,85 @@ void TestWaveArmMapping() {
     Check(leftHasArm, "左臂挥手应驱动 leftArm");
 }
 
+/// 动作之间必须平滑过渡：切换时旧动作淡出、新动作淡入，同一骨骼两层权重叠加。
+void TestCrossFade() {
+    using namespace ppet::model;
+    BoneMotionPlayer player;
+    player.SetCrossFade(0.28f);
+    player.SetEndFade(0.22f);
+    player.Play(MakeConstantMotion("head", 20.0f, 5.0f), 0.0f);
+
+    BonePose pose;
+    player.Tick(0.1f, pose);
+    const float before = PitchOf(pose, "head");
+    CheckNear(before, 20.0f, 0.5f, "交叉淡出：切换前处于 A 的满姿态");
+    Check(player.Weight() > 0.99f, "交叉淡出：播放中权重为满");
+
+    // 切到相反姿态的动作 B，带 0.2s 淡入。
+    player.Play(MakeConstantMotion("head", -20.0f, 5.0f), 0.2f);
+    Check(player.HasOutgoing(), "交叉淡出：切换后存在淡出层");
+
+    player.Tick(0.0f, pose);
+    CheckNear(PitchOf(pose, "head"), before, 0.5f,
+              "交叉淡出：切换当帧姿态不突变（仍是 A）");
+
+    player.Tick(0.1f, pose);
+    const float mid = PitchOf(pose, "head");
+    Check(mid < before && mid > -20.0f,
+          "交叉淡出：过渡帧是两层的插值，而不是硬跳到 B");
+
+    for (int i = 0; i < 12; ++i) player.Tick(0.05f, pose);
+    CheckNear(PitchOf(pose, "head"), -20.0f, 0.5f, "交叉淡出：旧动作退场后完全变成 B");
+    Check(!player.HasOutgoing(), "交叉淡出：淡出层已清理，不会无限堆积");
+
+    // 一次性动作播完自动淡出，而不是瞬间把姿态清零。
+    BoneMotionPlayer oneShot;
+    oneShot.SetEndFade(0.22f);
+    oneShot.Play(MakeConstantMotion("head", 20.0f, 0.5f), 0.0f);
+    for (int i = 0; i < 36; ++i) oneShot.Tick(1.0f / 60.0f, pose);  // 0.6s
+    Check(oneShot.IsPlaying(), "结束淡出：动作时间到后仍在平滑退场");
+    const float tail = PitchOf(pose, "head");
+    Check(tail > 0.0f && tail < 20.0f, "结束淡出：末段姿态介于满姿态与零之间");
+    for (int i = 0; i < 30; ++i) oneShot.Tick(1.0f / 60.0f, pose);
+    Check(!oneShot.IsPlaying(), "结束淡出：退场完成后停止");
+    Check(oneShot.Weight() == 0.0f, "结束淡出：停止后权重归零");
+}
+
+/// 手臂下垂 / 挥手抬手的旋转符号必须符合骨骼局部坐标系，不能靠猜。
+void TestArmRotationGeometry() {
+    using namespace ppet::model;
+    constexpr float kDeg2Rad = 3.14159265358979323846f / 180.0f;
+    // PMX / VRM 的 localBindPose 只有平移，上臂在局部系里沿 ±X 延伸。
+    // 绕 Z 转 φ 时 +X -> (cosφ, sinφ)：想「放下来」右臂必须 φ<0、左臂必须 φ>0。
+    const ppet::Vec3 rightDown =
+        ppet::Mat4::RotationZ(-0.45f).TransformDirection(ppet::Vec3(1.0f, 0.0f, 0.0f));
+    const ppet::Vec3 leftDown =
+        ppet::Mat4::RotationZ(+0.45f).TransformDirection(ppet::Vec3(-1.0f, 0.0f, 0.0f));
+    Check(rightDown.y < -0.1f, "几何：右臂用负 roll 才会向下垂");
+    Check(leftDown.y < -0.1f, "几何：左臂用正 roll 才会向下垂");
+
+    // Wave 的 lift 取相反符号才是「抬手挥手」，旧版把胳膊往下压。
+    const BoneMotion wave = bone_motions::Wave("rightArm");
+    const BoneMotion waveLeft = bone_motions::Wave("leftArm");
+    float rightLift = 0.0f;
+    float leftLift = 0.0f;
+    for (const BoneKey& key : wave.keys) {
+        if (key.bone == "rightArm" && key.time > 0.25f && key.time < 0.35f) {
+            rightLift = key.roll;
+        }
+    }
+    for (const BoneKey& key : waveLeft.keys) {
+        if (key.bone == "leftArm" && key.time > 0.25f && key.time < 0.35f) {
+            leftLift = key.roll;
+        }
+    }
+    Check(rightLift > 0.0f, "挥手：右臂抬手 roll 为正");
+    Check(leftLift < 0.0f, "挥手：左臂抬手 roll 为负");
+    const ppet::Vec3 rightUp = ppet::Mat4::RotationZ(rightLift * kDeg2Rad)
+                                   .TransformDirection(ppet::Vec3(1.0f, 0.0f, 0.0f));
+    Check(rightUp.y > 0.1f, "挥手：右臂确实被抬到水平线以上");
+}
+
 }  // namespace
 
 int main() {
@@ -218,6 +299,8 @@ int main() {
     TestFadeIn();
     TestRandomTrigger();
     TestWaveArmMapping();
+    TestCrossFade();
+    TestArmRotationGeometry();
 
     if (g_failures == 0) {
         std::printf("bone_motion_test：全部通过\n");

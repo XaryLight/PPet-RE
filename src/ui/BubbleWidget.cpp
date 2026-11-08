@@ -2,6 +2,8 @@
 // 台词气泡窗口实现。详见 BubbleWidget.hpp。
 #include <src/ui/BubbleWidget.hpp>
 
+#include <algorithm>
+
 #include <QString>
 #include <QApplication>
 #include <QLabel>
@@ -76,6 +78,30 @@ void BubbleWidget::SetText(const std::string& text) {
 void BubbleWidget::MoveTo(int x, int y) {
     if (!window_) return;
     window_->move(x, y);
+}
+
+void BubbleWidget::SetMaxWidth(int pixels) {
+    const int clamped = std::clamp(pixels, 120, 900);
+    if (clamped == maxWidth_ && label_) return;  // 每帧调用时短路，避免重复解析样式表
+    maxWidth_ = clamped;
+    if (!label_ || !window_) return;
+    label_->setMaximumWidth(maxWidth_);
+    // 字号随窗口放大（约 1/20 宽度），但限制在 12~20px，避免小窗口字过大。
+    const int fontPx = std::clamp(maxWidth_ / 20, 12, 20);
+    label_->setStyleSheet(
+        QString("QLabel{background:#ffffff;color:#222222;"
+                "border:1px solid #d0d0d0;border-radius:10px;"
+                "padding:6px 10px;font-size:%1px;}")
+            .arg(fontPx));
+    window_->adjustSize();
+}
+
+int BubbleWidget::Width() const {
+    return window_ ? window_->width() : maxWidth_;
+}
+
+int BubbleWidget::Height() const {
+    return window_ ? window_->height() : 46;
 }
 
 void BubbleWidget::SetVisible(bool visible) {

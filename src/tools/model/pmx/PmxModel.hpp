@@ -94,6 +94,8 @@ public:
     bool PlayMotion(const std::string& id) override;
     bool StopMotion() override;
     void ReloadRenderer() override;
+    float PreferredFrameAspect() const override;
+    void SetArmRestDrop(float degrees) override;
 
     /// 供测试与调试使用的只读访问。
     const SkinnedMesh& Mesh() const { return mesh_; }
@@ -188,6 +190,8 @@ private:
     model::BoneMotionPlayer boneMotion_;
     /// 骨骼动作的采样结果（在 ApplyBoneTransforms 里施加）。
     model::BonePose boneMotionPose_;
+    /// 手臂自然下垂修正（度），PMX 的 A-pose 默认略举手臂。
+    float armRestDropDeg_ = 18.0f;
 
     /// 模型中心与包围盒高度，用于自动取景。
     Vec3 center_{0.0f, 0.0f, 0.0f};

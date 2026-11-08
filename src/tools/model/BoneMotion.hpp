@@ -20,6 +20,7 @@
 //   因此可以脱离渲染层做单元测试。
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <string>
@@ -98,7 +99,26 @@ public:
     /// 当前动作的播放进度 [0,1]。
     float Progress() const;
 
+    /// 当前动作的有效权重 [0,1]（已含淡入淡出，用 smoothstep 平滑）。
+    /// 后端据此让「静态姿态修正」在动作播放期间逐步让位，避免两层姿态打架。
+    float Weight() const;
+
+    /// 交叉淡入淡出时长（秒）：切换动作时旧动作淡出、新动作淡入，二者叠加输出。
+    /// 默认 0.28 秒。设为 0 则退化为硬切换。
+    void SetCrossFade(float seconds) { crossFade_ = std::max(0.0f, seconds); }
+    float CrossFade() const { return crossFade_; }
+
+    /// 一次性动作播完后的自动淡出时长（秒）。
+    /// 旧实现播完瞬间把姿态清零，会看到明显「顿一下」；现在平滑回到待机。
+    void SetEndFade(float seconds) { endFade_ = std::max(0.0f, seconds); }
+    float EndFade() const { return endFade_; }
+
+    /// 是否正处于「动作切换的交叉淡出」阶段（供单测与诊断）。
+    bool HasOutgoing() const { return hasOutgoing_; }
+
     /// 每帧推进并输出骨骼偏移。
+    /// 输出是「当前动作 * 其权重 + 上一个动作 * 淡出权重」按骨骼名累加的结果，
+    /// 因此动作之间、动作与待机之间都是连续过渡，不会突变。
     ///
     /// @param dt   时间步长（秒）
     /// @param pose 输出：骨骼偏移
@@ -129,11 +149,14 @@ public:
     bool TriggerRandom();
 
 private:
-    /// 采样当前动作的关键帧，输出骨骼偏移（未乘淡入淡出权重）。
-    void Sample(float time, BonePose& pose) const;
+    /// 采样指定动作的关键帧，输出骨骼偏移（未乘淡入淡出权重）。
+    void Sample(const BoneMotion& motion, float time, BonePose& pose) const;
 
     /// 关键帧插值：找到 time 两侧的关键帧并线性插值。
     static void Interpolate(const BoneMotion& motion, float time, BonePose& pose);
+
+    /// 把一层采样结果按权重累加进输出（同名骨骼合并，避免产生重复条目）。
+    static void Accumulate(BonePose& dst, const BonePose& layer, float weight);
 
     BoneMotion current_;
     bool playing_ = false;
@@ -144,6 +167,17 @@ private:
     /// 淡出进度 [0,1]（1 = 完全淡出）。
     float fadeOut_ = 0.0f;
     float fadeOutDuration_ = 0.0f;
+
+    // --- 交叉淡入淡出：切换动作时旧动作作为「淡出层」继续输出 ---
+    BoneMotion outgoing_;
+    float outgoingTime_ = 0.0f;
+    float outgoingWeight_ = 0.0f;
+    float outgoingFade_ = 0.0f;
+    float outgoingFadeDuration_ = 0.0f;
+    bool hasOutgoing_ = false;
+    float crossFade_ = 0.28f;
+    /// 一次性动作播完后的自动淡出时长（秒）。
+    float endFade_ = 0.22f;
 
     std::vector<BoneMotion> randomMotions_;
     float randomMin_ = 8.0f;

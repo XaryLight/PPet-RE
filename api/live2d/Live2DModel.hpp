@@ -83,6 +83,7 @@ public:
     bool StopMotion() override;
     void ReloadRenderer() override;
     std::vector<std::pair<std::string, std::string>> RenderResources() const override;
+    float PreferredFrameAspect() const override;
 
     /// 表情/口型：切换到表情动作组（如 "ExpHappy"）；无对应组返回 false。
     bool SetExpressionPreset(const std::string& id) override;

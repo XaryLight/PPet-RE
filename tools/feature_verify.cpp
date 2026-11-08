@@ -60,12 +60,14 @@ struct Options {
     int width = 480;
     int height = 640;
     int frames = 30;
+    /// 按模型实际帧宽高比自动调整渲染窗口宽度，避免横向模型被左右截断。
+    bool autoSize = false;
 };
 
 void Usage(const char* argv0) {
     std::fprintf(stderr,
                  "用法：%s --model <path> [--out <dir>] [--prefix <name>]\n"
-                 "        [--width 480] [--height 640] [--frames 30]\n",
+                 "        [--width 480] [--height 640] [--frames 30] [--auto-size]\n",
                  argv0);
 }
 
@@ -82,6 +84,7 @@ bool ParseArgs(int argc, char** argv, Options& opt) {
         else if (a == "--width") opt.width = std::atoi(next().c_str());
         else if (a == "--height") opt.height = std::atoi(next().c_str());
         else if (a == "--frames") opt.frames = std::atoi(next().c_str());
+        else if (a == "--auto-size") opt.autoSize = true;
         else if (a == "--help" || a == "-h") { Usage(argv[0]); return false; }
         else { std::fprintf(stderr, "未知参数：%s\n", a.c_str()); return false; }
     }
@@ -305,8 +308,6 @@ int main(int argc, char** argv) {
     Json report;
     report["tool"] = "ppet_feature_verify";
     report["model_path"] = opt.model;
-    report["width"] = opt.width;
-    report["height"] = opt.height;
     report["frames_per_state"] = opt.frames;
     report["states"] = Json::array();
 
@@ -321,6 +322,53 @@ int main(int argc, char** argv) {
         ppet::Logger::Shutdown();
         return code;
     };
+
+    // --- 模型路径（zip 整包解压）与后端创建 ---
+    // 必须在 GL 窗口创建之前完成：--auto-size 要先读到模型实际帧宽高比，
+    // 才能决定窗口应该多宽，否则横向模型在固定竖窗口里会被左右截断。
+    std::string modelPath = opt.model;
+    {
+        std::string clean = modelPath;
+        const std::size_t q = clean.find('?');
+        if (q != std::string::npos) clean = clean.substr(0, q);
+        if (ppet::FileExtension(clean) == "zip") {
+            ppet::ModelPackage package;
+            std::string packageError;
+            const std::string cache =
+                (fs::temp_directory_path() / "ppet_feature_verify_cache").string();
+            if (!ppet::ExtractModelPackage(clean, cache, package, packageError)) {
+                report["error"] = "模型包导入失败：" + packageError;
+                return finish(1);
+            }
+            modelPath = package.modelPath;
+        }
+    }
+
+    const ppet::ModelType type = ppet::DetectModelType(modelPath);
+    report["model_type"] = ppet::ModelTypeName(type);
+    ppet::ModelPtr model = ppet::CreateModel(type);
+    if (!model) {
+        report["error"] = "模型后端不可用（Live2D 需 Cubism SDK）";
+        return finish(1);
+    }
+
+    if (opt.autoSize) {
+        std::string probeError;
+        if (model->Load(modelPath, probeError)) {
+            const float aspect = model->PreferredFrameAspect();
+            if (aspect > 0.05f && aspect < 20.0f) {
+                const int before = opt.width;
+                opt.width = std::clamp(
+                    static_cast<int>(static_cast<float>(opt.height) * aspect), 64, 2048);
+                report["auto_size"] = true;
+                report["auto_size_aspect"] = aspect;
+                report["auto_size_width"] = opt.width;
+                report["auto_size_width_before"] = before;
+            }
+        }
+    }
+    report["width"] = opt.width;
+    report["height"] = opt.height;
 
     // --- GL 上下文 ---
     if (!glfwInit()) {
@@ -347,35 +395,6 @@ int main(int argc, char** argv) {
         return finish(2);
     }
     report["gpu"] = GlString(GL_RENDERER);
-
-    // --- 模型路径（zip 整包解压）---
-    std::string modelPath = opt.model;
-    {
-        std::string clean = modelPath;
-        const std::size_t q = clean.find('?');
-        if (q != std::string::npos) clean = clean.substr(0, q);
-        if (ppet::FileExtension(clean) == "zip") {
-            ppet::ModelPackage package;
-            std::string packageError;
-            const std::string cache =
-                (fs::temp_directory_path() / "ppet_feature_verify_cache").string();
-            if (!ppet::ExtractModelPackage(clean, cache, package, packageError)) {
-                report["error"] = "模型包导入失败：" + packageError;
-                glfwTerminate();
-                return finish(1);
-            }
-            modelPath = package.modelPath;
-        }
-    }
-
-    const ppet::ModelType type = ppet::DetectModelType(modelPath);
-    report["model_type"] = ppet::ModelTypeName(type);
-    ppet::ModelPtr model = ppet::CreateModel(type);
-    if (!model) {
-        report["error"] = "模型后端不可用（Live2D 需 Cubism SDK）";
-        glfwTerminate();
-        return finish(1);
-    }
 
     std::error_code ec;
     fs::create_directories(opt.out, ec);

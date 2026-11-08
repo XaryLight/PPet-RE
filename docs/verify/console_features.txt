@@ -1,0 +1,47 @@
+QStandardPaths: XDG_RUNTIME_DIR not set, defaulting to '/tmp/runtime-root'
+2026-11-08 15:15:57.444 | +0000000.021 | Δ   0.021 | INFO  | 75ff | [main] main.cpp:64 main | PPet 启动 | C++ 标准=23 | 构建=Nov  8 2026 15:14:26 | 日志=last.log（级别 DEBUG / 控制台 INFO ）
+2026-11-08 15:15:57.517 | +0000072.707 | Δ  72.686 | ERROR | 75ff | [App] App.cpp:234 ppet::App::Initialize | 未找到系统托盘宿主（_NET_SYSTEM_TRAY），已进入无托盘降级模式
+2026-11-08 15:15:57.552 | +0000107.834 | Δ   0.311 | INFO  | 75ff | [MODEL] App.cpp:572 ppet::App::LoadModel | 模型加载成功：テストモデル（PMX / PMX 2.0 / 0.2 ms）
+2026-11-08 15:15:57.552 | +0000107.865 | Δ   0.008 | WARN  | 75ff | [MODEL] App.cpp:582 ppet::App::LoadModel | 模型引用了 1 个不存在的资源文件：
+2026-11-08 15:15:57.552 | +0000107.873 | Δ   0.008 | WARN  | 75ff | [MODEL] App.cpp:585 ppet::App::LoadModel |   [1/1] /tmp/ppet_models/a/test_texture.png
+2026-11-08 15:15:57.552 | +0000107.886 | Δ   0.013 | WARN  | 75ff | [MODEL] App.cpp:482 ppet::App::ReportModelProblem | [模型图片缺失] 模型已加载，但缺少 1 张贴图/图片（可能白模或全身纯色）（/tmp/ppet_models/a/test.pmx）
+PPet 控制台已就绪，输入 help 查看指令。
+> list
+Idx  Name            Path
+---  --------------  ---------------------------
+0    * 测试模型  /tmp/ppet_models/a/test.pmx
+> speak 你好，这是一句比较长的台词，用来验证气泡会自动换行并且最大宽度跟随渲染窗口一起变化
+Speaking: 你好，这是一句比较长的台词，用来验证气泡会自动换行并且最大宽度跟随渲染窗口一起变化
+> status
+[status 运行时]
+  frameCount : 346
+  frameMs    : 4.83796
+  fps        : 206.699
+  model      : 测试模型 [PMX]
+  speaking   : true
+  phrase     : 你好，这是一句比较长的台词，用来验证气泡会自动换…
+  lipOpen    : 0.742138
+  bubble     : on
+  console    : interactive
+  uptime     : 1.67394 s
+  cmdDropped : 0
+  autoFitWin : on
+  armRestDrop: 0 deg (0=后端默认)
+  window     : 648x600
+  bubbleMaxW : 720 px
+  osCursor   : (640,512) (与点击穿透无关)
+
+> debug status
+Model: テストモデル [PMX]
+Path : /tmp/ppet_models/a/test.pmx
+[status 渲染状态]
+  loaded      : true
+  gpuReady    : true
+  renderingOk : true
+  glError     : 0
+  renderStatus: 可出图，但缺 1 张贴图（可能白模）
+  modelId     : /tmp/ppet_models/a/test.pmx
+
+> quit
+Bye.
+2026-11-08 15:15:59.396 | +0001951.653 | Δ1843.756 | INFO  | 75ff | [main] main.cpp:95 main | PPet 正常退出

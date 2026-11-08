@@ -293,6 +293,14 @@ public:
     virtual std::vector<std::pair<std::string, float>> ParameterSnapshot() const {
         return {};
     }
+
+    /// 模型实际内容帧的宽高比（width / height），供渲染窗口自适应尺寸。
+    /// 横向模型在固定的竖窗口里会被左右截断；返回 0 表示后端无法提供。
+    virtual float PreferredFrameAspect() const { return 0.0f; }
+
+    /// 手臂自然下垂修正（度）：PMX 的 A-pose / VRM 的 T-pose 默认把手臂平举，
+    /// 桌宠看起来「总抬着手」。0 = 用后端默认，<0 = 关闭，>0 = 强制角度。
+    virtual void SetArmRestDrop(float degrees) { (void)degrees; }
 };
 
 using ModelPtr = std::shared_ptr<IModel>;

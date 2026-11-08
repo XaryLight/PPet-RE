@@ -1313,6 +1313,17 @@ void Live2DModel::ReloadRenderer() {
     impl_->masksResolved = false;
 }
 
+float Live2DModel::PreferredFrameAspect() const {
+    if (!loaded_ || !impl_) return 0.0f;
+    // Cubism 的画布尺寸就是模型设计时的取景框；用它做窗口宽高比，
+    // 横向画布（宽 > 高）的模型在竖窗口里才不会被左右截断。
+    const float w = impl_->canvas.sizeInPixels.x;
+    const float h = impl_->canvas.sizeInPixels.y;
+    if (w <= 1.0f || h <= 1.0f) return 0.0f;
+    const float aspect = w / h;
+    return (aspect > 0.05f && aspect < 20.0f) ? aspect : 0.0f;
+}
+
 std::vector<std::pair<std::string, std::string>> Live2DModel::RenderResources() const {
     std::vector<std::pair<std::string, std::string>> out;
     if (!impl_) return out;

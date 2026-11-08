@@ -1865,14 +1865,20 @@ void VrmModel::UpdateIdle(float dt) {
         const float s = 1.0f + pose.chestScale;
         chest->currentLocal = chest->currentLocal * Mat4::Scale(Vec3(s, s, s));
     }
-    // --- 手臂：待机时自然摆动 ---
+    // --- 手臂：自然下垂 + 待机小幅摆动 ---
+    // VRM 规范要求 T-pose 绑定（手臂水平平举），不修正的话桌宠永远举着双手。
+    // 与 PMX 后端同一套几何约定：左臂(+φ)、右臂(-φ) 让手臂向下垂。
+    // 骨骼动作播放期间按 Weight() 让位，动作淡出后平滑回归自然姿态。
+    constexpr float kDeg2Rad = 3.14159265358979323846f / 180.0f;
+    const float restDrop =
+        armRestDropDeg_ * kDeg2Rad * (1.0f - std::clamp(boneMotion_.Weight(), 0.0f, 1.0f));
     if (Bone* arm = boneAt(leftUpperArmBone_)) {
         arm->currentLocal = arm->currentLocal * Mat4::RotationX(pose.leftArmPitch) *
-                            Mat4::RotationZ(pose.leftArmRoll);
+                            Mat4::RotationZ(pose.leftArmRoll + restDrop);
     }
     if (Bone* arm = boneAt(rightUpperArmBone_)) {
         arm->currentLocal = arm->currentLocal * Mat4::RotationX(pose.rightArmPitch) *
-                            Mat4::RotationZ(pose.rightArmRoll);
+                            Mat4::RotationZ(pose.rightArmRoll - restDrop);
     }
     if (Bone* fore = boneAt(leftLowerArmBone_)) {
         fore->currentLocal = fore->currentLocal * Mat4::RotationX(pose.leftForearmPitch);
@@ -2199,6 +2205,23 @@ bool VrmModel::StopMotion() {
 
 void VrmModel::ReloadRenderer() {
     gpuReady_ = false;
+}
+
+float VrmModel::PreferredFrameAspect() const {
+    const float w = mesh_.boundsMax.x - mesh_.boundsMin.x;
+    const float h = mesh_.boundsMax.y - mesh_.boundsMin.y;
+    if (w <= 1e-4f || h <= 1e-4f) return 0.0f;
+    const float aspect = w / h;
+    return (aspect > 0.05f && aspect < 20.0f) ? aspect : 0.0f;
+}
+
+void VrmModel::SetArmRestDrop(float degrees) {
+    if (degrees < 0.0f) {
+        armRestDropDeg_ = 0.0f;  // 显式关闭
+    } else if (degrees > 0.0f) {
+        armRestDropDeg_ = std::min(degrees, 80.0f);
+    }
+    // degrees == 0：保留 VRM 后端默认值（55°，对应 T-pose）。
 }
 
 void VrmModel::EnsureGpuResources() {

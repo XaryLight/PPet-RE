@@ -69,14 +69,17 @@ Speaking: 你好，我是桌面宠物
 ./build/bin/ppet --command='list;add /path/model.pmx;debug status;speak 你好;quit'
 ```
 
-脚本模式不回显命令、只打印结果；所有命令与结果同时写入 `last.log` 的 `[CONSOLE]` 标签。
+脚本模式不回显命令、只打印结果。**正常执行成功的指令只在 stdout 回显，不再写入 `last.log`**；
+只有失败、用法错误或抛出异常时才落 DEBUG 级 `[CONSOLE]` 日志（`fail: ...` / `指令执行异常`），
+避免长时间运行时日志文件被命令回显刷满。
 
 ### 指令表
 
 | 指令 | 作用 |
 | --- | --- |
 | `list` / `ls` | 列出模型，输出 `Idx Name Path` 表格，`*` 标记当前模型 |
-| `add <path>` | 添加并加载模型（路径含空格请加引号），写入配置并刷新托盘菜单 |
+| `add <path> [name]` | 添加并加载模型（路径含空格请加引号），写入配置并刷新托盘菜单；**不写名字时默认取文件名去后缀**，与已有同名时自动加 ` (2)`、` (3)` 序号 |
+| `rename <idx> [name]` | 给第 `idx` 个模型改名；不写名字则**恢复默认名**（文件名去后缀），同样做重名序号处理 |
 | `select <idx>` / `sel` | 切换到第 `idx` 个模型，输出 `To turn <idx> model <name>` + `Success` / `fail: ...` |
 | `remove <idx>` / `rm` | 从列表移除第 `idx` 个模型；移除当前项会自动切到新的第一项 |
 | `debug [section]` | 输出模型分析内容：`status`（渲染状态）/ `res`（加载的资源）/ `params` / `bones` / `parts` / `motion` / `expression` / `error` / `all`；缺省 = `all` |
@@ -87,7 +90,7 @@ Speaking: 你好，我是桌面宠物
 | `expression list` | 列出表情预设，含**表情动作组 + 参数级预设**两类 |
 | `expression <id>` | 切换表情；Live2D 没有表情动作组时自动回退到参数预设 |
 | `speak <txt>` | 显示气泡文字并驱动口型 |
-| `status` | 运行时状态（帧率 / 对话 / 追踪 / 控制台模式） |
+| `status` | 运行时状态（帧率 / 对话 / 追踪 / 控制台模式 / `uptime` / `cmdDropped` / `autoFitWin` / `armRestDrop` / `window` / `bubbleMaxW` / `osCursor`） |
 | `help` / `?` | 输出完整帮助 |
 | `quit` / `exit` | 退出程序 |
 
@@ -100,6 +103,13 @@ Speaking: 你好，我是桌面宠物
 - **参数可加引号**：`add "/path/with space/model.pmx"`、`speak "一句带空格的话"`。
 - **脚本模式只有一帧**：`--command` 里的命令在首个渲染帧就全部执行完，此时 `debug status` 的 `gpuReady`
   可能仍为 `false`（等待首次渲染建立 GPU 资源）；想观察渲染后的状态请在 `--console` 交互模式下手动输入。
+- **命名全程不碰 `std::filesystem`**：模型显示名用纯字节切分推导（`ModelNaming.hpp`），
+  Windows 上遇到含非法 UTF-8 字节的旧配置、ZIP 条目名或在线 URL 也不会抛出
+  `filesystem error: in __char_to_wide: Illegal byte sequence`，`list` 不会整条失败。
+- **队列有界**：待执行指令队列上限 4096 条，超限计入 `DroppedLines()`（在 `status` 里是 `cmdDropped`），
+  每帧最多执行 32 条，长期挂机不会因输入堆积吃光内存。
+- **点击穿透也能拿到光标**：`status` 的 `osCursor` 直接来自系统 API 全局查询，
+  与窗口是否忽略鼠标点击、是否开启全屏追踪无关，见 [全屏追踪](#全屏追踪)。
 
 ---
 
@@ -199,6 +209,16 @@ PMX 与 VRM 模型没有 Live2D 那样的「动作文件」，因此待机表现
 播放行为与 VRM-VPet 一致：一次性动作播完**自动回到待机**、动作带淡入淡出，
 并且**待机时随机触发**（间隔 8~18 秒，随机概率 70%）。动作期间会压低基础微摆，避免叠加抽搐。
 
+**动作之间的过渡**：`BoneMotionPlayer` 做交叉淡入淡出——切换动作时旧动作进入淡出层、
+新动作从 0 平滑淡入，按骨骼名合并两层姿态（`Accumulate()`）；一次性动作播完也会自动淡出，
+不会在切换或结束的那一帧把姿态瞬间归零。
+
+**默认手臂自然下垂**：PMX 的 A-pose / VRM 的 T-pose 手臂本来是斜举或平举的，
+桌宠会显得「总抬着手」；后端 `SetArmRestDrop()` 给上臂加一个静态 roll
+（PMX 默认 18°、VRM 默认 55°）把胳膊放下来。骨骼动作播放时按 `Weight()` 让位，
+动作淡出后平滑回到自然姿态。可用配置 `armRestDropDeg` 覆盖，`0` 表示用后端默认值，
+个别模型方向相反时也可用负值微调。
+
 > 两套系统叠加生效：待机时一直有连续微动，偶尔来一段明显的骨骼动作。
 >
 > 骨架里没有对应骨骼名时该轨道自动跳过，不会报错。
@@ -241,8 +261,8 @@ PMX 与 VRM 模型没有 Live2D 那样的「动作文件」，因此待机表现
 
 ![设置面板](settings-panel.png)
 
-- **模型列表**：显示已导入模型与类型徽章，可切换 / 删除
-- **导入模型**：选择 `.zip`（推荐）/ `.pmx` / `.vrm` / `.json` 文件
+- **模型列表**：显示已导入模型与类型徽章，可切换 / 删除 / **改名**
+- **导入模型**：选择 `.zip`（推荐）/ `.pmx` / `.vrm` / `.json` 文件；可勾选「导入时询问名称」弹窗命名，留空则用默认名
 - **导入在线模型**：输入模型 URL
 - **渲染大小**：0.25× ~ 4.0×
 - **全屏追踪**：开关 + 追踪半径 + 最大偏转角度
@@ -251,6 +271,27 @@ PMX 与 VRM 模型没有 Live2D 那样的「动作文件」，因此待机表现
 
 > PMX 模型请优先选 `.zip`：`.pmx` 本身不含贴图，单独导入通常得到白模。
 > 详见 [模型格式与导入](models.md#pmx-请用-zip-导入重要)。
+
+---
+
+## 窗口与气泡自适应
+
+`autoFitWindow`（默认开）会在加载模型后按**模型实际内容的宽高比**调整渲染窗口，
+避免横向构图的模型被固定窗口左右截断：
+
+| 模型 | 宽高比来源 |
+| --- | --- |
+| PMX / VRM | 网格包围盒的 X / Y |
+| Live2D | `model3.json` 的 `canvas.sizeInPixels.x / y` |
+
+宽高比由 `IModel::PreferredFrameAspect()` 提供，`App::LoadModel()` 只在合法区间
+（0.05~20）内换算窗口宽度，并把窗口钳制在虚拟桌面可见范围内。渲染验证工具也有对应开关
+`ppet_feature_verify --auto-size`（见 [开发文档](development.md#表情--口型--动作四状态截图对比ppet_feature_verify)）。
+
+**台词气泡跟随窗口**：`BubbleWidget::SetMaxWidth()` 按渲染窗口宽度的 1.15 倍
+（钳制 160~720 px）设置气泡最大宽度，字号按 `maxWidth/20` 在 12~20 px 间缩放；
+气泡位置按窗口实际宽高居中放在上方并钳制在桌面内。窗口变大时气泡同步变宽、字变大，
+长台词自动换行，不会被挤成一条细线。
 
 ---
 
@@ -271,6 +312,12 @@ PMX 与 VRM 模型没有 Live2D 那样的「动作文件」，因此待机表现
 
 追踪器不可用时会自动降级为窗口内跟随，并在日志里记一条 ERROR，不影响启动。
 
+**光标坐标不依赖窗口事件**：`GlobalCursorTracker::QueryCursor()` 直接向系统查询全局光标
+（Windows `GetCursorPos` / macOS `NSEvent.mouseLocation` / Linux `XQueryPointer`），
+因此即使开着「忽略点击」（鼠标事件被穿透）、关闭全屏追踪、或光标根本不在桌宠窗口 / 虚拟桌面上，
+`App::BuildRenderContext()` 仍能拿到全局屏幕坐标供眼睛与头部追踪使用。
+`status` 里的 `osCursor` 就是这条通道的实测值。
+
 ---
 
 ## 配置
@@ -290,6 +337,10 @@ PMX 与 VRM 模型没有 Live2D 那样的「动作文件」，因此待机表现
 | `language` | 界面语言 | `Chinese` |
 | `modelPath` | 当前模型路径（zip 导入时是解压后的模型文件） | `""` |
 | `modelList` | 已导入模型列表 | `[]` |
+| `modelNames` | 与 `modelList` 一一对应的显示名（缺省自动取文件名去后缀，重名自动加序号） | `[]` |
+| `autoFitWindow` | 渲染窗口按模型实际帧宽高比自适应 | `true` |
+| `askModelNameOnImport` | GUI 导入模型时弹出命名输入框（脚本模式不弹） | `true` |
+| `armRestDropDeg` | PMX / VRM 默认手臂下垂角度；`0` = 用后端默认值，负值可反转方向 | `0` |
 
 字段缺失时使用默认值，旧版本配置文件可以直接加载。数值越界会自动回退到合法范围。
 

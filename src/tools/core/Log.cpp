@@ -37,9 +37,13 @@ LogLevel g_level = LogLevel::Debug;         // 文件 / 总体阈值
 LogLevel g_consoleLevel = LogLevel::Info;   // 控制台阈值
 std::chrono::steady_clock::time_point g_start = std::chrono::steady_clock::now();
 std::chrono::steady_clock::time_point g_last = g_start;
+/// 多行消息开关：默认开启，见 Log.hpp。由 g_mutex 保护。
+bool g_multiLine = true;
 
 /// 单次写入的上限（超出部分截断，防止一条畸形日志打爆内存/磁盘）。
 constexpr std::size_t kMessageBufferSize = 8192;
+/// 一条日志最多拆多少行，防御畸形消息（例如把整个文件当日志打进来）。
+constexpr std::size_t kMaxLogLines = 64;
 /// last.log 超过该大小就轮转成 last.log.1（Windows 中文路径下轮转失败会静默跳过）。
 constexpr long kMaxLogBytes = 4 * 1024 * 1024;
 
@@ -103,6 +107,44 @@ std::string NormalizeMessage(std::string_view raw) {
         }
     }
     return out;
+}
+
+/// 多行模式的消息拆行：尾部换行/空白去掉，\r 丢弃，\t 展开成空格，
+/// 换行切出新行而不是转义。超过上限时截断并追加提示行。
+std::vector<std::string> SplitMessageLines(std::string_view raw) {
+    std::string s(raw);
+    while (!s.empty() && (s.back() == '\n' || s.back() == '\r' || s.back() == ' ' ||
+                          s.back() == '\t')) {
+        s.pop_back();
+    }
+    std::vector<std::string> lines;
+    std::string cur;
+    cur.reserve(s.size());
+    bool truncated = false;
+    for (const char c : s) {
+        switch (c) {
+            case '\n':
+                if (lines.size() + 1 >= kMaxLogLines) {
+                    truncated = true;
+                } else {
+                    lines.push_back(cur);
+                    cur.clear();
+                }
+                break;
+            case '\r': break;
+            case '\t': cur += "    "; break;
+            default:   cur.push_back(c); break;
+        }
+        if (truncated) break;
+    }
+    if (truncated) {
+        lines.push_back(cur);
+        lines.emplace_back("... (消息过长，其余行已省略)");
+    } else {
+        lines.push_back(cur);
+    }
+    if (lines.empty()) lines.emplace_back();
+    return lines;
 }
 
 /// 时间三件套：墙钟（毫秒）+ 进程相对毫秒 + 距上条日志毫秒。
@@ -179,6 +221,23 @@ std::string BuildLine(LogLevel level, const std::source_location& loc,
     result += message;
     result.push_back('\n');
     return result;
+}
+
+/// 构造一条日志（可能多行）。
+/// 所有续行复用**同一份** clock，因此一条日志的时间戳/Δ/线程完全一致；
+/// 续行消息前加 "> "，前缀仍完整保留，按级别/模块过滤不会漏掉续行。
+std::string BuildEntry(LogLevel level, const std::source_location& loc, const char* tag,
+                       std::string_view raw, const ClockFields& clock, bool multiLine) {
+    if (!multiLine) return BuildLine(level, loc, tag, NormalizeMessage(raw), clock);
+
+    const std::vector<std::string> lines = SplitMessageLines(raw);
+    std::string out;
+    out.reserve(lines.size() * 160);
+    out += BuildLine(level, loc, tag, lines.front(), clock);
+    for (std::size_t i = 1; i < lines.size(); ++i) {
+        out += BuildLine(level, loc, tag, std::string("> ") + lines[i], clock);
+    }
+    return out;
 }
 
 /// 超过上限时把 last.log 轮转成 last.log.1，然后重新打开一个空文件。
@@ -308,6 +367,14 @@ LogLevel Logger::ConsoleLevel() {
     std::lock_guard<std::mutex> lock(g_mutex);
     return g_consoleLevel;
 }
+void Logger::SetMultiLine(bool enabled) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    g_multiLine = enabled;
+}
+bool Logger::MultiLine() {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    return g_multiLine;
+}
 const std::string& Logger::Path() { return g_path; }
 
 std::string Logger::Format(LogLevel level, const std::source_location& loc,
@@ -316,6 +383,13 @@ std::string Logger::Format(LogLevel level, const std::source_location& loc,
     // 纯格式化：不推进 g_last，避免测试/预览影响真实日志的时间间隔统计。
     const ClockFields clock = NowFields(false);
     return BuildLine(level, loc, tag, NormalizeMessage(message), clock);
+}
+
+std::string Logger::FormatMultiLine(LogLevel level, const std::source_location& loc,
+                                    const char* tag, std::string_view message) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    const ClockFields clock = NowFields(false);
+    return BuildEntry(level, loc, tag, message, clock, g_multiLine);
 }
 
 void Logger::Write(LogLevel level, const std::source_location& loc,
@@ -346,16 +420,17 @@ void Logger::WriteV(LogLevel level, const std::source_location& loc,
     if (Underlying(level) < Underlying(g_level)) return;  // 文件阈值
 
     const ClockFields clock = NowFields(true);
-    const std::string line = BuildLine(level, loc, tag, NormalizeMessage(raw), clock);
+    // 整条日志（含所有续行）一次构造、一次写出，锁内完成，保证多线程不交错。
+    const std::string entry = BuildEntry(level, loc, tag, raw, clock, g_multiLine);
 
     // 控制台：Windows 下 main 已 SetConsoleOutputCP(CP_UTF8)，UTF-8 字节可直接显示中文。
     if (Underlying(level) >= Underlying(g_consoleLevel)) {
-        std::fputs(line.c_str(), stderr);
+        std::fputs(entry.c_str(), stderr);
         std::fflush(stderr);
     }
     // 文件：UTF-8（含 BOM），与控制台内容一致，但不再被当成 GBK 解释。
     if (g_file) {
-        std::fputs(line.c_str(), g_file);
+        std::fputs(entry.c_str(), g_file);
         std::fflush(g_file);
     }
 }

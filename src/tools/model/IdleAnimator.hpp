@@ -89,6 +89,9 @@ public:
         float gestureMaxInterval = 18.0f;
         /// 小动作时长（秒）。
         float gestureDuration = 2.4f;
+        /// 「伸懒腰」抬臂幅度倍率。旧版 0.55 rad（≈31°）会让模型看起来
+        /// 老在举手，这里默认压到 0.35 倍（≈11°），更像自然舒展。
+        float stretchArmAmount = 0.35f;
         /// 整体幅度倍率（0 = 完全静止）。
         float masterAmount = 1.0f;
     };
@@ -120,7 +123,7 @@ public:
 
     /// 复位到初始状态（时间归零、姿态清零）。
     void Reset() {
-        time_ = 0.0f;
+        time_ = 0.0;
         gestureTimer_ = NextInterval();
         gesture_ = Gesture::None;
         gestureTime_ = 0.0f;
@@ -133,7 +136,11 @@ public:
         if (!(dt > 0.0f)) return pose_;
         // 切后台回来时 dt 可能非常大，钳制以免姿态瞬移。
         dt = std::min(dt, 0.1f);
-        time_ += dt;
+        // 【长期运行】时间用 double 累加，且每条相位都对 2π 取模。
+        // 若用 float 累加，跑上几天后 time_ 会到 1e5~1e6 量级，float 只有
+        // 7 位有效数字，sin 的相位分辨率退化到 0.1 弧度以上，待机动作会
+        // 变成一格一格跳（甚至卡住）。取模后相位永远保持在 [0, 2π)。
+        time_ += static_cast<double>(dt);
 
         // --- 小动作调度 ---
         gestureTimer_ -= dt;
@@ -149,26 +156,33 @@ public:
         }
 
         // --- 基础待机 ---
+        // 【长期运行】相位用 double 计算：time_ 是 double，跑到 1e9 秒（约 31 年）
+        // 时相位仍有 1e-6 弧度级分辨率；若用 float 累加，几天后就会退化成跳帧。
+        // 这里刻意**不**对相位取模：sin(headPhase * 1.7) 这类派生项依赖相位的绝对值，
+        // 单独把基础相位 fmod 回 [0,2π) 会让派生项在每个周期边界突变。
         const float master = std::max(0.0f, config_.masterAmount);
-        const float breathPhase = time_ * config_.breathSpeed * 6.2831853f;
-        const float swayPhase = time_ * config_.swaySpeed * 6.2831853f;
-        const float headPhase = time_ * config_.headSpeed * 6.2831853f;
-        const float armPhase = time_ * config_.armSpeed * 6.2831853f;
+        constexpr double kTwoPi = 6.28318530717958647692;
+        const double breathPhase = time_ * static_cast<double>(config_.breathSpeed) * kTwoPi;
+        const double swayPhase = time_ * static_cast<double>(config_.swaySpeed) * kTwoPi;
+        const double headPhase = time_ * static_cast<double>(config_.headSpeed) * kTwoPi;
+        const double armPhase = time_ * static_cast<double>(config_.armSpeed) * kTwoPi;
 
         // 呼吸：正弦驱动，但用 sin 的绝对值形状更接近「吸-呼-停」的真实节奏。
-        const float breath = std::sin(breathPhase);
+        const float breath = static_cast<float>(std::sin(breathPhase));
         const float breathAmp = config_.breathAmount * master;
 
         // 重心：低频左右摆（用两个不同频率叠加，避免机械感）。
-        const float sway = std::sin(swayPhase) * 0.7f + std::sin(swayPhase * 1.618f) * 0.3f;
+        const float sway = static_cast<float>(std::sin(swayPhase) * 0.7 +
+                                             std::sin(swayPhase * 1.618) * 0.3);
         const float swayAmp = config_.swayAmount * master;
 
         // 头部：与身体反相（真人走路时头会略微反向稳定视线）。
-        const float head = std::sin(headPhase) * 0.6f + std::sin(headPhase * 2.31f) * 0.4f;
+        const float head = static_cast<float>(std::sin(headPhase) * 0.6 +
+                                             std::sin(headPhase * 2.31) * 0.4);
         const float headAmp = config_.headAmount * master;
 
         // 手臂：低频小幅摆动，左右反相（走路时的自然摆臂）。
-        const float arm = std::sin(armPhase);
+        const float arm = static_cast<float>(std::sin(armPhase));
         const float armAmp = config_.armAmount * master;
 
         IdlePose pose;
@@ -179,15 +193,17 @@ public:
         pose.chestScale = breath * 0.016f * breathAmp;
 
         pose.headYaw = head * 0.070f * headAmp - sway * 0.030f * swayAmp;
-        pose.headPitch = std::sin(headPhase * 1.7f) * 0.045f * headAmp;
-        pose.headRoll = std::sin(headPhase * 0.8f) * 0.035f * headAmp;
+        pose.headPitch = static_cast<float>(std::sin(headPhase * 1.7)) * 0.045f * headAmp;
+        pose.headRoll = static_cast<float>(std::sin(headPhase * 0.8)) * 0.035f * headAmp;
 
         pose.leftArmPitch = -arm * 0.075f * armAmp;
         pose.rightArmPitch = arm * 0.075f * armAmp;
         pose.leftArmRoll = sway * 0.045f * swayAmp;
         pose.rightArmRoll = -sway * 0.045f * swayAmp;
-        pose.leftForearmPitch = (0.5f + 0.5f * std::sin(armPhase * 0.7f)) * 0.030f * armAmp;
-        pose.rightForearmPitch = (0.5f + 0.5f * std::sin(armPhase * 0.7f + 1.2f)) * 0.030f * armAmp;
+        pose.leftForearmPitch =
+            static_cast<float>(0.5 + 0.5 * std::sin(armPhase * 0.7)) * 0.030f * armAmp;
+        pose.rightForearmPitch =
+            static_cast<float>(0.5 + 0.5 * std::sin(armPhase * 0.7 + 1.2)) * 0.030f * armAmp;
 
         // 重心偏移 → 支撑腿与抬腿。
         // 注意：weightShift 也要乘幅度倍率，否则 masterAmount = 0 时重心依旧在平移，
@@ -268,12 +284,14 @@ private:
                 pose.headRoll += std::sin(t * 6.2831853f * 2.0f) * 0.06f * env;
                 break;
             case Gesture::Stretch:
+                // 旧版固定 0.55 rad（≈31°）的抬臂，模型看起来像一直在举手。
+                // 现在由 stretchArmAmount 控制（默认 0.35 倍 ≈11°），是「舒展」而非「举手」。
                 pose.chestScale += env * 0.030f;
-                pose.spinePitch -= env * 0.075f;
-                pose.leftArmPitch -= env * 0.55f;
-                pose.rightArmPitch -= env * 0.55f;
-                pose.leftForearmPitch -= env * 0.30f;
-                pose.rightForearmPitch -= env * 0.30f;
+                pose.spinePitch -= env * 0.045f;
+                pose.leftArmPitch -= env * config_.stretchArmAmount * 0.55f;
+                pose.rightArmPitch -= env * config_.stretchArmAmount * 0.55f;
+                pose.leftForearmPitch -= env * config_.stretchArmAmount * 0.30f;
+                pose.rightForearmPitch -= env * config_.stretchArmAmount * 0.30f;
                 break;
             case Gesture::LookAround:
                 pose.headYaw += std::sin(t * 6.2831853f) * 0.42f * env;
@@ -292,7 +310,8 @@ private:
 
     Config config_;
     std::mt19937 rng_;
-    float time_ = 0.0f;
+    /// 累计时间（秒）。必须是 double：见 Tick() 里的长期运行说明。
+    double time_ = 0.0;
     float gestureTimer_ = 0.0f;
     float gestureTime_ = 0.0f;
     float gestureDuration_ = 1.0f;

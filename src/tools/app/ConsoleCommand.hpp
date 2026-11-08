@@ -150,7 +150,8 @@ inline const char* HelpText() {
     return
         "PPet 控制台指令（输入 help 查看本表，quit 退出）\n"
         "  list                         列出模型（Idx Name Path，* 为当前）\n"
-        "  add <path>                   添加并加载模型\n"
+        "  add <path> [name]            添加并加载模型；默认名=文件名去后缀，重名自动加序号\n"
+        "  rename <idx> [name]          改名；不写名字则恢复默认名\n"
         "  select <idx>                 切换到第 idx 个模型\n"
         "  remove <idx>                 从列表移除第 idx 个模型\n"
         "  debug [section]              输出模型分析（status|res|params|bones|parts|\n"

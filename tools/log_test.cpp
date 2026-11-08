@@ -187,6 +187,61 @@ int main() {
     }
     Check(allShaped, "多线程：每一条都完整且未被其它线程插入");
 
+    // --- 7. 多行日志：首行正常，续行以 "> " 开头，全部带完整前缀 ---
+    {
+        const auto loc = std::source_location::current();
+        ppet::Logger::SetMultiLine(true);
+        Check(ppet::Logger::MultiLine(), "多行模式默认开启");
+        const std::string multi =
+            ppet::Logger::FormatMultiLine(ppet::LogLevel::Warn, loc, "TEST",
+                                          "加载结果 as:\nabcd\nabcd\n");
+        const auto multiLines = SplitLines(multi);
+        Check(multiLines.size() == 3,
+              "多行：3 行（实际 " + std::to_string(multiLines.size()) + "）");
+        if (multiLines.size() == 3) {
+            CheckLineShape(multiLines[0], "多行首行");
+            CheckLineShape(multiLines[1], "多行续行 1");
+            CheckLineShape(multiLines[2], "多行续行 2");
+            Check(Contains(multiLines[0], "加载结果 as:"), "多行：首行是首段文本");
+            Check(Contains(multiLines[1], "> abcd") && Contains(multiLines[2], "> abcd"),
+                  "多行：续行带 > 前缀");
+            Check(Contains(multiLines[1], "[TEST]") && Contains(multiLines[1], "WARN "),
+                  "多行：续行仍带完整模块/级别前缀，可 grep");
+        }
+        Check(multi.find("as:\\n") == std::string::npos,
+              "多行：换行不再被转义成 \\n 字面量");
+        Check(multi.find("\n\n") == std::string::npos, "多行：尾部换行不产生空行");
+
+        // 关闭多行后回到严格单行语义。
+        ppet::Logger::SetMultiLine(false);
+        const std::string single =
+            ppet::Logger::FormatMultiLine(ppet::LogLevel::Warn, loc, "TEST", "as:\nabcd");
+        Check(SplitLines(single).size() == 1, "关闭多行：仍是严格单行");
+        Check(Contains(single, "as:\\nabcd"), "关闭多行：换行被转义");
+        ppet::Logger::SetMultiLine(true);
+    }
+
+    // --- 8. 多行日志真实落盘 ---
+    {
+        const std::string mlPath = (dir / "multiline.log").string();
+        ppet::Logger::Init(mlPath.c_str());
+        ppet::Logger::SetConsoleLevel(ppet::LogLevel::Off);
+        ppet::Logger::SetLevel(ppet::LogLevel::Info);
+        ppet::Logger::SetMultiLine(true);
+        PPET_LOG_TAG("MODEL", "分析 as:\n第一行\n第二行");
+        ppet::Logger::Shutdown();
+        const auto lines = SplitLines(StripBom(ReadAll(mlPath)));
+        Check(lines.size() == 3, "落盘：多行日志写成 3 行（实际 " +
+                                     std::to_string(lines.size()) + "）");
+        bool allTagged = true;
+        for (const auto& line : lines) {
+            if (!Contains(line, "[MODEL]") || !Contains(line, " | ")) allTagged = false;
+        }
+        Check(allTagged, "落盘：每一续行都自带完整前缀");
+        Check(lines.size() >= 2 && Contains(lines[1], "> 第一行"),
+              "落盘：续行以 > 开头");
+    }
+
     fs::remove_all(dir, ec);
     std::printf("== 结果：%s（失败 %d 项）==\n", g_failures == 0 ? "全部通过" : "存在失败",
                 g_failures);

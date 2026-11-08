@@ -1052,6 +1052,27 @@ add_test(NAME log_unit
          COMMAND ppet_log_test
          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
+# 模型显示名：默认名 / 重名序号 / 非法字节路径不抛异常（Windows __char_to_wide 回归）。
+add_executable(ppet_model_naming_test tools/model_naming_test.cpp)
+add_test(NAME model_naming_unit
+         COMMAND ppet_model_naming_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# 长期运行稳定性：帧计数饱和 / 无符号差值 / dt 钳制 / 相位精度。
+add_executable(ppet_stability_test tools/stability_test.cpp)
+add_test(NAME stability_unit
+         COMMAND ppet_stability_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# 控制台命令队列：有界队列、丢弃计数、每帧消费上限。
+add_executable(ppet_console_queue_test
+    tools/console_queue_test.cpp
+    src/tools/app/Console.cpp
+)
+add_test(NAME console_queue_unit
+         COMMAND ppet_console_queue_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
 # 结构化模型加载错误：分类推断 / 明细 / 建议（纯头文件，无需链接模型层）。
 add_executable(ppet_model_error_test tools/model_error_test.cpp)
 add_test(NAME model_error_unit

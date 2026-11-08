@@ -102,6 +102,8 @@ public:
     bool PlayMotion(const std::string& id) override;
     bool StopMotion() override;
     void ReloadRenderer() override;
+    float PreferredFrameAspect() const override;
+    void SetArmRestDrop(float degrees) override;
 
     /// VRM 版本：1 = VRM 1.0，0 = VRM 0.x，-1 = 未识别出 VRM 扩展。
     int VrmVersion() const { return vrmVersion_; }
@@ -361,6 +363,8 @@ private:
     model::IdlePose idlePose_;
     /// 内置骨骼动作播放器（VRM-VPet 风格：点头 / 摇头 / 挥手）。
     model::BoneMotionPlayer boneMotion_;
+    /// 手臂自然下垂修正（度），VRM 的 T-pose 默认水平平举双手。
+    float armRestDropDeg_ = 55.0f;
 
     // --- 眨眼 -------------------------------------------------------------
     /// 距离下一次眨眼的剩余时间。

@@ -6,6 +6,7 @@
 #include <filesystem>
 
 #include <src/tools/core/FileIO.hpp>
+#include <src/tools/core/ModelNaming.hpp>
 #include "nlohmann/json.hpp"
 
 namespace ppet {
@@ -93,12 +94,22 @@ bool ConfigStore::Load(const std::string& path, std::string& error) {
         if (j.contains(key) && j[key].is_string()) out = j[key].get<std::string>();
     };
 
+    const auto get_string_array = [&](const char* key, std::vector<std::string>& out) {
+        if (!j.contains(key) || !j[key].is_array()) return;
+        out.clear();
+        for (const auto& item : j[key]) {
+            if (item.is_string()) out.push_back(item.get<std::string>());
+        }
+    };
+
     get_bool("alwaysOnTop", config_.alwaysOnTop);
     get_bool("ignoreMouseEvents", config_.ignoreMouseEvents);
     get_bool("showTool", config_.showTool);
     get_bool("openAtLogin", config_.openAtLogin);
     get_bool("useGhProxy", config_.useGhProxy);
     get_bool("fullscreenTracking", config_.fullscreenTracking);
+    get_bool("autoFitWindow", config_.autoFitWindow);
+    get_bool("askModelNameOnImport", config_.askModelNameOnImport);
     get_int("windowX", config_.windowX);
     get_int("windowY", config_.windowY);
     get_int("windowWidth", config_.windowWidth);
@@ -106,6 +117,7 @@ bool ConfigStore::Load(const std::string& path, std::string& error) {
     get_float("renderScale", config_.renderScale);
     get_float("trackingRadius", config_.trackingRadius);
     get_float("maxTrackingAngle", config_.maxTrackingAngle);
+    get_float("armRestDropDeg", config_.armRestDropDeg);
 
     if (j.contains("language") && j["language"].is_string()) {
         config_.language = LanguageFromString(j["language"].get<std::string>());
@@ -118,6 +130,10 @@ bool ConfigStore::Load(const std::string& path, std::string& error) {
             if (item.is_string()) config_.modelList.push_back(item.get<std::string>());
         }
     }
+    get_string_array("modelNames", config_.modelNames);
+    // 显示名与路径列表对齐：旧配置没有名字时按「文件名去后缀」补齐，
+    // 名字重复时自动标注序号（纯字符串处理，不做编码转换，不会抛 filesystem 异常）。
+    config_.modelNames = model_naming::ResolveNames(config_.modelList, config_.modelNames);
 
     // 合法性校验：越界的数值回退到默认范围，避免异常配置导致渲染错乱。
     if (config_.renderScale < 0.25f || config_.renderScale > 4.0f) config_.renderScale = 1.0f;
@@ -125,6 +141,9 @@ bool ConfigStore::Load(const std::string& path, std::string& error) {
     if (config_.trackingRadius > 5000.0f) config_.trackingRadius = 5000.0f;
     if (config_.maxTrackingAngle < 0.0f || config_.maxTrackingAngle > 90.0f) {
         config_.maxTrackingAngle = 30.0f;
+    }
+    if (config_.armRestDropDeg < -1.0f || config_.armRestDropDeg > 90.0f) {
+        config_.armRestDropDeg = 0.0f;
     }
     if (config_.windowWidth < 100 || config_.windowWidth > 4000) config_.windowWidth = 350;
     if (config_.windowHeight < 100 || config_.windowHeight > 4000) config_.windowHeight = 600;
@@ -155,7 +174,11 @@ bool ConfigStore::Save(const std::string& path, std::string& error) const {
     j["language"] = LanguageToString(config_.language);
     j["modelPath"] = config_.modelPath;
     j["modelList"] = config_.modelList;
+    j["modelNames"] = model_naming::ResolveNames(config_.modelList, config_.modelNames);
     j["renderScale"] = config_.renderScale;
+    j["autoFitWindow"] = config_.autoFitWindow;
+    j["armRestDropDeg"] = config_.armRestDropDeg;
+    j["askModelNameOnImport"] = config_.askModelNameOnImport;
     j["windowX"] = config_.windowX;
     j["windowY"] = config_.windowY;
     j["windowWidth"] = config_.windowWidth;

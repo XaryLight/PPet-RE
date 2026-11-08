@@ -916,16 +916,25 @@ void PmxModel::ApplyBoneTransforms() {
         bone.currentLocal = bone.currentLocal * Mat4::RotationY(eyeYaw) * Mat4::RotationX(eyePitch);
     }
 
-    // --- 手臂：待机时自然小幅摆动 ---
+    // --- 手臂：自然下垂 + 待机小幅摆动 ---
+    // PMX / VRM 的绑定姿态（A-pose / T-pose）里手臂斜举甚至水平平举，
+    // 桌宠看起来「总抬着手」。localBindPose 只有平移（局部系 == 世界系），
+    // 上臂沿 ±X 延伸，绕 Z 转 φ 时 +X -> (cosφ, sinφ)：
+    //   右臂(+X) 放下需要 φ<0，左臂(-X) 放下需要 φ>0。
+    // 骨骼动作播放期间按 BoneMotionPlayer::Weight() 逐步让位，挥手动作
+    // （BoneMotion 的 lift 取相反符号）仍能完整抬起，淡出后平滑回到自然姿态。
+    constexpr float kDeg2Rad = 3.14159265358979323846f / 180.0f;
+    const float restDrop =
+        armRestDropDeg_ * kDeg2Rad * (1.0f - std::clamp(boneMotion_.Weight(), 0.0f, 1.0f));
     if (leftArmBone_ >= 0 && static_cast<std::size_t>(leftArmBone_) < mesh_.bones.size()) {
         Bone& bone = mesh_.bones[static_cast<std::size_t>(leftArmBone_)];
         bone.currentLocal = bone.currentLocal * Mat4::RotationX(pose.leftArmPitch) *
-                            Mat4::RotationZ(pose.leftArmRoll);
+                            Mat4::RotationZ(pose.leftArmRoll + restDrop);
     }
     if (rightArmBone_ >= 0 && static_cast<std::size_t>(rightArmBone_) < mesh_.bones.size()) {
         Bone& bone = mesh_.bones[static_cast<std::size_t>(rightArmBone_)];
         bone.currentLocal = bone.currentLocal * Mat4::RotationX(pose.rightArmPitch) *
-                            Mat4::RotationZ(pose.rightArmRoll);
+                            Mat4::RotationZ(pose.rightArmRoll - restDrop);
     }
     if (leftElbowBone_ >= 0 && static_cast<std::size_t>(leftElbowBone_) < mesh_.bones.size()) {
         Bone& bone = mesh_.bones[static_cast<std::size_t>(leftElbowBone_)];
@@ -1108,6 +1117,23 @@ void PmxModel::ReloadRenderer() {
     // Renderer::Upload / SetTextures 会在下一帧 EnsureGpuResources() 里重新执行，
     // 旧的 Texture 对象由 vector 析构按 RAII 释放。
     gpuReady_ = false;
+}
+
+float PmxModel::PreferredFrameAspect() const {
+    const float w = mesh_.boundsMax.x - mesh_.boundsMin.x;
+    const float h = mesh_.boundsMax.y - mesh_.boundsMin.y;
+    if (w <= 1e-4f || h <= 1e-4f) return 0.0f;
+    const float aspect = w / h;
+    return (aspect > 0.05f && aspect < 20.0f) ? aspect : 0.0f;
+}
+
+void PmxModel::SetArmRestDrop(float degrees) {
+    if (degrees < 0.0f) {
+        armRestDropDeg_ = 0.0f;  // 显式关闭
+    } else if (degrees > 0.0f) {
+        armRestDropDeg_ = std::min(degrees, 80.0f);
+    }
+    // degrees == 0：保留 PMX 后端默认值（18°）。
 }
 
 void PmxModel::EnsureGpuResources() {
