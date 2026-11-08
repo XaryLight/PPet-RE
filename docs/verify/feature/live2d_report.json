@@ -1,0 +1,134 @@
+{
+  "comparisons": {
+    "action": {
+      "baseline": "neutral",
+      "change_bbox": [
+        61,
+        118,
+        325,
+        387
+      ],
+      "changed_percent": 21.89,
+      "changed_pixels": 15579,
+      "comparable_pixels": 71183,
+      "mean_abs_diff": 2.469,
+      "param_changed_count": 123,
+      "param_samples": [
+        "wuli: 0.000 -> -30.000",
+        "ParamBodyAngleX: -13.784 -> 14.490",
+        "ParamAngleY: -16.424 -> 6.001",
+        "Param10: 5.876 -> -10.108",
+        "Param57: -2.063 -> -17.580",
+        "Param: 0.000 -> -13.043",
+        "Param6: 0.000 -> -13.043",
+        "Param17: 0.000 -> -12.000"
+      ],
+      "param_total_delta": 338.076,
+      "pass": true
+    },
+    "expression": {
+      "baseline": "neutral",
+      "change_bbox": [
+        87,
+        186,
+        298,
+        323
+      ],
+      "changed_percent": 0.36,
+      "changed_pixels": 259,
+      "comparable_pixels": 70976,
+      "mean_abs_diff": 0.046,
+      "param_changed_count": 9,
+      "param_samples": [
+        "ParamEyeLSmile: 0.000 -> 1.000",
+        "ParamEyeRSmile: 0.000 -> 1.000",
+        "ParamBrowLY: 0.000 -> 1.000",
+        "ParamBrowRY: 0.000 -> 1.000",
+        "ParamBodyAngleZ: 2.184 -> 2.248",
+        "ParamBodyAngleX: -13.784 -> -13.720",
+        "ParamAngleY: -16.424 -> -16.440",
+        "ParamAngleX: -7.127 -> -7.114"
+      ],
+      "param_total_delta": 4.163,
+      "pass": true
+    },
+    "lipsync": {
+      "baseline": "neutral",
+      "change_bbox": [
+        87,
+        186,
+        298,
+        323
+      ],
+      "changed_percent": 0.33,
+      "changed_pixels": 231,
+      "comparable_pixels": 70976,
+      "mean_abs_diff": 0.041,
+      "param_changed_count": 6,
+      "param_samples": [
+        "ParamMouthOpenY: 0.019 -> 0.940",
+        "ParamMouthForm: 0.000 -> 0.350",
+        "ParamBodyAngleZ: 2.184 -> 2.250",
+        "ParamBodyAngleX: -13.784 -> -13.718",
+        "ParamAngleY: -16.424 -> -16.445",
+        "ParamAngleX: -7.127 -> -7.131"
+      ],
+      "param_total_delta": 1.426,
+      "pass": true
+    }
+  },
+  "debug_info": {
+    "display_name": "nengdai_2.model3",
+    "expression_status": "待机随机表情：关",
+    "motion_status": "互动动作：touch_special.motion3.json 0.900000s",
+    "render_status": "正常渲染"
+  },
+  "expression_presets": [
+    "happy",
+    "shy",
+    "angry",
+    "surprised"
+  ],
+  "frames_per_state": 60,
+  "gpu": "llvmpipe (LLVM 20.1.2, 256 bits)",
+  "height": 520,
+  "model_path": "/tmp/nengdai/nengdai_2.model3.json",
+  "model_type": "Live2D",
+  "motion_names": [
+    "idle.motion3.json",
+    "touch_special.motion3.json",
+    "mail.motion3.json",
+    "main_3.motion3.json",
+    "wedding.motion3.json",
+    "touch_body.motion3.json",
+    "touch_head.motion3.json",
+    "mission.motion3.json",
+    "main_2.motion3.json",
+    "login.motion3.json",
+    "mission_complete.motion3.json",
+    "complete.motion3.json",
+    "main_1.motion3.json",
+    "home.motion3.json"
+  ],
+  "result": "PASS",
+  "states": [
+    {
+      "png": "docs/verify/feature/live2d_neutral.png",
+      "state": "neutral"
+    },
+    {
+      "png": "docs/verify/feature/live2d_expression.png",
+      "state": "expression"
+    },
+    {
+      "png": "docs/verify/feature/live2d_lipsync.png",
+      "state": "lipsync"
+    },
+    {
+      "png": "docs/verify/feature/live2d_action.png",
+      "state": "action"
+    }
+  ],
+  "tool": "ppet_feature_verify",
+  "width": 400
+}

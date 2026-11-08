@@ -12,6 +12,8 @@
 
 #include <src/tools/core/FileIO.hpp>
 #include <src/tools/core/Log.hpp>
+#include <api/live2d/CubismRenderPlan.hpp>
+#include <api/live2d/MotionQueue.hpp>
 
 // stb_image：本文件是 Live2D 后端唯一一处 STB_IMAGE_IMPLEMENTATION。
 //
@@ -83,6 +85,49 @@ namespace ppet::live2d {
 namespace {
 
 namespace cubism = ppet::live2d::cubism;
+
+/// 把纯逻辑渲染计划里的混合因子翻译成 GL 常量。
+/// 这层映射放在 GL 侧，CubismRenderPlan.hpp 才能保持零依赖、可单测。
+inline GLenum ToGlBlendFactor(BlendFactor factor) {
+    switch (factor) {
+        case BlendFactor::Zero: return GL_ZERO;
+        case BlendFactor::SrcAlpha: return GL_SRC_ALPHA;
+        case BlendFactor::OneMinusSrcAlpha: return GL_ONE_MINUS_SRC_ALPHA;
+        case BlendFactor::DstColor: return GL_DST_COLOR;
+        case BlendFactor::One:
+        default: return GL_ONE;
+    }
+}
+
+/// 收集一帧的 Drawable 元数据，交给 BuildRenderPlan() 决策。
+inline std::vector<DrawableDesc> CollectDrawableDescs(
+    cubism::Model* model, int drawableCount, const std::vector<std::vector<cubism::MaskRef>>& masks,
+    const std::vector<char>& isMaskDrawable, int textureCount) {
+    std::vector<DrawableDesc> descs;
+    descs.reserve(static_cast<std::size_t>(std::max(0, drawableCount)));
+    for (int i = 0; i < drawableCount; ++i) {
+        cubism::Drawable d;
+        if (!cubism::GetDrawable(model, i, d)) continue;
+        DrawableDesc desc;
+        desc.index = i;
+        desc.visible = d.visible;
+        desc.opacity = d.opacity;
+        desc.renderOrder = d.renderOrder;
+        desc.blend = d.additiveBlend
+                         ? DrawableBlend::Additive
+                         : (d.multiplicativeBlend ? DrawableBlend::Multiplicative
+                                                  : DrawableBlend::Normal);
+        desc.hasOwnTexture = d.textureIndex >= 0 && d.textureIndex < textureCount;
+        desc.isMaskDrawable =
+            static_cast<std::size_t>(i) < isMaskDrawable.size() && isMaskDrawable[static_cast<std::size_t>(i)] != 0;
+        if (static_cast<std::size_t>(i) < masks.size() && !masks[static_cast<std::size_t>(i)].empty()) {
+            desc.useMask = true;
+            desc.invertMask = masks[static_cast<std::size_t>(i)][0].inverted;
+        }
+        descs.push_back(desc);
+    }
+    return descs;
+}
 
 /// 视线追踪使用的参数名（Cubism 的标准参数名）。
 constexpr const char* kParamAngleX = "ParamAngleX";
@@ -347,6 +392,8 @@ struct Live2DModel::Impl {
 
     /// 已解析的动作文件。
     std::vector<Motion> motions;
+    /// 与 motions 一一对应的显示名（控制台 action list / action <name> do）。
+    std::vector<std::string> motionNames;
 
     /// 动作组 -> 动作下标，用于随机播放。
     std::vector<std::vector<int>> motionGroups;
@@ -631,6 +678,7 @@ void Live2DModel::LoadMotions() {
     if (!impl_) return;
 
     impl_->motions.clear();
+    impl_->motionNames.clear();
     impl_->motionGroups.clear();
 
     std::vector<MotionGroup> directorGroups;
@@ -692,6 +740,9 @@ void Live2DModel::LoadMotions() {
             }
             entries.push_back(entry);
             impl_->motions.push_back(std::move(motion));
+            impl_->motionNames.push_back(
+                entry.fileName.empty() ? ("motion#" + std::to_string(entry.motionIndex))
+                                       : entry.fileName);
         }
         if (entries.empty()) continue;
 
@@ -756,6 +807,9 @@ void Live2DModel::LoadMotions() {
         dg.hitArea = HitAreaFromGroupName(animation.name, dg.kind);
         dg.motionIndices.push_back(static_cast<int>(impl_->motions.size()));
         impl_->motions.push_back(std::move(motion));
+        impl_->motionNames.push_back(animation.name.empty()
+                                         ? ("motion#" + std::to_string(impl_->motions.size() - 1))
+                                         : animation.name);
         impl_->motionGroups.push_back(dg.motionIndices);
         directorGroups.push_back(std::move(dg));
     }
@@ -805,6 +859,10 @@ void Live2DModel::LoadMotions() {
 
 void Live2DModel::ResolveFaceParameters() {
     faceParamIndex_.clear();
+    // 每次（重新）加载模型都把表情状态机拉回中性。否则上一次加载里手动
+    // 触发、还停在 Hold 的表情会渗进新状态，导致「口型/动作」对比图里
+    // 混着上一个表情，验证结论失真（实测由 ppet_feature_verify 捕获）。
+    idleFaces_.Reset();
 
     // Live2D 表情参数的事实标准命名（Cubism 官方模板 / 绝大多数模型都遵循）。
     // 这里列出「参数名 -> 表情预设里的目标值」，只保留模型真实拥有的那些。
@@ -1159,38 +1217,116 @@ void Live2DModel::UpdateMotion(float deltaTime) {
         }
     }
 
-    const MotionBlend blend = motionDirector_.Blend();
-    if (blend.motionIndex < 0 || blend.weight <= 0.0f) return;
-    if (blend.motionIndex >= static_cast<int>(impl_->motions.size())) return;
+    // 【官方 Framework 风格】队列返回本帧所有生效动作（含正在淡出的旧动作），
+    // 按入队顺序依次采样曲线并叠加；后来的动作按 easing 权重覆盖前面的参数，
+    // 因此动作切换是交叉淡入淡出，不会瞬间跳变。
+    //
+    // 权威依据：Framework/src/Motion/CubismMotionQueueManager.cpp::DoUpdateMotion
+    //           与 CubismMotion.cpp::DoUpdateParameters 的
+    //               v = sourceValue + (value - sourceValue) * paramWeight
+    const std::vector<QueueBlend> blends = motionDirector_.Blends();
+    for (const QueueBlend& blend : blends) {
+        if (blend.motionIndex < 0 || blend.weight <= 0.0f) continue;
+        if (blend.motionIndex >= static_cast<int>(impl_->motions.size())) continue;
 
-    const Motion& motion = impl_->motions[static_cast<std::size_t>(blend.motionIndex)];
-    std::vector<float> values;
-    motion.Sample(blend.time, values);
+        const Motion& motion = impl_->motions[static_cast<std::size_t>(blend.motionIndex)];
+        std::vector<float> values;
+        motion.Sample(blend.time, values);
 
-    for (std::size_t i = 0; i < motion.curves.size() && i < values.size(); ++i) {
-        const MotionCurve& curve = motion.curves[i];
-        // motion3.json 的曲线还可作用于部件不透明度（Target="PartOpacity"），
-        // 本渲染层未建立部件索引映射，暂时只处理 Parameter 曲线。
-        if (curve.target != "Parameter") continue;
-        const int index = cubism::FindParameter(impl_->model, curve.id);
-        if (index < 0) continue;
+        for (std::size_t i = 0; i < motion.curves.size() && i < values.size(); ++i) {
+            const MotionCurve& curve = motion.curves[i];
+            // motion3.json 的曲线还可作用于部件不透明度（Target="PartOpacity"），
+            // 本渲染层未建立部件索引映射，暂时只处理 Parameter 曲线。
+            if (curve.target != "Parameter") continue;
+            const int index = cubism::FindParameter(impl_->model, curve.id);
+            if (index < 0) continue;
 
-        // 与「当前基线」按 fade 权重混合：基线已包含视线/眨眼/呼吸与默认值，
-        // 因此动作淡入/淡出时姿态平滑过渡，淡出结束自然回到待机，不会跳变。
-        const float base = cubism::ParameterValue(impl_->model, index);
-        float value = base + (values[i] - base) * blend.weight;
-        float minValue = -1.0f;
-        float maxValue = 1.0f;
-        if (cubism::ParameterRange(impl_->model, index, minValue, maxValue)) {
-            value = Clamp(value, minValue, maxValue);
+            // 基线是**上一个动作写完之后**的当前值，因此多个动作在队列里自然叠加。
+            const float base = cubism::ParameterValue(impl_->model, index);
+            float value = base + (values[i] - base) * blend.weight;
+            float minValue = -1.0f;
+            float maxValue = 1.0f;
+            if (cubism::ParameterRange(impl_->model, index, minValue, maxValue)) {
+                value = Clamp(value, minValue, maxValue);
+            }
+            cubism::SetParameterValue(impl_->model, index, value);
         }
-        cubism::SetParameterValue(impl_->model, index, value);
     }
 }
 
 bool Live2DModel::OnInteract(float nx, float ny) {
     if (!loaded_) return false;
     return motionDirector_.Interact(nx, ny);
+}
+
+std::vector<std::string> Live2DModel::MotionNames() const {
+    std::vector<std::string> out;
+    if (!impl_) return out;
+    out.reserve(impl_->motionNames.size());
+    // 同名动作加 #序号 后缀，保证每个名字都能被 action do 精确命中。
+    std::map<std::string, int> seen;
+    for (std::size_t i = 0; i < impl_->motionNames.size(); ++i) {
+        std::string name = impl_->motionNames[i];
+        if (name.empty()) name = "motion#" + std::to_string(i);
+        const int nth = seen[name]++;
+        if (nth > 0) name += "#" + std::to_string(nth);
+        out.push_back(std::move(name));
+    }
+    return out;
+}
+
+bool Live2DModel::PlayMotion(const std::string& id) {
+    if (!loaded_ || !impl_) return false;
+    // 1) 精确匹配动作显示名（action list 里列出的名字）。
+    const std::vector<std::string> names = MotionNames();
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        if (names[i] == id) {
+            return motionDirector_.PlayMotionIndex(static_cast<int>(i), MotionPriority::Force,
+                                                   names[i]);
+        }
+    }
+    // 2) 按动作组名触发（组里多个动作时随机挑一个）。
+    if (motionDirector_.PlayGroup(id, MotionPriority::Force)) return true;
+    // 3) 宽松匹配：名字包含输入串即可（方便敲一半）。
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        if (names[i].find(id) != std::string::npos) {
+            return motionDirector_.PlayMotionIndex(static_cast<int>(i), MotionPriority::Force,
+                                                   names[i]);
+        }
+    }
+    return false;
+}
+
+bool Live2DModel::StopMotion() {
+    if (!loaded_) return false;
+    motionDirector_.StopAll();
+    return true;
+}
+
+void Live2DModel::ReloadRenderer() {
+    if (!loaded_ || !impl_) return;
+    // 释放全部 GPU 资源后重建纹理；program / VAO / 遮罩关系由下一帧
+    // Render() 里的惰性重建路径自动恢复（官方 Framework 也是这个思路：
+    // 渲染器与模型数据分离，重建渲染器不需要重新解析 moc3）。
+    ReleaseGraphics();
+    LoadTextures();
+    impl_->masksResolved = false;
+}
+
+std::vector<std::pair<std::string, std::string>> Live2DModel::RenderResources() const {
+    std::vector<std::pair<std::string, std::string>> out;
+    if (!impl_) return out;
+    if (!impl_->manifest.mocPath.empty()) {
+        out.emplace_back("moc3", impl_->manifest.mocPath);
+    }
+    for (const std::string& path : impl_->manifest.texturePaths) {
+        out.emplace_back("texture", path);
+    }
+    if (!impl_->manifest.physicsPath.empty()) {
+        out.emplace_back("physics3", impl_->manifest.physicsPath);
+    }
+    out.emplace_back("motions", std::to_string(impl_->motions.size()) + " 条动作");
+    return out;
 }
 
 void Live2DModel::ApplyMouth(float deltaTime) {
@@ -1219,9 +1355,16 @@ bool Live2DModel::SetLipSync(float open, float form) {
 }
 
 bool Live2DModel::SetExpressionPreset(const std::string& id) {
-    // Live2D 的「表情」通常是动作组（如 ExpHappy），用 MotionDirector 播放。
-    // 找不到对应组时退回普通播放（Force 优先级必定触发）。
-    return motionDirector_.PlayGroup(id, MotionPriority::Expression);
+    // 通道 1：模型自带的表情类动作组（如 ExpHappy），效果最好，优先播放。
+    if (motionDirector_.PlayGroup(id, MotionPriority::Expression)) return true;
+
+    // 通道 2：参数级表情预设回退。
+    // 大量模型（含实测的 nengdai_2）只有 ParamBrow* / ParamEye*Smile 等表情参数、
+    // 完全没有表情动作组。此时必须走 IdleFaces 的参数预设，否则手动切换表情与
+    // 控制台 expression <id> 对这些模型一律返回 false、画面毫无变化。
+    // IdleFaces 允许「手动触发」独立于「待机随机表情」开关播放，因此这里
+    // 即使随机表情被用户关掉，手动切换依然能生效。
+    return idleFaces_.TriggerId(id);
 }
 
 void Live2DModel::SetRandomIdleExpression(bool enabled) {
@@ -1270,12 +1413,19 @@ float Live2DModel::RandomExpressionWait() {
 }
 
 std::vector<std::string> Live2DModel::ExpressionPresetIds() const {
-    // Live2D 的表情就是「表情类动作组」：把 MotionGroupKind::Expression 的组名列出来。
+    // Live2D 表情有两条通道，都要列出来：
+    //   1) 表情类动作组（MotionGroupKind::Expression）；
+    //   2) 参数级小表情预设（IdleFaces，按模型实际拥有的表情参数生成）。
+    // 只列通道 1 会让「只有表情参数、没有 exp 动作组」的模型在控制台
+    // expression list 里显示为空，用户根本无从操作表情。
     std::vector<std::string> ids;
     for (const MotionGroup& group : motionDirector_.Groups()) {
         if (group.kind == MotionGroupKind::Expression && !group.name.empty()) {
             ids.push_back(group.name);
         }
+    }
+    for (const std::string& id : idleFaces_.PresetIds()) {
+        if (std::find(ids.begin(), ids.end(), id) == ids.end()) ids.push_back(id);
     }
     return ids;
 }
@@ -1376,57 +1526,43 @@ void Live2DModel::Render(const RenderContext& ctx) {
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_CULL_FACE);
 
-    // --- 按渲染顺序绘制 ---
+    // --- 官方 Framework 风格的渲染决策（纯逻辑，可单测）---
     //
-    // Core 的 RenderOrder 与 DrawOrder 不同：前者是考虑了遮罩关系之后的
-    // 实际绘制顺序，必须按它排序，否则部件的遮挡关系会错。
-    std::vector<int> order(static_cast<std::size_t>(std::max(0, drawableCount)));
-    for (int i = 0; i < drawableCount; ++i) order[static_cast<std::size_t>(i)] = i;
-    std::stable_sort(order.begin(), order.end(), [this](int a, int b) {
-        cubism::Drawable da;
-        cubism::Drawable db;
-        const bool oka = cubism::GetDrawable(impl_->model, a, da);
-        const bool okb = cubism::GetDrawable(impl_->model, b, db);
-        if (!oka || !okb) return a < b;
-        return da.renderOrder < db.renderOrder;
-    });
+    // 决策与执行分离：CubismRenderPlan 只产出「画哪些部件、按什么顺序、
+    // 用什么混合/premultiplied 颜色」，本循环只负责把指令翻译成 GL 调用。
+    // 这样「渲染顺序错」「RGB 忘了乘 opacity」「加法混合 Alpha 累加」这类
+    // 问题都能在纯逻辑单测里被抓住，而不必依赖截图肉眼比对。
+    const std::vector<DrawableDesc> descs = CollectDrawableDescs(
+        impl_->model, drawableCount, impl_->masks, impl_->isMaskDrawable,
+        static_cast<int>(impl_->textures.size()));
+    const std::vector<RenderOp> plan = BuildRenderPlan(descs, 1.0f);
 
-    for (int index : order) {
-        // 被用作遮罩的部件不直接画进主画面：
-        // 它只提供「形状」，真正显示的是被它裁剪的那些部件。
-        //
-        // 【为什么必须这样】遮罩部件在 Cubism 里没有自己的贴图
-        // （纹理索引为 -1）。早期实现把「无效纹理」兜底成一张 1x1 白图，
-        // 结果遮罩部件变成一大块白色矩形盖在角色身上——就是「渲染偏白」的成因。
-        if (index >= 0 && static_cast<std::size_t>(index) < impl_->isMaskDrawable.size() &&
-            impl_->isMaskDrawable[static_cast<std::size_t>(index)]) {
-            continue;
-        }
-
-        const std::vector<cubism::MaskRef> empty;
+    const std::vector<cubism::MaskRef> empty;
+    for (const RenderOp& op : plan) {
+        const int index = op.drawableIndex;
         const std::vector<cubism::MaskRef>& masks =
             (index >= 0 && static_cast<std::size_t>(index) < impl_->masks.size())
                 ? impl_->masks[static_cast<std::size_t>(index)]
                 : empty;
 
-        if (masks.empty()) {
-            glUniform1f(impl_->uniformUseMask, 0.0f);
-            glUniform1f(impl_->uniformInvertMask, 0.0f);
-            DrawDrawable(index, transform, false);
-            continue;
-        }
-
-        // 有遮罩：先把遮罩画进遮罩纹理，再带着遮罩画本体。
-        if (!RenderMaskTexture(masks, transform, ctx)) {
+        if (op.useMask && !masks.empty() && RenderMaskTexture(masks, transform, ctx)) {
+            glUniform1f(impl_->uniformUseMask, 1.0f);
+            glUniform1f(impl_->uniformInvertMask, op.invertMask ? 1.0f : 0.0f);
+        } else {
             // 遮罩纹理不可用（GL 资源创建失败）：退化为不裁剪，
             // 至少让模型可见，而不是整块消失。
             glUniform1f(impl_->uniformUseMask, 0.0f);
             glUniform1f(impl_->uniformInvertMask, 0.0f);
-            DrawDrawable(index, transform, false);
-            continue;
         }
-        glUniform1f(impl_->uniformUseMask, 1.0f);
-        glUniform1f(impl_->uniformInvertMask, masks[0].inverted ? 1.0f : 0.0f);
+
+        // 混合模式：官方三套 glBlendFuncSeparate（Add/Mult 的 Alpha 用 ZERO/ONE）。
+        const BlendFunc& bf = op.blendFunc;
+        glBlendFuncSeparate(ToGlBlendFactor(bf.srcRgb), ToGlBlendFactor(bf.dstRgb),
+                            ToGlBlendFactor(bf.srcA), ToGlBlendFactor(bf.dstA));
+        // 官方 GetModelColorWithOpacity：premultiplied 下 RGB 与 A 一起乘 opacity。
+        glUniform4f(impl_->uniformBaseColor, op.baseColor.r, op.baseColor.g,
+                    op.baseColor.b, op.baseColor.a);
+
         DrawDrawable(index, transform, false);
     }
 
@@ -1538,10 +1674,24 @@ bool Live2DModel::RenderMaskTexture(const std::vector<cubism::MaskRef>& masks,
 
     // 只画第一个遮罩：Cubism 3 以后每个部件实际只挂一个遮罩，
     // 多遮罩叠加的语义在官方渲染器里也是「取第一个」。
+    // 遮罩通道用普通 alpha 混合 + 白色实心（形状由几何决定），
+    // baseColor 按遮罩部件自身不透明度做 premultiplied 缩放。
+    {
+        cubism::Drawable maskDrawable;
+        float maskOpacity = 1.0f;
+        if (cubism::GetDrawable(impl_->model, masks[0].drawableIndex, maskDrawable)) {
+            maskOpacity = maskDrawable.opacity;
+        }
+        const ModelColor color = ModelColorWithOpacity(maskOpacity);
+        glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+        glUniform4f(impl_->uniformBaseColor, color.r, color.g, color.b, color.a);
+    }
     DrawDrawable(masks[0].drawableIndex, transform, true);
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glBindTexture(GL_TEXTURE_2D, target.texture);
+    // 遮罩纹理已经在 GL_TEXTURE1 上绑定好了；这里只恢复主画面的 viewport，
+    // 不能把遮罩纹理绑到 TEXTURE0（会覆盖部件贴图）。
+    glViewport(0, 0, ctx.viewportWidth, ctx.viewportHeight);
     glActiveTexture(GL_TEXTURE0);
     return true;
 }
@@ -1616,44 +1766,12 @@ void Live2DModel::DrawDrawable(int index, const Mat4& transform, bool maskPass) 
         buffer.indexCount = drawable.indexCount;
     }
 
-    // --- 混合模式 ---
+    // --- 混合模式 / baseColor 由渲染计划统一设置 ---
     //
-    // 【权威依据】官方 Cubism Framework 的 OpenGL 渲染器
-    // （Framework/src/Rendering/OpenGL/CubismShader_OpenGLES2.cpp）
-    // 用 glBlendFuncSeparate 分别设置 RGB 与 Alpha：
-    //   Normal：RGB = ONE / ONE_MINUS_SRC_ALPHA，  A = ONE / ONE_MINUS_SRC_ALPHA
-    //   Add   ：RGB = ONE / ONE，                  A = ZERO / ONE
-    //   Mult  ：RGB = DST_COLOR / ONE_MINUS_SRC_ALPHA，A = ZERO / ONE
-    //
-    // 【为什么 Alpha 通道必须单独设】
-    //   加法/乘法混合是**发光特效**（光柱、辉光），它们的 RGB 要叠加，
-    //   但 Alpha 不能跟着累加。桌宠窗口是透明叠加窗口，
-    //   Alpha 累加会让整块光效变成「不透明的白底」，
-    //   角色被自己的特效盖住 —— 表现为「渲染异常偏白」。
-    //   官方用 A = ZERO / ONE 正是为此：RGB 叠加，Alpha 保持底图不变。
-    //
-    // 早期实现用 glBlendFunc(GL_ONE, GL_ONE)（RGB 与 Alpha 一起累加），
-    // 于是模型里任何一个加法光效部件都会把画面刷白。
-    if (maskPass) {
-        // 遮罩通道统一用普通 alpha 混合：遮罩纹理里存的是覆盖度，
-        // 加法/乘法混合会让遮罩范围失真。
-        glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-    } else if (drawable.additiveBlend) {
-        // 加法混合（发光）：RGB 相加，Alpha 保持不变。
-        //
-        // 【权威依据】官方 Cubism Framework 的 OpenGL 渲染器
-        // （Framework/src/Rendering/OpenGL/CubismShader_OpenGLES2.cpp）
-        // 对 Add 模式设置：RGB = ONE / ONE，A = ZERO / ONE。
-        // Alpha 通道单独设为 ZERO/ONE（而不是跟着累加），
-        // 意思是「RGB 叠加，但这个特效不贡献不透明度」——
-        // 否则桌宠的透明窗口会变成一块不透明的白底。
-        glBlendFuncSeparate(GL_ONE, GL_ONE, GL_ZERO, GL_ONE);
-    } else if (drawable.multiplicativeBlend) {
-        // 乘法混合：RGB = D * (1 - S_a) + S * D，Alpha 保持不变。
-        glBlendFuncSeparate(GL_DST_COLOR, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
-    } else {
-        glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-    }
+    // 决策层在 CubismRenderPlan.hpp（官方 Framework 的三套 glBlendFuncSeparate
+    // 与 premultiplied GetModelColorWithOpacity），执行层在 Live2DModel::Render()。
+    // 本函数只负责几何、纹理与 glDrawElements，不再自己决定 GL 状态。
+    // 遮罩通道（maskPass）由 RenderMaskTexture() 设置普通混合与白色 baseColor。
 
     // --- 纹理 ---
     GLuint texture = impl_->whiteTexture;
@@ -1662,18 +1780,6 @@ void Live2DModel::DrawDrawable(int index, const Mat4& transform, bool maskPass) 
     }
     if (!texture) return;
     glBindTexture(GL_TEXTURE_2D, texture);
-
-    // 部件不透明度通过颜色 uniform 传入。
-    //
-    // 【官方语义】官方 Cubism 的 GetModelColorWithOpacity 在 premultiplied
-    // 模式下会把 RGB 也乘上不透明度：
-    //     modelColorRGBA.A *= opacity;
-    //     modelColorRGBA.R *= modelColorRGBA.A;  // 同理 G / B
-    // 这里照此实现。只设 A 而不缩放 RGB 的后果是：
-    // 部件越透明，颜色却越亮——加法混合（发光）部件尤其明显，
-    // 一点微光就会把整块画面刷白。
-    const float op = drawable.opacity;
-    glUniform4f(impl_->uniformBaseColor, op, op, op, op);
 
     glDrawElements(GL_TRIANGLES, drawable.indexCount, GL_UNSIGNED_SHORT, nullptr);
     glBindVertexArray(0);
@@ -1804,12 +1910,18 @@ ModelDebugInfo Live2DModel::DebugInfo() const {
             }
             info.expressionStatus = status;
 
-            std::string summary = "表情动作组 " + std::to_string(expIds.size()) +
-                                  " / 表情参数预设 " +
-                                  std::to_string(idleFaces_.Presets().size());
-            if (!idleFaces_.Empty()) {
-                summary += " / 可用小表情：" + std::to_string(idleFaces_.Presets().size());
+            // expIds 是「表情动作组 + 参数预设」的合并列表，可切换表情总数用它；
+            // 动作组数量单独统计，否则会把参数预设误报成「表情动作组」。
+            int motionExpGroups = 0;
+            for (const MotionGroup& group : motionDirector_.Groups()) {
+                if (group.kind == MotionGroupKind::Expression && !group.name.empty()) {
+                    ++motionExpGroups;
+                }
             }
+            std::string summary = "表情动作组 " + std::to_string(motionExpGroups) +
+                                  " / 表情参数预设 " +
+                                  std::to_string(idleFaces_.Presets().size()) +
+                                  " / 可切换表情 " + std::to_string(expIds.size());
             info.expressionSummary = summary;
         }
         info.properties.push_back("动作系统=Idle 随机待机 + HitArea 互动（优先级打断 / 淡入淡出）");

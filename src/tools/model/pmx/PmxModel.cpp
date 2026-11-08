@@ -293,6 +293,14 @@ bool PmxModel::Load(const std::string& path, std::string& error) {
     drawCalls_ = 0;
     error.clear();
 
+    // 把 VRM-VPet 风格的内置骨骼动作注册进随机待机池。
+    // 早期只声明了 boneMotion_ 播放器却没有注册任何动作，导致 PMX / VRM
+    // 待机时只有连续微动、永远不会有「点头 / 摇头 / 挥手」这类成套动作。
+    boneMotion_.ClearRandomMotions();
+    for (const model::BoneMotion& motion : model::bone_motions::Builtin()) {
+        boneMotion_.AddRandomMotion(motion);
+    }
+
     PmxDocument doc;
     if (!ParsePmx(path, doc, error)) {
         return false;
@@ -1066,6 +1074,40 @@ void PmxModel::Render(const RenderContext& ctx) {
         renderer_.DrawOutline(viewProj, skinningMatrices_, kLightDir, 1.0f);
         drawCalls_ += mesh_.subMeshes.size();
     }
+}
+
+std::vector<std::string> PmxModel::MotionNames() const {
+    std::vector<std::string> out;
+    for (const model::BoneMotion& motion : model::bone_motions::Builtin()) {
+        out.push_back(motion.id);
+    }
+    return out;
+}
+
+bool PmxModel::PlayMotion(const std::string& id) {
+    model::BoneMotion motion;
+    if (!model::bone_motions::Find(id, motion)) {
+        // 宽松匹配：允许只敲名字前缀。
+        for (const model::BoneMotion& candidate : model::bone_motions::Builtin()) {
+            if (candidate.id.find(id) != std::string::npos) {
+                motion = candidate;
+                return boneMotion_.Play(motion);
+            }
+        }
+        return false;
+    }
+    return boneMotion_.Play(motion);
+}
+
+bool PmxModel::StopMotion() {
+    boneMotion_.Stop();
+    return true;
+}
+
+void PmxModel::ReloadRenderer() {
+    // Renderer::Upload / SetTextures 会在下一帧 EnsureGpuResources() 里重新执行，
+    // 旧的 Texture 对象由 vector 析构按 RAII 释放。
+    gpuReady_ = false;
 }
 
 void PmxModel::EnsureGpuResources() {

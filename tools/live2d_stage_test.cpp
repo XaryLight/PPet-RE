@@ -6,6 +6,7 @@
 // 多边形热区命中与长期态 / 口型导演平滑。
 //
 // 纯逻辑、零 Cubism 依赖，可脱离 SDK 单测。
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <map>
@@ -224,6 +225,90 @@ void TestMouthDirector() {
     Check(maxOpen > 0.7f, "说话时开口度显著上升");
 }
 
+/// 回归：手动触发表情必须独立于「待机随机表情」开关。
+///
+/// 实测缺陷：SetEnabled(false) 后 Tick() 直接 return，Trigger() 虽然把相位设成
+/// FadeIn，phaseTime_ 却永远不推进，Envelope() 恒为 0 —— 控制台
+/// expression <id> 与托盘「立即触发」在开关关闭时全部静默失效。
+void TestManualExpressionWhenDisabled() {
+    std::printf("-- 手动触发表情不受「自动随机」开关影响 --\n");
+    IdleFaces faces;
+    std::vector<FacePreset> presets;
+    FacePreset happy;
+    happy.id = "happy";
+    happy.name = "开心";
+    happy.params = {{"ParamBrowLY", 1.0f}, {"ParamEyeLSmile", 1.0f}};
+    presets.push_back(happy);
+    FacePreset shy;
+    shy.id = "shy";
+    shy.name = "害羞";
+    shy.params = {{"ParamCheek", 1.0f}};
+    presets.push_back(shy);
+    faces.SetPresets(std::move(presets), 23u);
+
+    const std::vector<std::string> ids = faces.PresetIds();
+    Check(ids.size() == 2 && ids[0] == "happy" && ids[1] == "shy",
+          "PresetIds 列出全部预设（供控制台 expression list）");
+
+    // 关闭自动随机：Tick 不应自己产生表情。
+    faces.SetEnabled(false);
+    bool autoFired = false;
+    for (int i = 0; i < 200; ++i) {
+        if (!faces.Tick(0.1f).empty()) autoFired = true;
+    }
+    Check(!autoFired, "关闭自动随机后不会自己触发表情");
+
+    // 手动随机触发：即使开关关闭，也必须完整播放一次并回到中性。
+    Check(faces.Trigger(), "禁用状态下 Trigger 仍返回成功");
+    Check(!faces.CurrentId().empty(), "触发后进入表情状态");
+    float maxWeight = 0.0f;
+    bool sawParam = false;
+    for (int i = 0; i < 200; ++i) {
+        for (const auto& f : faces.Tick(0.05f)) {
+            sawParam = true;
+            maxWeight = std::max(maxWeight, f.weight);
+        }
+    }
+    Check(sawParam, "手动触发表情参数确实被输出");
+    Check(maxWeight > 0.5f, "淡入到停留阶段包络接近峰值");
+    Check(faces.CurrentId().empty(), "播完后自动回到中性");
+
+    // 播完后不再续播（没有新的自动随机）。
+    bool firedAgain = false;
+    for (int i = 0; i < 200; ++i) {
+        if (!faces.Tick(0.1f).empty()) firedAgain = true;
+    }
+    Check(!firedAgain, "手动表情结束后不会自动续播");
+
+    // 按 id 精确触发：控制台 expression <id> / 手动切表情的底层能力。
+    Check(faces.TriggerId("shy"), "TriggerId 命中 shy");
+    Check(faces.CurrentId() == "shy", "当前表情为 shy");
+    bool sawCheek = false;
+    for (int i = 0; i < 200; ++i) {
+        for (const auto& f : faces.Tick(0.05f)) {
+            if (f.name == "ParamCheek") sawCheek = true;
+        }
+    }
+    Check(sawCheek, "shy 预设的 ParamCheek 被输出");
+    Check(!faces.TriggerId("not_exist"), "未知 id 返回 false");
+    Check(faces.CurrentId().empty(), "未知 id 不改变当前状态");
+
+    // wink 覆盖层：触发后应出现，且相位推进后自动到期（不再残留权重 0 的死项）。
+    IdleFaces wink;
+    wink.TriggerWink();
+    bool winkSeen = false;
+    bool winkEnded = false;
+    for (int i = 0; i < 40; ++i) {
+        const auto fs = wink.Tick(0.02f);
+        bool has = false;
+        for (const auto& f : fs) if (f.name == "ParamWinkL") has = true;
+        if (has) winkSeen = true;
+        else if (winkSeen) winkEnded = true;
+    }
+    Check(winkSeen, "wink 覆盖层出现");
+    Check(winkEnded, "wink 相位推进后自动结束");
+}
+
 }  // namespace
 
 int main() {
@@ -234,6 +319,7 @@ int main() {
     TestIdleDirector();
     TestIdleFaces();
     TestIdleFacePresets();
+    TestManualExpressionWhenDisabled();
     TestRegionSet();
     TestMouthDirector();
     std::printf("=== %d 项检查，失败 %d ===\n", checks, failures);

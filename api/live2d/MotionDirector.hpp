@@ -21,6 +21,8 @@
 //     上=头 / 中=身 / 下=腿 / 左=左手 / 右=右手，与 Cubism 桌宠通用做法一致。
 #pragma once
 
+#include <api/live2d/MotionQueue.hpp>
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -266,6 +268,7 @@ public:
         motionCount_ = motionCount;
         // 稳定随机源：与 Live2DModel 旧实现一致的固定种子，行为可复现。
         rng_.seed(20240101u);
+        queue_.Reset();
         Reset();
         // 不在这里选首个待机动作：动作时长/淡入淡出由随后的 SetMotionMeta()
         // 提供，若在此时 StartClip 会读到空元数据，导致首个动作永不结束。
@@ -292,17 +295,19 @@ public:
     ///   - 互动动作可以打断待机动作；更高优先级互动可以打断更低优先级互动。
     void Tick(float deltaTime) {
         const float dt = std::max(0.0f, deltaTime);
+        // 【官方 Framework 风格】队列负责推进所有活动动作（含被打断、正在淡出的旧
+        // 动作）并按官方 easing 公式算权重。current_ 只是队列「主动作」的镜像，
+        // 用于兼容 Blend() / Current() / StatusText() 这一套旧接口。
+        queue_.Tick(dt);
         if (current_.motionIndex >= 0) {
-            current_.time += dt;
-            const float dur = current_.duration;
-            if (current_.loop && dur > 0.0f) {
-                current_.time = std::fmod(current_.time, dur);
-            } else if (dur > 0.0f && current_.time >= dur) {
+            const MotionQueueEntry* primary = queue_.Primary();
+            if (!primary || primary->motionIndex != current_.motionIndex) {
+                // 主动作播完（非循环）：进入冷却，结束当帧不再扣冷却 / 起新动作，
+                // 否则一次大 dt（卡顿帧）会用同一个 dt 把刚设置的冷却一并透支。
                 FinishClip();
-                // 结束当帧不再扣冷却 / 起新动作：否则一次大 dt（卡顿帧）会用
-                // 同一个 dt 把刚设置的冷却一并透支，破坏「待机间隔」的语义。
                 return;
             }
+            current_.time = primary->time;
         }
         if (current_.motionIndex < 0) {
             if (idleCooldown_ > 0.0f) {
@@ -385,7 +390,18 @@ public:
         return false;
     }
 
-    /// 当前动作的混合输出。weight 综合了淡入与淡出。
+    /// 按全局动作下标精确触发（控制台 action <name> do 用）。
+    /// @param label 诊断里显示的名字（通常是动作文件名或组名）。
+    bool PlayMotionIndex(int motionIndex, MotionPriority priority,
+                         const std::string& label) {
+        if (motionIndex < 0 || static_cast<std::size_t>(motionIndex) >= motionCount_) {
+            return false;
+        }
+        StartClip(motionIndex, priority, label);
+        return true;
+    }
+
+    /// 当前动作的混合输出（线性 fade 权重，兼容既有调用与单测）。
     MotionBlend Blend() const {
         MotionBlend blend;
         if (current_.motionIndex < 0) return blend;
@@ -394,6 +410,26 @@ public:
         blend.weight = FadeWeight();
         return blend;
     }
+
+    /// 【官方 Framework 风格】本帧所有生效动作及其 easing 权重。
+    ///
+    /// 与 Blend() 的区别：Blend() 只返回主动作、用线性 fade；
+    /// Blends() 返回**队列里的全部动作**（含正在淡出的旧动作），
+    /// 调用方按数组顺序依次采样曲线并以 weight 叠加，即官方的交叉淡入淡出：
+    ///     v = sourceValue + (value - sourceValue) * weight
+    /// Live2DModel::UpdateMotion() 使用这一路输出。
+    std::vector<QueueBlend> Blends() const { return queue_.Blends(); }
+
+    /// 立刻停止所有动作（控制台 action stop / 重载模型用）。
+    /// 之后进入短冷却，待机循环会自然重新起来。
+    void StopAll() {
+        queue_.StopAll();
+        current_ = ActiveClip();
+        idleCooldown_ = 0.2f;
+    }
+
+    /// 诊断：当前队列里有几条动作（含淡出中的）。
+    std::size_t ActiveMotionCount() const { return queue_.Size(); }
 
     const ActiveClip& Current() const { return current_; }
     bool HasInteractionGroups() const {
@@ -435,6 +471,7 @@ private:
     void Reset() {
         current_ = ActiveClip();
         idleCooldown_ = 0.0f;
+        queue_.Reset();
     }
 
     float MetaAt(const std::vector<float>& v, std::size_t i) const {
@@ -455,10 +492,17 @@ private:
         // 否则播完一轮就停 3~7 秒，桌宠看起来是「动一下、停很久」。
         current_.loop = static_cast<std::size_t>(motionIndex) < loops_.size() &&
                        loops_[static_cast<std::size_t>(motionIndex)];
+
+        // 同步进官方 Framework 风格队列：新动作入队会把旧动作标记为淡出，
+        // 于是动作切换是交叉淡入淡出，而不是旧姿态瞬间消失。
+        queue_.StartMotion(motionIndex, current_.duration, current_.fadeIn,
+                           current_.fadeOut, current_.loop,
+                           static_cast<int>(priority), groupName, queue_.Clock());
     }
 
     void FinishClip() {
         const bool wasInteraction = current_.priority >= MotionPriority::Normal;
+        queue_.FinishPrimary();
         current_ = ActiveClip();
         if (wasInteraction) {
             // 互动结束：短冷却后回到待机，不要立刻又随机起互动。
@@ -536,6 +580,8 @@ private:
     std::size_t motionCount_ = 0;
     std::mt19937 rng_{20240101u};
     ActiveClip current_;
+    /// 官方 Cubism Framework 风格的动作队列（交叉淡入淡出）。
+    MotionQueue queue_;
     float idleCooldown_ = 0.0f;
     float idleCooldownBase_ = 3.0f;
     float idleCooldownJitter_ = 4.0f;

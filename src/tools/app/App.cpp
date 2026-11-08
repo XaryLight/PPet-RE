@@ -331,6 +331,9 @@ bool App::Initialize(std::string& error) {
         settingsPanel_.Show();
     }
 
+    // 交互式控制台：后台线程读 stdin，命令在主循环 ProcessInput() 里执行。
+    SetupConsole();
+
     running_ = true;
     return true;
 }
@@ -822,7 +825,7 @@ void App::OnTrayItem(const std::string& id, bool checked) {
         }
     } else if (id == kIdFeedback) {
         std::string openError;
-        if (!OpenExternalUrl("https://github.com/zenghongtu/PPet/issues", openError)) {
+        if (!OpenExternalUrl("https://github.com/XaryLight/PPet-RE/issues", openError)) {
             PPET_LOG_ERR("%s\n", openError.c_str());
         }
     } else if (id == kIdAbout) {
@@ -1001,6 +1004,10 @@ void App::CollectFrameEvidence(bool wantPreview) {
 void App::ProcessInput() {
     // 按键处理：保留原项目的快捷键习惯。
     // GLFW 的键盘回调已由平台层分发，这里通过轮询补充处理。
+    //
+    // 控制台命令必须在主线程执行（要访问模型 / 配置 / Qt 气泡），
+    // 后台线程只负责把 stdin 的行放进队列，这里取出来跑。
+    console_.Poll();
 }
 
 void App::Run() {
@@ -1162,6 +1169,7 @@ void App::Run() {
 }
 
 void App::Shutdown() {
+    console_.Stop();
     cursorTracker_.Stop();
     debugPanel_.Shutdown();
     settingsPanel_.Shutdown();

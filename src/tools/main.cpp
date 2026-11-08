@@ -67,6 +67,21 @@ int main(int argc, char** argv) {
              ppet::LogLevelName(ppet::Logger::ConsoleLevel()));
 
     ppet::App app;
+    // 控制台选项（与日志选项一样不消费 argv，QApplication 会保留未知参数）。
+    //   --console               即使 stdin 不是终端也启动交互式读取
+    //   --command="list;debug status;speak 你好"
+    //                            启动时按顺序执行一批指令，便于脚本化验收
+    bool consoleForce = false;
+    std::string consoleScript;
+    for (int i = 1; i < argc; ++i) {
+        const std::string_view arg(argv[i] ? argv[i] : "");
+        if (arg == "--console") {
+            consoleForce = true;
+        } else if (arg.starts_with("--command=")) {
+            consoleScript = std::string(arg.substr(std::string_view("--command=").size()));
+        }
+    }
+    app.SetConsoleOptions(consoleForce, consoleScript);
 
     std::string error;
     if (!app.Initialize(error)) {

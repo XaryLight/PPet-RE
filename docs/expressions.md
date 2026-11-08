@@ -174,6 +174,32 @@ Live2D 的「表情」有**两条通道**：
 Live2D 会**自动回退**：模型没有表情动作组时，用表情参数预设兜底，
 所以随机表情对任何模型都有效。
 
+### 手动切换表情的双通道回退
+
+「托盘 → 表情」与控制台 `expression <id>` 走的是 `IModel::SetExpressionPreset(id)`。
+Live2D 侧有两条通道，缺一不可：
+
+| 通道 | 条件 | 行为 |
+| --- | --- | --- |
+| 表情动作组 | 模型有 `Exp*` 类动作组 | `MotionDirector::PlayGroup(id, Expression)` 播放原生表情动作 |
+| 参数级预设 | 没有动作组，只有 `ParamBrow*` / `ParamEye*Smile` / `ParamCheek` 等参数 | `IdleFaces::TriggerId(id)` 淡入 → 停留 → 淡出 |
+
+实测缺陷（由 `ppet_feature_verify` 捕获）：`nengdai_2` 这类模型只有参数、没有动作组，
+旧实现第一条通道失败后直接返回 `false`，手动切换表情与控制台 `expression happy`
+都毫无反应；且「待机随机表情」开关关闭时 `IdleFaces::Tick()` 直接返回，
+连 `Trigger()` 触发的相位都不推进，包络恒为 0。
+
+修复后：
+
+- `SetExpressionPreset()` 依次尝试两条通道；
+- `ExpressionPresetIds()` 合并两类 id，`expression list` 不再为空；
+- `IdleFaces` 用 `manual_` 标记，让手动触发表情**独立于随机开关**播完整个包络；
+- 每次 `Load()` 调 `IdleFaces::Reset()` 清运行态，避免上一个状态的表情渗进下一张截图。
+
+四状态验证里 `expression` 快照可见
+`ParamEyeLSmile / ParamEyeRSmile / ParamBrowLY / ParamBrowRY: 0 → 1.000`，
+参数累计变化 4.163，差异高亮集中在眼眉区域，见 [验证报告](verify/feature/live2d_report.json)。
+
 ---
 
 ## 二、语言功能（台词 / 气泡 / 口型）

@@ -401,7 +401,103 @@ glUniform4f(baseColor, op, op, op, op);
 
 ---
 
-## 十二、相关源码
+<a id="native-render"></a>
+
+## 十二、纯 C++ Live2D 渲染设计（参考项目）
+
+### 参考了什么
+
+用户指定的 `live2dwallpaper` 类项目，以及官方 Native 系列：
+
+| 项目 | 关键点 |
+| --- | --- |
+| [Noyad/Live2dWallPaper](https://github.com/Noyad/Live2dWallPaper) | 纯 C++ 的 Live2D 桌面壁纸，直接链接 Cubism Core + 原生窗口，无浏览器内核 |
+| [sawaYch/Live2D-Linux-Native-Sample](https://github.com/sawaYch/Live2D-Linux-Native-Sample) | Linux 下 Cubism Core + OpenGL 的最小可跑样例 |
+| [Live2D/CubismAndroidLiveWallpaper](https://github.com/Live2D/CubismAndroidLiveWallpaper) | 官方动态壁纸：C++ 层更新参数、遍历 Drawable、原生绘制 |
+| [Live2D/CubismNativeFramework](https://github.com/Live2D/CubismNativeFramework) / [CubismNativeSamples](https://github.com/Live2D/CubismNativeSamples) | 官方 Framework：`MotionQueueManager` / `CubismMotion` / `CubismRenderer_OpenGLES2` 的权威实现 |
+
+**共同结论**：这些项目都**不依赖 Chromium / Electron / WebView**。C++ 直接链接 Cubism Core，
+自己创建 GL（或 D3D / Vulkan / Metal）上下文，每帧的固定流程是
+「写参数 → `csmUpdateModel` / `csmResetDrawableAllFlags` → 按 `renderOrder` 遍历 Drawable →
+设置混合与遮罩 → 提交顶点/纹理 → 绘制网格」。原 Electron 版 PPet 是把 Cubism **Web** SDK 包在
+浏览器里；本 C++ 版本来就没有浏览器，但重构前「播哪个动作、怎么淡入淡出、用什么混合」
+这些决策仍内联在 GL 代码里，缺少官方 Framework 的结构。本次按上述设计重写这两层。
+
+### 动作层：官方队列 + 交叉淡入淡出
+
+官方 `CubismMotionQueueManager::StartMotion()` 在把新动作入队前，会把队列里**所有未结束**的
+动作用各自的 `FadeOutTime` 标记为淡出；`DoUpdateMotion()` 按入队顺序逐个
+`UpdateParameters()`；`CubismMotion::DoUpdateParameters()` 的参数权重为：
+
+```text
+tmpFadeIn  = fadeIn  <= 0 ? 1 : EasingSine((userTimeSeconds - fadeInStart) / fadeIn)
+tmpFadeOut = fadeOut <= 0 ? 1 : EasingSine((endTime - userTimeSeconds) / fadeOut)
+weight     = tmpFadeIn * tmpFadeOut
+v          = sourceValue + (value - sourceValue) * weight
+```
+
+其中 `CubismMath::EasingSine(x) = 0.5 - 0.5 * cos(pi * x)`，`x` 钳到 `[0,1]`。
+
+落地为纯逻辑模块 `api/live2d/MotionQueue.hpp`（零 GL / Cubism / Qt 依赖）：
+
+- `StartMotion()` 把旧动作标记淡出，`Tick()` 推进队列并处理 `Meta.Loop` 循环；
+- `Blends()` 按入队顺序输出**本帧所有生效动作**及其 easing 权重（含正在淡出的旧动作）；
+- `FinishPrimary()` / `StopAll()` 供控制台 `action stop` 与 `re model` 使用。
+
+`MotionDirector` 保留原有 `Configure()` / `Tick()` / 优先级 API，内部改用 `queue_`；
+`Live2DModel::UpdateMotion()` 遍历 `Blends()`，按上面的官方公式把每条动作的参数**叠加**写进
+Cubism 参数。修复前只维护一个 `current_` clip，动作切换是瞬间跳变；现在是交叉淡入淡出。
+
+### 渲染层：决策-执行分离
+
+官方 `CubismRenderer_OpenGLES2` 把「画哪些部件、按什么顺序、用什么混合、baseColor 是多少」
+与「怎么提交 GL 命令」混在一起。本项目抽出 `api/live2d/CubismRenderPlan.hpp`：
+输入 `DrawableDesc`（renderOrder / 可见性 / 混合模式 / 遮罩 / 纹理索引），
+`BuildRenderPlan()` 输出 `std::vector<RenderOp>`；`Live2DModel::Render()` 只负责执行
+`set glBlendFuncSeparate` + `uniform u_baseColor` + 提交几何，`DrawDrawable()` 只管几何与纹理。
+
+官方三套混合（premultiplied alpha）：
+
+| 模式 | RGB `src / dst` | Alpha `src / dst` |
+| --- | --- | --- |
+| Normal | `ONE` / `ONE_MINUS_SRC_ALPHA` | `ONE` / `ONE_MINUS_SRC_ALPHA` |
+| Additive | `ONE` / `ONE` | `ZERO` / `ONE` |
+| Multiplicative | `DST_COLOR` / `ONE_MINUS_SRC_ALPHA` | `ZERO` / `ONE` |
+
+`ModelColorWithOpacity()` 对齐官方 `GetModelColorWithOpacity`：premultiplied 下
+**RGB 与 A 都要乘 `opacity`**（只乘 A 会导致半透明部件偏白，见第十一章）。
+遮罩绘制同样走 RenderOp，mask 的 baseColor 用 premultiplied 白色。
+
+这样拆的好处：决策链可以脱离 GL 做单元测试；换 Vulkan / Metal 后端只需替换执行层；
+渲染计划与官方 Framework 一一对应，便于逐条核对而不是靠肉眼看画面猜。
+
+### 顺带修好的「表情切换无效」
+
+四状态截图验证暴露出：模型只有表情参数、没有表情动作组时，
+`SetExpressionPreset("happy")` 直接返回 false，且手动触发的 `IdleFaces` 状态机在
+「待机随机表情」开关关闭时不会推进相位，包络恒为 0。修复：
+
+- `SetExpressionPreset()` 在动作组播放失败时回退到 `IdleFaces::TriggerId(id)`；
+- `ExpressionPresetIds()` 合并「表情动作组 + 参数预设」，控制台 `expression list` 不再为空；
+- `IdleFaces` 增加 `manual_` 标记，手动触发表情独立于开关完整播放（淡入→停留→淡出→回中性）；
+- `IdleFaces::Reset()` 在每次 `Load()` 时清空运行态，避免上一个状态的表情渗进下一张截图。
+
+修复后 `nengdai_2` 的 `expression` 快照能看到
+`ParamEyeLSmile / ParamEyeRSmile / ParamBrowLY / ParamBrowRY: 0 → 1.000`，
+参数累计变化从 0.163 提升到 4.163，差异高亮图里红色像素集中在眼眉区域。
+
+### 验证
+
+| 证据 | 结果 |
+| --- | --- |
+| `motion_queue_unit` | 32 项检查（fade / 交叉淡入淡出 / loop / Finish / Stop / 优先级），失败 0 |
+| `render_plan_unit` | 20 项检查（混合表 / premultiplied 颜色 / 稳定排序 / 无效部件过滤），失败 0 |
+| `motion_director_unit` | 队列化后回归 72 项检查，失败 0 |
+| 真实 SDK + `nengdai_2` 四状态截图 | 表情 / 口型 / 动作全部 PASS，见 [feature 验证报告](verify/feature/live2d_report.json) |
+
+---
+
+## 十三、相关源码
 
 | 文件 | 职责 |
 | --- | --- |
@@ -413,17 +509,27 @@ glUniform4f(baseColor, op, op, op, op);
 | `api/live2d/Live2DManifest.{hpp,cpp}` | model3.json 解析（含动作文件名、物理文件路径） |
 | `src/tools/model/BoneMotion.{hpp,cpp}` | VRM-VPet 风格骨骼动作（PMX / VRM 共用） |
 | `src/tools/model/IdleAnimator.hpp` | PMX / VRM 程序化待机（呼吸 / 重心 / 头部 / 手臂 / 腿部） |
+| `api/live2d/MotionQueue.hpp` | 官方 `MotionQueueManager` / `CubismMotion` 风格动作队列（交叉淡入淡出，纯逻辑） |
+| `api/live2d/CubismRenderPlan.hpp` | 渲染计划：Drawable → `RenderOp` 决策-执行分离（混合 / 遮罩 / premultiplied 颜色，纯逻辑） |
+| `src/tools/app/ConsoleCommand.hpp` | 控制台指令分词、解析、表格与帮助（纯逻辑） |
+| `src/tools/app/Console.{hpp,cpp}` | 后台 stdin 读取 + 主线程命令队列 |
+| `src/tools/app/AppConsole.cpp` | 控制台命令执行器（模型 / 调试 / 重载 / 动作 / 表情 / 气泡） |
+| `tools/feature_verify.cpp` | 四状态截图与像素 + 参数差异判定 |
+| `tools/gen_feature_compare.py` | 2x2 对比图、局部放大、差异高亮、全局差异掩膜 |
 
 单元测试：
 
 | 测试 | 覆盖 |
 | --- | --- |
-| `tools/live2d_stage_test.cpp` | Stage 各组件（36 项检查） |
+| `tools/live2d_stage_test.cpp` | Stage 各组件 + 手动触发表情不受开关影响（51 项检查） |
 | `tools/live2d_physics_test.cpp` | 物理解析 + 摆锤求解 + 压力测试 |
 | `tools/live2d_motion_group_test.cpp` | 动作分组 / `Meta.Loop` / `Segments` 解析 |
 | `tools/live2d_manifest_test.cpp` | model3.json 解析 |
 | `tools/bone_motion_test.cpp` | 骨骼动作库与播放器 |
-| `tools/motion_director_test.cpp` | 动作调度器 |
+| `tools/motion_director_test.cpp` | 动作调度器（队列化后 72 项检查） |
+| `tools/motion_queue_test.cpp` | 官方动作队列 fade / 交叉淡入淡出 / loop / Stop（32 项检查） |
+| `tools/render_plan_test.cpp` | 混合表 / premultiplied 颜色 / 稳定排序 / 无效部件过滤（20 项检查） |
+| `tools/console_command_test.cpp` | 指令分词 / 引号 / 表格 / 帮助（28 项检查） |
 
-相关文档：[表情管理与语言功能](expressions.md) · [使用与配置](usage.md) ·
-[项目结构](architecture.md)
+相关文档：[表情管理与语言功能](expressions.md) · [使用与配置 · 交互式控制台](usage.md#交互式控制台) ·
+[项目结构](architecture.md) · [四状态截图验证报告](verify/feature/)

@@ -96,9 +96,16 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 | 层 | 文件 | 职责 | 依赖 |
 | --- | --- | --- | --- |
 | 解析 | `Live2DManifest.*` / `Live2DMotion.*` | `model3.json` 的 Motions 分组、**HitAreas**、`motion3.json` 曲线与 **FadeIn/FadeOut** / **Meta.Loop** / 官方 `Segments` 语义 | 仅 json + FileIO |
-| 调度 | `MotionDirector.hpp` | 组名分类（Idle/Tap/Pinch…）+ **空名组按文件名回退推断**、空间分区命中、优先级状态机、待机冷却、fade 权重 | **纯 STL，零依赖** |
+| 动作队列 | `api/live2d/MotionQueue.hpp` | 官方 `MotionQueueManager` / `CubismMotion` 风格：多动作并存、`EasingSine` 交叉淡入淡出、`Meta.Loop`、`FinishPrimary` / `StopAll` | **纯 STL，零依赖** |
+| 调度 | `MotionDirector.hpp` | 组名分类（Idle/Tap/Pinch…）+ **空名组按文件名回退推断**、空间分区命中、优先级状态机、待机冷却；内部持有动作队列 | **纯 STL，零依赖** |
 | 物理 | `Live2DPhysics.*` | `physics3.json` 解析（标准 + Mobill 变体）、Verlet 摆锤链、固定步长与输入/输出插值 | 仅 json + FileIO |
-| 驱动 | `Live2DModel.*` | 每帧复位参数默认值 → 叠加视线/眨眼/呼吸 → 按调度采样曲线并 fade 混合写入 → 物理求值 → 口型 | Cubism Core + GL |
+| 渲染计划 | `api/live2d/CubismRenderPlan.hpp` | Drawable → `RenderOp` 决策层：renderOrder 稳定排序、三套 `glBlendFuncSeparate`、遮罩、premultiplied baseColor | **纯 STL，零依赖** |
+| 驱动 | `Live2DModel.*` | 每帧复位参数默认值 → 叠加视线/眨眼/呼吸 → 按队列 `Blends()` 采样并 fade 混合写入 → 物理求值 → 口型；`Render()` 只执行 `RenderOp` | Cubism Core + GL |
+
+> **纯 C++ 渲染设计**：动作队列与渲染计划这两层是按 `live2dwallpaper` 类纯 C++ 项目
+> 与官方 `CubismNativeFramework` 的结构重写的（无 Chromium / 无 WebView），
+> 把「决策」从 GL 代码里抽成可单测的纯逻辑，换渲染后端只需替换执行层。
+> 详见 [Live2D 分层运行时 · 纯 C++ 渲染设计](live2d-stage.md#native-render)。
 
 `IModel::OnInteract(nx, ny)` 是上层（App）点击 → 模型的统一入口，默认空实现，
 PMX / VRM 不受影响。调度器的正确性由 `motion_director_unit`（状态机）、
@@ -166,6 +173,29 @@ PMX / VRM 不受影响。调度器的正确性由 `motion_director_unit`（状�
 > PMX / VRM 走 `ExpressionDirector` 的预设过渡，
 > Live2D 优先走表情动作组，没有则回退到 `Stage.hpp` 的 `IdleFaces` 参数预设。
 > 详见 [表情管理与语言功能](expressions.md)。
+
+## 交互式控制台的分层
+
+控制台要能操作模型、配置、Qt 气泡等**只有主线程能碰**的状态，因此拆成
+「解析 → 传输 → 执行」三层，前两层完全不依赖 App：
+
+| 层 | 文件 | 职责 | 依赖 |
+| --- | --- | --- | --- |
+| 解析 | `src/tools/app/ConsoleCommand.hpp` | 分词（引号 / 转义空格）、`Command`、`FormatTable`（`Idx Name Path`）、`HelpText` | **纯 STL，零依赖** |
+| 传输 | `src/tools/app/Console.{hpp,cpp}` | 后台 stdin 线程把整行放进线程安全队列；`Poll()` 每帧最多取 32 条；`SubmitScript()` 脚本模式 | `std::thread` / `mutex` / `atomic` |
+| 执行 | `src/tools/app/AppConsole.cpp` | 模型增删选列、`debug` 分节模型分析、`re` 重载、`action` / `expression`、`speak`、`status` | App 状态（**渲染主线程**） |
+| 能力接口 | `src/tools/model/Model.hpp` | `MotionNames` / `PlayMotion` / `StopMotion` / `ReloadRenderer` / `RenderResources` / `ParameterSnapshot` 默认虚接口 | 无 |
+
+关键约束：
+
+- 后台线程只持有 `shared_ptr<State>`，**不捕获 `this`**；命令由 `App::ProcessInput()` 在主线程执行。
+- `Stop()` 用 `detach()`，避免阻塞在 `std::getline` 时无法退出。
+- `IModel` 用默认虚接口暴露能力，App 不需要按模型类型 downcast；后端不实现也能编译，
+  控制台会明确提示「该后端不支持此操作」，而不是静默返回空结果。
+- `--console` 打开交互模式；`--command='list;debug status;quit'` 用脚本模式做自动化验收
+  （命令与结果同时写 `last.log` 的 `[CONSOLE]` 标签）。
+
+指令手册见 **[使用与配置 · 交互式控制台](usage.md#交互式控制台)**。
 
 ## 构建目标层次
 

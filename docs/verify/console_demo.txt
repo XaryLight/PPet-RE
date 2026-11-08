@@ -1,0 +1,135 @@
+QStandardPaths: XDG_RUNTIME_DIR not set, defaulting to '/tmp/runtime-root'
+2026-11-08 10:00:32.446 | +0000000.023 | Δ   0.023 | INFO  | e139 | [main] main.cpp:64 main | PPet 启动 | C++ 标准=23 | 构建=Nov  8 2026 10:00:13 | 日志=last.log（级别 DEBUG / 控制台 INFO ）
+2026-11-08 10:00:32.504 | +0000057.868 | Δ  57.845 | ERROR | e139 | [App] App.cpp:227 ppet::App::Initialize | 未找到系统托盘宿主（_NET_SYSTEM_TRAY），已进入无托盘降级模式
+2026-11-08 10:00:32.682 | +0000235.994 | Δ 141.472 | INFO  | e139 | [LIVE2D] Live2DModel.cpp:855 ppet::live2d::Live2DModel::LoadMotions | 动作分组：idle.motion3.json[待机]×1, touch_special.motion3.json[点击]×1, mail.motion3.json[其它]×10, touch_body.motion3.json[点击]×1, touch_head.motion3.json[点击]×1（待机组 1 / 互动组 3 / 表情组 0）
+2026-11-08 10:00:32.683 | +0000237.000 | Δ   1.006 | INFO  | e139 | [LIVE2D] Live2DModel.cpp:968 ppet::live2d::Live2DModel::ResolveFacePa | 已探测到 8 个表情参数，生成 4 个待机小表情预设
+2026-11-08 10:00:32.683 | +0000237.043 | Δ   0.043 | INFO  | e139 | [MODEL] App.cpp:522 ppet::App::LoadModel | 模型加载成功：nengdai_2.model3（Live2D / Cubism 5（.moc3 + .model3.json） / 142.4 ms）
+Live2D Cubism SDK Core Version 6.0.1
+PPet 控制台已就绪，输入 help 查看指令。
+> help
+2026-11-08 10:00:32.699 | +0000253.294 | Δ  16.241 | INFO  | e139 | [CONSOLE] AppConsole.cpp:89 ppet::App::SetupConsole | > help\nPPet 控制台指令（输入 help 查看本表，quit 退出）\n  list                         列出模型（Idx Name Path，* 为当前）\n  add <path>                   添加并加载模型\n  select <idx>                 切换到第 idx 个模型\n  remove <idx>                 从列表移除第 idx 个模型\n  debug [section]              输出模型分析（status|res|params|bones|parts|\n                               motion|expression|error|all，缺省 = all）\n  re [model|draw|all]          重载模型 / 重建渲染资源 / 两者\n  action list                  列出可播放的动作\n  action <name> do|stop        播放 / 停止动作\n  action stop                  停止当前动作\n  expression list              列出表情预设\n  expression <id>              切换表情\n  speak <text>                 显示气泡文字并同步口型\n  status                       运行时状态（帧率 / 对话 / 追踪）\n  help                         本帮助\n  quit                         退出程序\n说明：参数可加引号，例如 add "/path/with space/model.pmx"。
+PPet 控制台指令（输入 help 查看本表，quit 退出）
+  list                         列出模型（Idx Name Path，* 为当前）
+  add <path>                   添加并加载模型
+  select <idx>                 切换到第 idx 个模型
+  remove <idx>                 从列表移除第 idx 个模型
+  debug [section]              输出模型分析（status|res|params|bones|parts|
+                               motion|expression|error|all，缺省 = all）
+  re [model|draw|all]          重载模型 / 重建渲染资源 / 两者
+  action list                  列出可播放的动作
+  action <name> do|stop        播放 / 停止动作
+  action stop                  停止当前动作
+  expression list              列出表情预设
+  expression <id>              切换表情
+  speak <text>                 显示气泡文字并同步口型
+  status                       运行时状态（帧率 / 对话 / 追踪）
+  help                         本帮助
+  quit                         退出程序
+说明：参数可加引号，例如 add "/path/with space/model.pmx"。
+> list
+2026-11-08 10:00:32.699 | +0000253.350 | Δ   0.056 | INFO  | e139 | [CONSOLE] AppConsole.cpp:89 ppet::App::SetupConsole | > list\nIdx  Name                     Path\n---  -----------------------  ----------------------------------\n0    * nengdai_2.model3.json  /tmp/nengdai/nengdai_2.model3.json
+Idx  Name                     Path
+---  -----------------------  ----------------------------------
+0    * nengdai_2.model3.json  /tmp/nengdai/nengdai_2.model3.json
+> add /tmp/nengdai/nengdai_2.model3.json
+2026-11-08 10:00:32.822 | +0000376.475 | Δ 123.089 | INFO  | e139 | [LIVE2D] Live2DModel.cpp:855 ppet::live2d::Live2DModel::LoadMotions | 动作分组：idle.motion3.json[待机]×1, touch_special.motion3.json[点击]×1, mail.motion3.json[其它]×10, touch_body.motion3.json[点击]×1, touch_head.motion3.json[点击]×1（待机组 1 / 互动组 3 / 表情组 0）
+2026-11-08 10:00:32.823 | +0000377.394 | Δ   0.919 | INFO  | e139 | [LIVE2D] Live2DModel.cpp:968 ppet::live2d::Live2DModel::ResolveFacePa | 已探测到 8 个表情参数，生成 4 个待机小表情预设
+2026-11-08 10:00:32.823 | +0000377.463 | Δ   0.069 | INFO  | e139 | [MODEL] App.cpp:522 ppet::App::LoadModel | 模型加载成功：nengdai_2.model3（Live2D / Cubism 5（.moc3 + .model3.json） / 124.0 ms）
+2026-11-08 10:00:32.825 | +0000378.948 | Δ   1.471 | INFO  | e139 | [CONSOLE] AppConsole.cpp:89 ppet::App::SetupConsole | > add /tmp/nengdai/nengdai_2.model3.json\nAdded: /tmp/nengdai/nengdai_2.model3.json\nSuccess
+Live2D Cubism SDK Core Version 6.0.1
+Added: /tmp/nengdai/nengdai_2.model3.json
+Success
+> list
+2026-11-08 10:00:32.825 | +0000378.997 | Δ   0.049 | INFO  | e139 | [CONSOLE] AppConsole.cpp:89 ppet::App::SetupConsole | > list\nIdx  Name                     Path\n---  -----------------------  ----------------------------------\n0    * nengdai_2.model3.json  /tmp/nengdai/nengdai_2.model3.json
+Idx  Name                     Path
+---  -----------------------  ----------------------------------
+0    * nengdai_2.model3.json  /tmp/nengdai/nengdai_2.model3.json
+> select 0
+2026-11-08 10:00:32.940 | +0000494.295 | Δ 115.260 | INFO  | e139 | [LIVE2D] Live2DModel.cpp:855 ppet::live2d::Live2DModel::LoadMotions | 动作分组：idle.motion3.json[待机]×1, touch_special.motion3.json[点击]×1, mail.motion3.json[其它]×10, touch_body.motion3.json[点击]×1, touch_head.motion3.json[点击]×1（待机组 1 / 互动组 3 / 表情组 0）
+2026-11-08 10:00:32.941 | +0000494.949 | Δ   0.654 | INFO  | e139 | [LIVE2D] Live2DModel.cpp:968 ppet::live2d::Live2DModel::ResolveFacePa | 已探测到 8 个表情参数，生成 4 个待机小表情预设
+2026-11-08 10:00:32.941 | +0000494.985 | Δ   0.036 | INFO  | e139 | [MODEL] App.cpp:522 ppet::App::LoadModel | 模型加载成功：nengdai_2.model3（Live2D / Cubism 5（.moc3 + .model3.json） / 115.9 ms）
+2026-11-08 10:00:32.943 | +0000497.106 | Δ   2.113 | INFO  | e139 | [CONSOLE] AppConsole.cpp:89 ppet::App::SetupConsole | > select 0\nTo turn 0 model nengdai_2.model3.json\nSuccess
+Live2D Cubism SDK Core Version 6.0.1
+To turn 0 model nengdai_2.model3.json
+Success
+> debug status
+2026-11-08 10:00:34.382 | +0001935.679 | Δ1438.573 | INFO  | e139 | [CONSOLE] AppConsole.cpp:89 ppet::App::SetupConsole | > debug status\nModel: nengdai_2.model3 [Live2D]\nPath : /tmp/nengdai/nengdai_2.model3.json\n[status 渲染状态]\n  loaded      : true\n  gpuReady    : true\n  renderingOk : true\n  glError     : 0\n  renderStatus: 正常渲染\n  modelId     : /tmp/nengdai/nengdai_2.model3.json
+Model: nengdai_2.model3 [Live2D]
+Path : /tmp/nengdai/nengdai_2.model3.json
+[status 渲染状态]
+  loaded      : true
+  gpuReady    : true
+  renderingOk : true
+  glError     : 0
+  renderStatus: 正常渲染
+  modelId     : /tmp/nengdai/nengdai_2.model3.json
+
+> debug res
+2026-11-08 10:00:34.382 | +0001935.743 | Δ   0.065 | INFO  | e139 | [CONSOLE] AppConsole.cpp:89 ppet::App::SetupConsole | > debug res\nModel: nengdai_2.model3 [Live2D]\nPath : /tmp/nengdai/nengdai_2.model3.json\n[res 加载的资源]\n  moc3 : /tmp/nengdai/nengdai_2.moc3\n  texture : /tmp/nengdai/textures/texture_00.png\n  physics3 : /tmp/nengdai/nengdai_2.physics3.json\n  motions : 14 条动作\n  texture : textures/texture_00.png  0x0  [loaded]  /tmp/nengdai/textures/texture_00.png
+Model: nengdai_2.model3 [Live2D]
+Path : /tmp/nengdai/nengdai_2.model3.json
+[res 加载的资源]
+  moc3 : /tmp/nengdai/nengdai_2.moc3
+  texture : /tmp/nengdai/textures/texture_00.png
+  physics3 : /tmp/nengdai/nengdai_2.physics3.json
+  motions : 14 条动作
+  texture : textures/texture_00.png  0x0  [loaded]  /tmp/nengdai/textures/texture_00.png
+
+> debug expression
+2026-11-08 10:00:34.382 | +0001935.797 | Δ   0.054 | INFO  | e139 | [CONSOLE] AppConsole.cpp:89 ppet::App::SetupConsole | > debug expression\nModel: nengdai_2.model3 [Live2D]\nPath : /tmp/nengdai/nengdai_2.model3.json\n[expression 表情]\n  status : 待机随机表情：关\n  summary: 表情动作组 0 / 表情参数预设 4 / 可切换表情 4\n  presets: happy, shy, angry, surprised
+Model: nengdai_2.model3 [Live2D]
+Path : /tmp/nengdai/nengdai_2.model3.json
+[expression 表情]
+  status : 待机随机表情：关
+  summary: 表情动作组 0 / 表情参数预设 4 / 可切换表情 4
+  presets: happy, shy, angry, surprised
+
+> expression list
+2026-11-08 10:00:34.382 | +0001935.828 | Δ   0.031 | INFO  | e139 | [CONSOLE] AppConsole.cpp:89 ppet::App::SetupConsole | > expression list\nIdx  Expression\n---  ----------\n0    happy\n1    shy\n2    angry\n3    surprised
+Idx  Expression
+---  ----------
+0    happy
+1    shy
+2    angry
+3    surprised
+> expression happy
+2026-11-08 10:00:34.382 | +0001935.841 | Δ   0.013 | INFO  | e139 | [CONSOLE] AppConsole.cpp:89 ppet::App::SetupConsole | > expression happy\nSuccess: 表情 -> happy
+Success: 表情 -> happy
+> action list
+2026-11-08 10:00:34.382 | +0001935.883 | Δ   0.042 | INFO  | e139 | [CONSOLE] AppConsole.cpp:89 ppet::App::SetupConsole | > action list\nIdx  Action\n---  -----------------------------\n0    idle.motion3.json\n1    touch_special.motion3.json\n2    mail.motion3.json\n3    main_3.motion3.json\n4    wedding.motion3.json\n5    touch_body.motion3.json\n6    touch_head.motion3.json\n7    mission.motion3.json\n8    main_2.motion3.json\n9    login.motion3.json\n10   mission_complete.motion3.json\n11   complete.motion3.json\n12   main_1.motion3.json\n13   home.motion3.json
+Idx  Action
+---  -----------------------------
+0    idle.motion3.json
+1    touch_special.motion3.json
+2    mail.motion3.json
+3    main_3.motion3.json
+4    wedding.motion3.json
+5    touch_body.motion3.json
+6    touch_head.motion3.json
+7    mission.motion3.json
+8    main_2.motion3.json
+9    login.motion3.json
+10   mission_complete.motion3.json
+11   complete.motion3.json
+12   main_1.motion3.json
+13   home.motion3.json
+> speak 你好，我是桌面宠物
+2026-11-08 10:00:34.382 | +0001935.904 | Δ   0.020 | INFO  | e139 | [CONSOLE] AppConsole.cpp:89 ppet::App::SetupConsole | > speak 你好，我是桌面宠物\nSpeaking: 你好，我是桌面宠物
+Speaking: 你好，我是桌面宠物
+> status
+2026-11-08 10:00:34.382 | +0001935.933 | Δ   0.030 | INFO  | e139 | [CONSOLE] AppConsole.cpp:89 ppet::App::SetupConsole | > status\n[status 运行时]\n  frameCount : 209\n  frameMs    : 7.76342\n  fps        : 128.809\n  model      : nengdai_2.model3.json [Live2D]\n  speaking   : true\n  phrase     : \n  lipOpen    : 0.00182412\n  bubble     : on\n  console    : interactive
+[status 运行时]
+  frameCount : 209
+  frameMs    : 7.76342
+  fps        : 128.809
+  model      : nengdai_2.model3.json [Live2D]
+  speaking   : true
+  phrase     : 
+  lipOpen    : 0.00182412
+  bubble     : on
+  console    : interactive
+
+> quit
+2026-11-08 10:00:34.382 | +0001935.946 | Δ   0.012 | INFO  | e139 | [CONSOLE] AppConsole.cpp:89 ppet::App::SetupConsole | > quit\nBye.
+Bye.
+2026-11-08 10:00:34.400 | +0001953.906 | Δ  17.961 | INFO  | e139 | [main] main.cpp:95 main | PPet 正常退出

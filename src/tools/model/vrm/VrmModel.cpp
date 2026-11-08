@@ -331,6 +331,12 @@ bool VrmModel::Load(const std::string& path, std::string& error) {
     gpuReady_ = false;
     error.clear();
 
+    // 注册 VRM-VPet 风格的内置骨骼动作到随机待机池（点头 / 摇头 / 挥手）。
+    boneMotion_.ClearRandomMotions();
+    for (const model::BoneMotion& motion : model::bone_motions::Builtin()) {
+        boneMotion_.AddRandomMotion(motion);
+    }
+
     doc_ = std::unique_ptr<GltfDocument>(new GltfDocument());
     if (!LoadGltf(path, *doc_, error)) {
         doc_.reset();
@@ -2162,6 +2168,37 @@ void VrmModel::Render(const RenderContext& ctx) {
         // widthScale=1：描边宽度已经在材质里换算成世界单位。
         renderer_.DrawOutline(viewProj, skinningMatrices_, kLightDir, 1.0f);
     }
+}
+
+std::vector<std::string> VrmModel::MotionNames() const {
+    std::vector<std::string> out;
+    for (const model::BoneMotion& motion : model::bone_motions::Builtin()) {
+        out.push_back(motion.id);
+    }
+    return out;
+}
+
+bool VrmModel::PlayMotion(const std::string& id) {
+    model::BoneMotion motion;
+    if (!model::bone_motions::Find(id, motion)) {
+        for (const model::BoneMotion& candidate : model::bone_motions::Builtin()) {
+            if (candidate.id.find(id) != std::string::npos) {
+                motion = candidate;
+                return boneMotion_.Play(motion);
+            }
+        }
+        return false;
+    }
+    return boneMotion_.Play(motion);
+}
+
+bool VrmModel::StopMotion() {
+    boneMotion_.Stop();
+    return true;
+}
+
+void VrmModel::ReloadRenderer() {
+    gpuReady_ = false;
 }
 
 void VrmModel::EnsureGpuResources() {

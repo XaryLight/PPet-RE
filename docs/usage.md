@@ -26,6 +26,83 @@
 
 ---
 
+## 交互式控制台
+
+从终端启动时加 `--console`，即可在运行中的桌宠里**输入指令**（不只是输出日志）：
+
+```text
+> list
+Idx  Name                     Path
+---  -----------------------  ----------------------------------
+0    * nengdai_2.model3.json  /tmp/nengdai/nengdai_2.model3.json
+
+> select 0
+To turn 0 model nengdai_2.model3.json
+Success
+
+> debug status
+Model: nengdai_2.model3 [Live2D]
+[status 渲染状态]
+  loaded      : true
+  gpuReady    : true
+  renderingOk : true
+  ...
+
+> expression list
+Idx  Expression
+---  ----------
+0    happy
+1    shy
+2    angry
+3    surprised
+
+> expression happy
+Success: 表情 -> happy
+
+> speak 你好，我是桌面宠物
+Speaking: 你好，我是桌面宠物
+```
+
+自动化验收用 `--command` 一次执行一串指令（分号分隔，末尾 `quit` 正常退出）：
+
+```bash
+./build/bin/ppet --command='list;add /path/model.pmx;debug status;speak 你好;quit'
+```
+
+脚本模式不回显命令、只打印结果；所有命令与结果同时写入 `last.log` 的 `[CONSOLE]` 标签。
+
+### 指令表
+
+| 指令 | 作用 |
+| --- | --- |
+| `list` / `ls` | 列出模型，输出 `Idx Name Path` 表格，`*` 标记当前模型 |
+| `add <path>` | 添加并加载模型（路径含空格请加引号），写入配置并刷新托盘菜单 |
+| `select <idx>` / `sel` | 切换到第 `idx` 个模型，输出 `To turn <idx> model <name>` + `Success` / `fail: ...` |
+| `remove <idx>` / `rm` | 从列表移除第 `idx` 个模型；移除当前项会自动切到新的第一项 |
+| `debug [section]` | 输出模型分析内容：`status`（渲染状态）/ `res`（加载的资源）/ `params` / `bones` / `parts` / `motion` / `expression` / `error` / `all`；缺省 = `all` |
+| `re [model\|draw\|all]` | `model` 重新加载模型、`draw` 重建渲染资源（纹理 / GPU 资源）、`all` 两者；缺省 = `model` |
+| `action list` | 列出可播放动作（`Idx Action`） |
+| `action <name> do` | 播放指定动作 |
+| `action <name> stop` / `action stop` | 停止动作 |
+| `expression list` | 列出表情预设，含**表情动作组 + 参数级预设**两类 |
+| `expression <id>` | 切换表情；Live2D 没有表情动作组时自动回退到参数预设 |
+| `speak <txt>` | 显示气泡文字并驱动口型 |
+| `status` | 运行时状态（帧率 / 对话 / 追踪 / 控制台模式） |
+| `help` / `?` | 输出完整帮助 |
+| `quit` / `exit` | 退出程序 |
+
+### 设计与注意事项
+
+- **后台读、主线程执行**：stdin 读取在独立线程，只把整行放进队列；命令由 `App::ProcessInput()` 在渲染主线程取出执行，
+  因此可安全访问模型、配置、托盘菜单与 Qt 气泡窗口，无需到处加锁。
+- **能力缺失不静默**：`IModel` 用默认虚函数暴露动作 / 资源 / 参数快照接口，后端没实现时控制台明确提示，
+  不会因为新增一个模型后端就编译失败或返回空白结果。
+- **参数可加引号**：`add "/path/with space/model.pmx"`、`speak "一句带空格的话"`。
+- **脚本模式只有一帧**：`--command` 里的命令在首个渲染帧就全部执行完，此时 `debug status` 的 `gpuReady`
+  可能仍为 `false`（等待首次渲染建立 GPU 资源）；想观察渲染后的状态请在 `--console` 交互模式下手动输入。
+
+---
+
 ## 托盘菜单
 
 | 菜单项 | 快捷键 | 作用 |

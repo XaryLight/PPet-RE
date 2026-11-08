@@ -720,6 +720,9 @@ set(PPET_CORE_SOURCES
     src/tools/core/ZipArchive.cpp
     src/tools/model/Model.cpp
     src/tools/app/App.cpp
+    # 交互式控制台：stdin 读取线程 + 命令执行器。
+    src/tools/app/Console.cpp
+    src/tools/app/AppConsole.cpp
     # 渲染帧抓图：stb_image_write 的实现宏只在这个翻译单元定义一次，
     # 因此只编入 ppet 主程序，不放进 ppet_model（避免与其它测试目标重复定义）。
     src/tools/render/FrameCapture.cpp
@@ -931,6 +934,29 @@ if(NOT MSVC)
                                 PROPERTIES COMPILE_OPTIONS "-w")
 endif()
 
+# 功能验证工具：同一模型在 中性 / 表情 / 口型 / 动作 四状态下各渲染一遍，
+# 每个状态重新加载模型以消除待机动画干扰，再与中性帧做像素差异对比。
+# 支持 PMX / VRM / Live2D，用于「表情、口型、动作是否真的生效」的截图验收。
+add_executable(ppet_feature_verify
+    tools/feature_verify.cpp
+    src/tools/model/Model.cpp
+    src/tools/core/ModelPackage.cpp
+    src/tools/core/ZipArchive.cpp
+    src/tools/core/Log.cpp
+)
+target_link_libraries(ppet_feature_verify PRIVATE
+    ppet_model
+    ppet_zlib
+    ${PPET_GLEW_TARGET}
+    ${PPET_GLFW_TARGET}
+    ${OPENGL_LIBRARIES})
+target_include_directories(ppet_feature_verify PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb)
+if(NOT MSVC)
+    set_source_files_properties(tools/feature_verify.cpp
+                                PROPERTIES COMPILE_OPTIONS "-w")
+endif()
+
 # Live2D 渲染验证工具：仅真实 Cubism SDK 模式下构建（桩无法加载真实模型）。
 # 用隐藏 GLFW 窗口 + GLEW 渲染一个兼容的 Live2D 模型，读回像素并合成 PNG。
 if((PPET_WITH_CUBISM OR PPET_WITH_CUBISM_STUB) AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/live2d_verify.cpp)
@@ -1069,6 +1095,24 @@ add_test(NAME dialogue_system_unit
 add_executable(ppet_live2d_stage_test tools/live2d_stage_test.cpp)
 add_test(NAME live2d_stage_unit
          COMMAND ppet_live2d_stage_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# 控制台指令解析（纯逻辑，零依赖）。
+add_executable(ppet_console_command_test tools/console_command_test.cpp)
+add_test(NAME console_command_unit
+         COMMAND ppet_console_command_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# 动作队列（官方 MotionQueueManager 语义：交叉淡入淡出 + EasingSine）与
+# 渲染计划（官方 OpenGL 渲染器的决策层）：都是纯逻辑、零依赖，直接单测。
+add_executable(ppet_motion_queue_test tools/motion_queue_test.cpp)
+add_test(NAME motion_queue_unit
+         COMMAND ppet_motion_queue_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(ppet_render_plan_test tools/render_plan_test.cpp)
+add_test(NAME render_plan_unit
+         COMMAND ppet_render_plan_test
          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
 # 程序化待机动画（呼吸 / 重心 / 头部 / 手臂 / 腿部）：IdleAnimator 是纯头文件，

@@ -29,6 +29,9 @@
 | **渲染验证工具** | `ppet_render_verify` 对 VRM / PMX(zip) / moc3 出图并输出 PNG + JSON 报告，见 [Windows 验收](docs/windows-test.md) |
 | **健壮的解析器** | 所有模型读取都有边界检查与索引越界防护，配套 ASAN 模糊测试 |
 | **Live2D 物理** | 完整实现 Cubism 官方物理算法（Verlet 摆锤链 + 固定步长 + 输入/输出插值），头发与裙摆随头部转动甩动，见 [Live2D 分层运行时](docs/live2d-stage.md) |
+| **原生 C++ Live2D 渲染** | 参考纯 C++ / 无 Chromium 的 Live2D 项目设计重写：官方 `MotionQueueManager` 风格动作队列（交叉淡入淡出）+ 渲染计划「决策-执行分离」（三套 `glBlendFuncSeparate` / premultiplied 颜色），见 [Live2D 分层运行时 · 纯 C++ 渲染设计](docs/live2d-stage.md#native-render) |
+| **交互式控制台** | `--console` 开启后可输入指令：模型增删选列、模型分析调试信息、重载模型/渲染资源、动作播放停止、表情切换、气泡台词，见 [交互式控制台](docs/usage.md#交互式控制台) |
+| **功能截图对比验证** | `ppet_feature_verify` 对同一模型分别渲染「中性 / 表情 / 口型 / 动作」四态，按像素差异 + 参数快照判定，PMX 与 Live2D 实跑证据见 [docs/verify/feature/](docs/verify/feature/) |
 
 ---
 
@@ -72,6 +75,19 @@ cmake --build build -j
 ./build/bin/ppet
 ```
 
+开启**交互式控制台**（在终端里直接输入指令）：
+
+```bash
+./build/bin/ppet --console
+
+# 或者一次执行一串指令（脚本模式，适合自动化验收）
+./build/bin/ppet --command='list;add /path/to/model.pmx;debug status;speak 你好;quit'
+```
+
+常用指令速查：`list` / `add <path>` / `select <idx>` / `remove <idx>` / `debug status|res|expression` /
+`re model|draw` / `action list|<name> do|stop` / `expression list|<id>` / `speak <txt>` / `status` / `help` / `quit`。
+完整手册见 **[交互式控制台](docs/usage.md#交互式控制台)**。
+
 首次启动会自动弹出设置面板。右键系统托盘图标可打开菜单，其中：
 
 - **导入模型 / 配置**：选择 `.zip`（推荐）、`.pmx`、`.vrm`、`.json`
@@ -81,6 +97,8 @@ cmake --build build -j
 - **模型诊断**（`Ctrl+Shift+D`）：打开 Qt 诊断面板，查看模型部分 / 参数 / 性质 / 渲染状态 / 表情与说话
 
 > 桌宠是透明无边框窗口，**未加载模型时它本身完全不可见**——这是预期行为，不是 bug。
+>
+> 托盘「反馈」打开的是**本仓库** Issues：`https://github.com/XaryLight/PPet-RE/issues`。
 
 完整说明见 **[使用与配置](docs/usage.md)**、**[表情管理与语言功能](docs/expressions.md)**、
 **[Live2D 分层运行时](docs/live2d-stage.md)** 与 **[调试与日志](docs/debugging.md)**。
@@ -96,8 +114,8 @@ cmake --build build -j
 | [docs/windows-test.md](docs/windows-test.md) | **Windows 11 + N 卡 + llvm-mingw + Qt6 + SDK 5.x 真机验收手册** |
 | [docs/models.md](docs/models.md) | 模型格式、**PMX 的 `.zip` 包规范**、压缩包导入流程、中文路径 |
 | [docs/expressions.md](docs/expressions.md) | **表情管理（预设 / 别名 / 过渡 / 叠加层）、语言功能（台词 / 气泡 / 口型）、待机随机表情** |
-| [docs/live2d-stage.md](docs/live2d-stage.md) | **Live2D 分层运行时：参数栈 / 姿态总线 / 三通道视线 / 待机 / 热区 / 口型 / 物理 / 动作分组** |
-| [docs/usage.md](docs/usage.md) | 运行、托盘菜单、**PMX / VRM 待机动画与骨骼动作**、设置面板、全屏追踪、配置字段 |
+| [docs/live2d-stage.md](docs/live2d-stage.md) | **Live2D 分层运行时：参数栈 / 姿态总线 / 三通道视线 / 待机 / 热区 / 口型 / 物理 / 动作分组 / 纯 C++ 渲染设计（参考项目）** |
+| [docs/usage.md](docs/usage.md) | 运行、托盘菜单、**交互式控制台指令手册**、**PMX / VRM 待机动画与骨骼动作**、设置面板、全屏追踪、配置字段 |
 | [docs/debugging.md](docs/debugging.md) | 模型诊断面板、失败弹窗、结构化日志格式与级别、常见问题排查 |
 | [docs/development.md](docs/development.md) | 架构分层、测试清单、**三配置构建矩阵**、文案翻译器、C++23 使用点 |
 | [api/README.md](api/README.md) | Live2D SDK 集成层与第三方库引用头说明 |
@@ -114,20 +132,20 @@ PPet-RE/
 │   ├── ui/                   # ★ 所有 GUI 实现：SettingsPanel / DebugPanel / BubbleWidget / ErrorDialog
 │   └── tools/                # ★ 所有非 GUI 实现
 │       ├── main.cpp          # 程序入口
-│       ├── app/              # 主循环、托盘菜单、应用编排
+│       ├── app/              # 主循环、托盘菜单、交互式控制台（ConsoleCommand / Console / AppConsole）、应用编排
 │       ├── agent/            # 语言系统：台词库 / 气泡状态机 / 口型
 │       ├── core/             # 配置、i18n、结构化日志、文件 IO、ZIP、模型包
 │       ├── model/            # IModel 抽象、蒙皮网格、表情调度器、程序化待机 / 骨骼动作、PMX / VRM 后端、错误模型
 │       ├── platform/         # 窗口、托盘、光标追踪、开机启动、文件对话框
 │       └── render/           # 渲染管线、相机、渲染帧抓图
 ├── api/                      # ★ 外部 SDK / 第三方库引用层
-│   ├── live2d/               # Cubism SDK 集成（model3.json / moc3 / 动作 / 物理 / 分层运行时）
+│   ├── live2d/               # Cubism SDK 集成（model3.json / moc3 / 动作队列 / 渲染计划 / 物理 / 分层运行时）
 │   │   └── csdk/             # 自备的 Cubism Core（已 gitignore）
 │   └── vendor/               # nlohmann/json、stb、zlib 统一引用头
 ├── Compiler/                 # 文案翻译器：JSON/CSV → C++ 内嵌表
 ├── docs/                     # 分类文档（含架构说明与 Windows 验收手册）
 ├── third_party/              # 第三方源码（nlohmann / stb / zlib）
-└── tools/                    # 测试程序、素材生成、渲染验证 CLI、Windows 验收脚本
+└── tools/                    # 测试程序、素材生成、渲染验证与功能截图对比 CLI、Windows 验收脚本
 ```
 
 头文件统一使用**从根目录起算的尖括号索引**（`#include <src/ui/DebugPanel.hpp>`），
@@ -142,7 +160,7 @@ cd build
 ctest --output-on-failure
 ```
 
-覆盖 PMX/VRM 解析、ZIP 模型包（含 PMX 贴图容错）、中文路径、渲染冒烟、Qt 界面、结构化日志、文案翻译器、表情调度、语言系统、Live2D 分层运行时等，共 **28 项**。完整清单见 [开发文档 · 测试](docs/development.md#测试)。
+覆盖 PMX/VRM 解析、ZIP 模型包（含 PMX 贴图容错）、中文路径、渲染冒烟、Qt 界面、结构化日志、文案翻译器、表情调度、语言系统、Live2D 分层运行时、**官方动作队列 / 渲染计划 / 控制台指令解析**等，共 **35 项**（三配置构建矩阵下全部通过）。完整清单见 [开发文档 · 测试](docs/development.md#测试)。
 
 ---
 
@@ -151,6 +169,11 @@ ctest --output-on-failure
 - 原始项目：[zenghongtu/PPet](https://github.com/zenghongtu/PPet)（Electron + Live2D 桌面宠物）
 - 表情管理参考：[Tanorika/VRM-VPet](https://github.com/Tanorika/VRM-VPet)（表情预设 / 过渡 / 时间轴）
 - 语言功能参考：[FULASKA/-live2d-](https://github.com/FULASKA/-live2d-)（台词 / 气泡 / 口型 / 分层运行时）
+- **纯 C++ Live2D 渲染设计参考**（无 Chromium / 无 Electron / 无 WebView，C++ 直接驱动 Cubism Core + OpenGL）：
+  - [Noyad/Live2dWallPaper](https://github.com/Noyad/Live2dWallPaper)（纯 C++ Live2D 桌面壁纸）
+  - [Live2D/CubismNativeFramework](https://github.com/Live2D/CubismNativeFramework) 与 [Live2D/CubismNativeSamples](https://github.com/Live2D/CubismNativeSamples)（官方动作队列 / 淡入淡出 / OpenGL 渲染器）
+  - [sawaYch/Live2D-Linux-Native-Sample](https://github.com/sawaYch/Live2D-Linux-Native-Sample)（Linux 原生最小样例）
+  - [Live2D/CubismAndroidLiveWallpaper](https://github.com/Live2D/CubismAndroidLiveWallpaper)（官方动态壁纸样例）
 - [Live2D Cubism SDK](https://www.live2d.com/)（专有许可，可选后端）
 - [Qt 6](https://www.qt.io/)、[GLFW](https://www.glfw.org/)、[GLEW](https://glew.sourceforge.net/)、[nlohmann/json](https://github.com/nlohmann/json)、[stb](https://github.com/nothings/stb)
 

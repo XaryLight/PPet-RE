@@ -323,6 +323,21 @@ public:
         rng_.seed(seed);
     }
 
+    /// 重置运行态（重新加载模型 / 控制台 re model 时调用）。
+    /// 只清「正在播放的表情」，保留预设、随机间隔与开关配置。
+    /// 不做这一步，上一个模型/上一次状态残留的手动表情会渗进新画面的第一帧。
+    void Reset() {
+        presetIndex_ = -1;
+        phase_ = Phase::Idle;
+        phaseTime_ = 0.0f;
+        manual_ = false;
+        pulseName_.clear();
+        pulseWeight_ = 0.0f;
+        pulseTime_ = -1.0f;
+        winkTime_ = -1.0f;
+        cooldown_ = RandomCooldown();
+    }
+
     /// 是否已配置可用预设。
     bool Empty() const { return presets_.empty() && candidates_.empty(); }
 
@@ -334,14 +349,23 @@ public:
         enabled_ = enabled;
         if (enabled) {
             cooldown_ = RandomCooldown();
-        } else {
-            // 关闭时立即回中性，避免表情卡在非中性状态。
+        } else if (!manual_) {
+            // 关闭自动随机时立即回中性，避免表情卡在非中性状态；
+            // 但不要打断「手动触发、还在淡入/停留」的那一次表情。
             presetIndex_ = -1;
             phase_ = Phase::Idle;
             phaseTime_ = 0.0f;
         }
     }
     bool Enabled() const { return enabled_; }
+
+    /// 所有预设 id（诊断 / 控制台 expression list 用）。
+    std::vector<std::string> PresetIds() const {
+        std::vector<std::string> ids;
+        ids.reserve(presets_.size());
+        for (const FacePreset& p : presets_) ids.push_back(p.id);
+        return ids;
+    }
 
     /// 设置两次随机之间的间隔区间（秒）。
     void SetInterval(float min, float max) {
@@ -352,17 +376,30 @@ public:
     /// 每帧推进，返回当前应叠加到模型参数上的「参数 -> 权重」。
     std::vector<Face> Tick(float dt) {
         if (!(dt > 0.0f)) return CurrentFaces();
-        if (!enabled_) return CurrentFaces();
+        // 关闭「自动随机」时，仍要让「手动触发」的这一次表情完整播完
+        // （淡入 → 停留 → 淡出 → 回中性）。否则控制台 expression <id>、
+        // 托盘「立即触发随机表情」在开关关闭时全部静默失效。
+        if (!enabled_ && !manual_) return CurrentFaces();
 
         // 单参数脉冲模式：权重随相位衰减，到期后清空。
         if (pulseTime_ >= 0.0f) {
             pulseTime_ += dt;
             if (pulseTime_ >= kPulseDuration) pulseTime_ = -1.0f;
         }
+        // wink 覆盖层：单眼眨同样需要推进相位，否则触发后权重恒为 0。
+        if (winkTime_ >= 0.0f) {
+            winkTime_ += dt;
+            if (winkTime_ >= kWinkDuration) winkTime_ = -1.0f;
+        }
 
         // 状态机：Idle（等待） -> FadeIn（淡入） -> Hold（停留） -> FadeOut（淡出）
         switch (phase_) {
             case Phase::Idle: {
+                if (!enabled_) {
+                    // 手动触发表情已播完，且自动随机关闭：停在这里等下一次触发。
+                    manual_ = false;
+                    break;
+                }
                 cooldown_ -= dt;
                 if (cooldown_ <= 0.0f) StartPreset();
                 break;
@@ -390,6 +427,7 @@ public:
                     phaseTime_ = 0.0f;
                     presetIndex_ = -1;
                     cooldown_ = RandomCooldown();
+                    manual_ = false;  // 这一轮（随机或手动）表情结束
                 }
                 break;
             }
@@ -398,9 +436,24 @@ public:
     }
 
     /// 立刻随机抽一个小表情并开始播放（返回是否抽到了）。
+    ///
+    /// 这是「手动触发」入口：即使 SetEnabled(false) 关闭了自动随机，
+    /// 也要让这一次表情完整播放——由 manual_ 标记驱动 Tick 继续推进状态机。
     bool Trigger() {
-        if (!StartPreset()) return false;
-        return true;
+        manual_ = StartPreset();
+        return manual_;
+    }
+
+    /// 按 id 触发指定预设（控制台 expression <id> / 手动切换表情用）。
+    /// 找不到该 id 时返回 false，且不改动当前状态。
+    bool TriggerId(const std::string& id) {
+        for (std::size_t i = 0; i < presets_.size(); ++i) {
+            if (presets_[i].id == id) {
+                manual_ = StartPreset(static_cast<int>(i));
+                return manual_;
+            }
+        }
+        return false;
     }
 
     /// 触发一次 wink（单眼眨）。
@@ -474,11 +527,14 @@ private:
         }
     }
 
-    /// 随机挑一个预设并进入淡入阶段。
-    bool StartPreset() {
+    /// 挑一个预设并进入淡入阶段。index < 0 表示随机，否则用指定下标。
+    bool StartPreset(int index = -1) {
         if (!presets_.empty()) {
-            std::uniform_int_distribution<std::size_t> dist(0, presets_.size() - 1);
-            presetIndex_ = static_cast<int>(dist(rng_));
+            if (index < 0 || index >= static_cast<int>(presets_.size())) {
+                std::uniform_int_distribution<std::size_t> dist(0, presets_.size() - 1);
+                index = static_cast<int>(dist(rng_));
+            }
+            presetIndex_ = index;
             phase_ = Phase::FadeIn;
             phaseTime_ = 0.0f;
             std::uniform_real_distribution<float> fade(0.25f, 0.5f);
@@ -525,6 +581,8 @@ private:
     float pulseTime_ = -1.0f;
 
     float winkTime_ = -1.0f;
+    /// 当前这一轮表情是否由手动触发（决定 enabled_=false 时是否继续推进）。
+    bool manual_ = false;
     std::mt19937 rng_{13579u};
 };
 

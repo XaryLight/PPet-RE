@@ -89,6 +89,12 @@ public:
     bool SetExpressionWeights(const std::vector<std::pair<std::string, float>>& weights) override;
     std::vector<std::string> ExpressionPresetIds() const override;
 
+    // --- 控制台调试接口 ---
+    std::vector<std::string> MotionNames() const override;
+    bool PlayMotion(const std::string& id) override;
+    bool StopMotion() override;
+    void ReloadRenderer() override;
+
     /// 供测试与调试使用的只读访问。
     const SkinnedMesh& Mesh() const { return mesh_; }
 

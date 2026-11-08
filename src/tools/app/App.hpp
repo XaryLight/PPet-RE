@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include <src/tools/app/Console.hpp>
 #include <src/tools/core/Config.hpp>
 #include <src/tools/core/I18n.hpp>
 #include <src/tools/core/ModelPackage.hpp>
@@ -37,6 +38,9 @@ public:
 
     /// 清理资源。
     void Shutdown();
+
+    /// 配置控制台：由 main 解析 --console / --command= 后调用，须在 Initialize 之前。
+    void SetConsoleOptions(bool force, std::string script);
 
 private:
     /// 加载指定路径的模型（精简版，只取字符串错误，不弹窗）。
@@ -98,8 +102,15 @@ private:
     /// 这样即使不打开面板也能在日志里发现「draw calls 正常但画面全空」。
     void CollectFrameEvidence(bool wantPreview);
 
-    /// 每帧处理输入事件。
+    /// 每帧处理输入事件（含控制台命令队列）。
     void ProcessInput();
+
+    /// 初始化控制台的处理器与 stdin 读取线程（在 Initialize 末尾调用）。
+    void SetupConsole();
+
+    /// 执行一条控制台指令，返回打印给用户的格式化结果。
+    /// 定义放在 AppConsole.cpp，避免 App.cpp 继续膨胀。
+    std::string ExecuteConsoleCommand(const console::Command& cmd);
 
     // --- 成员 ---
     Window window_;
@@ -125,8 +136,13 @@ private:
     bool showTool_ = true;
     Language currentLanguage_ = Language::Chinese;
     SettingsPanel settingsPanel_;
-    /// 模型调试/诊断面板（托盘菜单「模型诊断」打开）。
+    /// 调试/诊断面板（托盘菜单「模型诊断」打开）。
     DebugPanel debugPanel_;
+
+    /// 交互式控制台：后台线程读 stdin，主循环 Poll() 执行命令。
+    Console console_;
+    bool consoleForce_ = false;
+    std::string consoleScript_;
     float lastFrameTime_ = 0.0f;
 
     /// 最近一次导入的模型包信息（单文件导入时为空），供诊断面板显示「来源」。

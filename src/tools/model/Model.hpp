@@ -262,6 +262,37 @@ public:
     /// 立刻随机抽一个表情并切换过去。
     /// @return 是否成功切换（没有可用表情时返回 false）。
     virtual bool TriggerRandomExpression() { return false; }
+
+    // --- 控制台调试接口（action / re / debug res）---
+    //
+    // 全部给默认实现，新增模型后端不会破坏上层；控制台据此判断能力，
+    // 不支持时给出明确提示，而不是静默失败。
+    /// 可播放的动作名列表（Live2D：动作组名；PMX / VRM：内置骨骼动作 id）。
+    virtual std::vector<std::string> MotionNames() const { return {}; }
+
+    /// 播放指定动作。
+    virtual bool PlayMotion(const std::string& id) {
+        (void)id;
+        return false;
+    }
+
+    /// 停止当前动作（回到待机）。
+    virtual bool StopMotion() { return false; }
+
+    /// 重建渲染资源（控制台 `re draw`）。
+    virtual void ReloadRenderer() {}
+
+    /// 已加载的图形资源清单（名称, 说明），供 `debug res` 输出。
+    virtual std::vector<std::pair<std::string, std::string>> RenderResources() const {
+        return {};
+    }
+
+    /// 关键参数当前值（名称 -> 值），供控制台与功能验证工具做「参数级证据」。
+    /// Live2D 返回全部 Cubism 参数；PMX / VRM 返回 morph / 表情权重。
+    /// 默认空，新增后端不受影响。
+    virtual std::vector<std::pair<std::string, float>> ParameterSnapshot() const {
+        return {};
+    }
 };
 
 using ModelPtr = std::shared_ptr<IModel>;

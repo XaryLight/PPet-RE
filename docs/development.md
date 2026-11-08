@@ -112,13 +112,16 @@ ctest --output-on-failure
 | `bubble_widget_smoke` | 台词气泡窗口：初始化幂等、文本读写、显隐开关、定位、可重复 Shutdown（offscreen） |
 | `expression_director_unit` | 表情调度：预设 / 别名解析 / smoothstep 过渡 / 自动眨眼叠层 / 动作叠层淡出 / 二元量化 / 时间轴 |
 | `dialogue_system_unit` | 语言系统：台词分档抽取 / 不重复 / 气泡优先级与冷却 / UTF-8 字数截断 / 口型音节包络与情绪嘴形 |
-| `live2d_stage_unit` | Live2D 分层：参数栈层序仲裁 / 姿态总线 / 三通道视线 / 待机包络 / 小表情 / 热区 z 优先 / 口型导演 |
+| `live2d_stage_unit` | Live2D 分层：参数栈层序仲裁 / 姿态总线 / 三通道视线 / 待机包络 / 小表情 / **手动触发表情不受随机开关影响 / wink 相位推进** / 热区 z 优先 / 口型导演（51 项检查） |
 | `idle_animator_unit` | 程序化待机：各通道幅度 / `masterAmount` 静音 / 频率互质 / 小动作钟形包络与随机触发 / 同种子可复现 / dt 钳制 |
 | `bone_motion_unit` | 骨骼动作：内置点头·摇头·挥手结构 / 关键帧插值 / 播放进度 / 淡入淡出 / 播完自动结束 / 随机触发 / 手臂骨骼映射 |
 | `live2d_physics_unit` | Live2D 物理：两种 `physics3.json` 格式解析 / 输入归一化 / 摆锤链收敛 / 输出换算与权重混合 |
 | `live2d_motion_group_unit` | 动作分组回归：**空名组按文件名推断** / 命中区抽取 / `Meta.Loop` 循环 / 官方 `Segments` 三点贝塞尔语义 / 旧版 `Curve` 数组 |
 | `live2d_manifest_unit` | `model3.json` 解析：动作组数组写法 / `HitAreas` / `FadeIn`/`FadeOut` 元数据链 |
-| `motion_director_unit` | 动作调度状态机：优先级打断 / 待机冷却 / 命中区路由 / fade 权重 |
+| `motion_director_unit` | 动作调度状态机：优先级打断 / 待机冷却 / 命中区路由 / fade 权重；**队列化后回归 72 项检查** |
+| `motion_queue_unit` | 官方动作队列：`EasingSine` / 单动作 fade / 无 fade / **交叉淡入淡出** / `Loop` / `FinishPrimary` / `StopAll` / 优先级（32 项检查） |
+| `render_plan_unit` | 渲染计划：三套 `glBlendFuncSeparate` / premultiplied 颜色 / renderOrder 稳定排序 / 无效部件与遮罩过滤（20 项检查） |
+| `console_command_unit` | 控制台指令：分词与引号转义 / `Command` 解析 / `Idx Name Path` 表格 / 帮助文本（28 项检查） |
 | `zip_package_test` | 生成测试用 zip（fixture） |
 | `zip_import_test` | 解压中央目录、定位包内模型、幂等重导入、非法输入 |
 | `pmx_package_gen` | 生成 4 种 PMX 包（fixture）：完整 / 缺贴图 / 大小写 / 子目录 |
@@ -127,9 +130,11 @@ ctest --output-on-failure
 | `model_error_unit` | 结构化错误：分类名/建议、真实错误串分类推断、明细与报告组装 |
 | `error_dialog_smoke` | 失败弹窗：分类/摘要/逐条明细/建议/日志、复制按钮、警告型标题（offscreen） |
 | `render_verify_pmx` / `render_verify_vrm` | 用渲染验证 CLI 对仓库素材跑「加载 → 渲染 → 读回像素 → 判定」（xvfb） |
+| `render_verify_clear_contract` | 主循环每帧清屏契约：连续帧读回像素一致、无上一帧残影（xvfb） |
 
-共 **32 项**测试（含 fixture）。调试面板冒烟测试还会校验 7 个页签、骨架/图片/详细错误区与
+共 **35 项**测试（含 fixture）。调试面板冒烟测试还会校验 7 个页签、骨架/图片/详细错误区与
 表情与说话页；气泡冒烟测试校验无边框气泡的显隐、文本与定位。
+本轮实测：Release + 桩 / Release + 真实 SDK / Debug + 无后端 **三配置均 35/35 通过，0 警告**。
 
 ### 三配置构建矩阵
 
@@ -159,6 +164,33 @@ done
     --shot shot.png --report report.json --frames 30
 # Windows 11 真机一键验收见 docs/windows-test.md 与 tools/windows_verify.ps1
 ```
+
+### 表情 / 口型 / 动作四状态截图对比（`ppet_feature_verify`）
+
+```bash
+# 真实 Cubism SDK 配置下（Linux 需 xvfb-run）
+xvfb-run -a ./build_cubism/ppet_feature_verify \
+    --model /path/to/model.model3.json \
+    --out docs/verify/feature --prefix live2d \
+    --width 400 --height 520 --frames 60
+python3 tools/gen_feature_compare.py docs/verify/feature live2d
+```
+
+工具对同一模型分别以 `neutral / expression / lipsync / action` 四态**重新加载模型**，
+用相同 `dt` 序列与固定光标推进相同帧数，消除待机动画干扰；输出四张 PNG、JSON 报告、
+2x2 对比图、局部放大图、**差异高亮图**（变化像素染红）与全局差异掩膜。
+判定条件为「像素差异 ≥ 0.5% **或** 参数快照累计变化 > 0.01」——Live2D 的眉毛 / 嘴部
+只占画面极小区域，像素占比常低于 0.5%，必须靠 `ParameterSnapshot()` 的参数级证据判定。
+
+本轮实跑结论（[完整报告与证据图](verify/feature/)）：
+
+| 模型 | 表情 | 口型 | 动作 |
+| --- | --- | --- | --- |
+| PMX `test.pmx` | 19.88% PASS | 48.70% PASS | 20.13% PASS |
+| Live2D `nengdai_2` | 0.36% / 参数累计 4.163 PASS | 0.33% / 1.426 PASS | 21.89% / 338.076 PASS |
+
+Live2D 表情的 `ParamEyeLSmile / ParamEyeRSmile / ParamBrowLY / ParamBrowRY: 0 → 1.000`
+说明参数级表情预设确实写进了模型；差异高亮图里红色像素集中在眼眉区域。
 
 测试素材由脚本生成（CMake 会自动作为 fixture 调用）：
 

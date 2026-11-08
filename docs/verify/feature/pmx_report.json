@@ -1,0 +1,101 @@
+{
+  "comparisons": {
+    "action": {
+      "baseline": "neutral",
+      "change_bbox": [
+        0,
+        73,
+        397,
+        465
+      ],
+      "changed_percent": 20.13,
+      "changed_pixels": 29669,
+      "comparable_pixels": 147373,
+      "mean_abs_diff": 8.41,
+      "param_changed_count": 0,
+      "param_samples": [],
+      "param_total_delta": 0.0,
+      "pass": true
+    },
+    "expression": {
+      "baseline": "neutral",
+      "change_bbox": [
+        0,
+        73,
+        397,
+        465
+      ],
+      "changed_percent": 19.88,
+      "changed_pixels": 29424,
+      "comparable_pixels": 147975,
+      "mean_abs_diff": 6.541,
+      "param_changed_count": 0,
+      "param_samples": [],
+      "param_total_delta": 0.0,
+      "pass": true
+    },
+    "lipsync": {
+      "baseline": "neutral",
+      "change_bbox": [
+        0,
+        73,
+        397,
+        465
+      ],
+      "changed_percent": 48.7,
+      "changed_pixels": 72061,
+      "comparable_pixels": 147974,
+      "mean_abs_diff": 9.603,
+      "param_changed_count": 0,
+      "param_samples": [],
+      "param_total_delta": 0.0,
+      "pass": true
+    }
+  },
+  "debug_info": {
+    "display_name": "テストモデル",
+    "expression_status": "表情预设：自然 / 随机表情：关",
+    "motion_status": "",
+    "render_status": "正常渲染"
+  },
+  "expression_presets": [
+    "neutral",
+    "happy",
+    "relaxed",
+    "angry",
+    "sad",
+    "surprised"
+  ],
+  "frames_per_state": 60,
+  "gpu": "llvmpipe (LLVM 20.1.2, 256 bits)",
+  "height": 520,
+  "model_path": "tools/testdata/test.pmx",
+  "model_type": "PMX",
+  "motion_names": [
+    "nod",
+    "shake",
+    "wave",
+    "waveLeft"
+  ],
+  "result": "PASS",
+  "states": [
+    {
+      "png": "docs/verify/feature/pmx_neutral.png",
+      "state": "neutral"
+    },
+    {
+      "png": "docs/verify/feature/pmx_expression.png",
+      "state": "expression"
+    },
+    {
+      "png": "docs/verify/feature/pmx_lipsync.png",
+      "state": "lipsync"
+    },
+    {
+      "png": "docs/verify/feature/pmx_action.png",
+      "state": "action"
+    }
+  ],
+  "tool": "ppet_feature_verify",
+  "width": 400
+}

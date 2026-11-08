@@ -71,11 +71,18 @@ public:
     ///
     /// 用于诊断「动画到底有没有在动」：待机动作、物理、表情都会改参数，
     /// 只要采样若干帧对比数值，就能确认哪一层在工作。
-    std::vector<std::pair<std::string, float>> ParameterSnapshot() const;
+    std::vector<std::pair<std::string, float>> ParameterSnapshot() const override;
 
     /// 用户点击渲染窗口：按命中区触发互动动作（TapHead / TapBody 等）。
     /// nx, ny ∈ [0,1]，左上原点、y 向下。
     bool OnInteract(float nx, float ny) override;
+
+    // --- 控制台调试接口 ---
+    std::vector<std::string> MotionNames() const override;
+    bool PlayMotion(const std::string& id) override;
+    bool StopMotion() override;
+    void ReloadRenderer() override;
+    std::vector<std::pair<std::string, std::string>> RenderResources() const override;
 
     /// 表情/口型：切换到表情动作组（如 "ExpHappy"）；无对应组返回 false。
     bool SetExpressionPreset(const std::string& id) override;

@@ -97,6 +97,12 @@ public:
     /// 可用的表情预设 id（托盘「表情」子菜单据此生成条目）。
     std::vector<std::string> ExpressionPresetIds() const override;
 
+    // --- 控制台调试接口 ---
+    std::vector<std::string> MotionNames() const override;
+    bool PlayMotion(const std::string& id) override;
+    bool StopMotion() override;
+    void ReloadRenderer() override;
+
     /// VRM 版本：1 = VRM 1.0，0 = VRM 0.x，-1 = 未识别出 VRM 扩展。
     int VrmVersion() const { return vrmVersion_; }
 
