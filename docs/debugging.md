@@ -204,6 +204,69 @@ PPET_LOG_LEVEL=trace PPET_LOG_CONSOLE_LEVEL=debug ./build/bin/ppet
 
 ---
 
+## Windows 崩溃与系统级卡顿
+
+### 症状与定性
+
+控制台出现下面这类输出，随后进程以 `-1073741819 (0xC0000005)` 退出：
+
+```text
+[E][...][operator ()] fail CreateSemaphore[5]: ... GAMEPP-IPC-OVERLAY
+[E][...][operator ()] fail CreateFileMapping[5]: __CA_CONN__
+[E][...][operator ()] [cc_acc] acquire failed: __CA_CONN__
+```
+
+**这不是 PPet 打印的**：本项目日志格式是
+`时间 | +相对毫秒 | Δ | 级别 | 线程 | [模块] 文件:行号 函数 | 消息`。
+上面 `[E][...][operator ()]` 是**第三方注入 DLL 的 stderr**，来自「游戏加加 GamePP /
+RivaTuner RTSS / MSI Afterburner / NVIDIA GeForce Experience Overlay / Discord Overlay /
+录屏与帧率监控软件」等向 OpenGL / D3D 进程注入的 IPC overlay。
+`CreateSemaphore` / `CreateFileMapping` 的错误码 `5` 是 `ERROR_ACCESS_DENIED`；
+这些 DLL 在拿不到句柄后仍继续使用空对象，最终触发 `0xC0000005`
+（EXCEPTION_ACCESS_VIOLATION）——崩溃发生在注入模块里，不是 PPet 的代码。
+
+### 崩溃后怎么确认
+
+程序已安装顶层异常过滤器，崩溃时会在 `last.log` 追加 `[CRASH]` 段：
+
+```text
+[CRASH] 未处理异常 0xC0000005 (EXCEPTION_ACCESS_VIOLATION)，异常地址 00007FF...
+[CRASH] 所属模块：C:\Program Files\GamePP\GamePPOverlay.dll
+[CRASH] 判定：崩溃发生在第三方注入模块，不在 PPet 主程序内。
+[CRASH] 处理：退出上述软件，或在其设置里把 PPet 加入「不注入 / 白名单」；
+             也可用 --safe-mode 启动降低与 overlay 的交互。
+```
+
+`判定` 一行是结论：模块名与 `ppet.exe` 不同即为第三方；只有文件名相同才算 PPet 自身
+（此时请带 `last.log` 与复现步骤提交 Issues）。拿不到模块名时会标 `无法确定`。
+异常过滤器里只用栈缓冲和 Win32 `WriteFile`，不分配堆内存，堆损坏时也能写出记录。
+
+### 处理顺序
+
+1. **排除注入**：退出游戏加加 / RTSS / 微星小飞机 / GeForce Experience /
+   Discord / 录屏软件，或把 PPet 加入它们的「不注入 / 白名单」，再启动一次。
+2. **临时规避**：用 `--safe-mode` 启动（30 FPS + 跳过 `glReadPixels` 帧读回自检），
+   或 `--max-fps=30` 单独降帧，降低与 overlay 的交互频率。
+3. **永久配置**：确认有效后在配置里设 `safeMode: true` / `maxFps: 30`。
+4. **仍崩**：把 `last.log` 里的 `[CRASH]` 段与复现步骤提交 Issues。
+
+### 为什么「渲染有问题会连鼠标和其它界面一起卡」
+
+透明置顶窗口每帧刷新都要经过 DWM 合成；GPU / 驱动异常、或被 overlay 挂住时，
+高频刷新会持续占用合成资源，桌面看起来整体卡顿。本项目已做四层收敛：
+
+| 措施 | 作用 |
+| --- | --- |
+| 默认 `maxFps = 60` 软限帧 | VSync 在部分驱动 / overlay 下会失效（实测曾达 200+ FPS），软限帧兜底；实测稳定在 59.8 FPS |
+| 全屏检测节流到 250 ms | `GetForegroundWindow` 等 4 个跨进程调用不再每帧执行，避免前台窗口卡死时阻塞主线程 |
+| Windows 不再安装 `WH_MOUSE_LL` 全局低级鼠标钩子 | 彻底退出系统输入链，鼠标消息不再需要等待本进程回调 |
+| `--safe-mode` 跳过 `glReadPixels` | 帧读回是同步阻塞 GPU 的调用，渲染异常时可能长时间挂住主线程 |
+
+`--safe-mode` 只影响本次运行，不改配置文件。可用控制台 `status` 查看
+`safeMode` / `maxFps` / `fps` 的实时值。
+
+---
+
 ## 典型排查流程
 
 1. **程序启动了但什么都没有** → 打开「模型诊断」，看「尚未加载模型」还是「网格为空」；
@@ -211,7 +274,9 @@ PPET_LOG_LEVEL=trace PPET_LOG_CONSOLE_LEVEL=debug ./build/bin/ppet
 2. **模型是白模 / 纯色** → 诊断面板「性质与资源」页看缺失资源清单；
    日志里会有 `模型引用了 N 个不存在的资源文件` 与 PMX 打包建议。
    按 [模型格式与导入](models.md#pmx-请用-zip-导入重要) 重新打包 `.zip`。
-3. **帧率低 / 卡顿** → 看日志的 `Δ` 列定位耗时台阶，诊断面板看 FPS、帧时与 Draw calls。
+3. **帧率低 / 卡顿 / 连鼠标一起卡** → 看日志的 `Δ` 列定位耗时台阶，诊断面板看 FPS、
+   帧时与 Draw calls；先用 `--safe-mode` 或 `--max-fps=30` 排除第三方 overlay 注入，
+   详见 [Windows 崩溃与系统级卡顿](#windows-崩溃与系统级卡顿)。
 4. **Windows 双击闪退** → 看 [构建指南 · Windows 常见故障排查](build.md#windows-常见故障排查)。
 5. **中文乱码** → 直接看 `./last.log`（UTF-8）；控制台乱码是终端按 GBK 解释了 UTF-8 字节，
    `main.cpp` 已调用 `SetConsoleOutputCP(CP_UTF8)`，仍未生效时以文件为准。
@@ -225,6 +290,8 @@ PPET_LOG_LEVEL=trace PPET_LOG_CONSOLE_LEVEL=debug ./build/bin/ppet
 | `ld.lld: could not open 'libLIBCMT.a'` | 链接了 MSVC 静态库 | MinGW 必须用 DLL 导入库，见 [构建指南](build.md#windows-工具链选择重要) |
 | 日志无输出 | 级别被调到 `off`，或工作目录不可写 | 去掉 `--log-level=off`；看启动日志里的实际日志路径 |
 | `last.log` 里两行搅在一起 | 不会发生（已加锁）；若出现请提 issue | — |
+| `GAMEPP-IPC-OVERLAY` + `CreateSemaphore[5]` + 退出码 `0xC0000005` | 第三方 overlay 注入 DLL 拿不到 IPC 句柄后空指针访问 | 看 `last.log` 的 `[CRASH] 判定`；退出注入软件或用 `--safe-mode`，见 [上文](#windows-崩溃与系统级卡顿) |
+| 渲染卡顿时连鼠标 / 其它窗口一起卡 | 透明置顶窗口高频刷新 + overlay 注入占用 DWM 合成 | `--max-fps=30` / `--safe-mode`；本版本已移除 `WH_MOUSE_LL` 钩子，不会再拖慢系统输入链 |
 
 ---
 

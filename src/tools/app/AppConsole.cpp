@@ -525,6 +525,9 @@ std::string App::ExecuteConsoleCommand(const console::Command& cmd) {
            << static_cast<double>(frameCount_) * frameMsSmoothed_ / 1000.0 << " s\n"
            << "  cmdDropped : " << console_.DroppedLines() << "\n"
            << "  autoFitWin : " << (cfg.autoFitWindow ? "on" : "off") << "\n"
+           << "  safeMode   : " << (safeMode_ ? "on" : "off") << "\n"
+           << "  maxFps     : " << configuredMaxFps_
+           << "（0=不限帧，仅依赖 VSync）\n"
            << "  armRestDrop: " << cfg.armRestDropDeg << " deg (0=后端默认)\n"
            << "  window     : " << static_cast<int>(winSize.x) << "x"
            << static_cast<int>(winSize.y) << "\n"

@@ -35,29 +35,23 @@ namespace ppet {
 // ---------------------------------------------------------------------------
 
 struct GlobalCursorTracker::Impl {
-#if defined(_WIN32)
-    // Windows 钩子必须在安装它的线程上保持消息循环，故用单独线程安装。
-    HHOOK hook = nullptr;
-    DWORD threadId = 0;
-    HANDLE readyEvent = nullptr;
-    std::atomic<bool> stopRequested{false};
-    std::thread messageThread;
-#elif defined(__APPLE__)
+#if defined(__APPLE__)
     // 单个 NSObject 指针即可承载 monitor，无需前向声明 Objective-C 类。
     id monitor = nil;
     id globalMonitor = nil;
-#else
+#elif !defined(_WIN32)
     Display* display = nullptr;
 #endif
+    // Windows 不需要任何平台句柄：每帧直接 GetCursorPos 轮询，
+    // 不安装系统钩子，也就没有钩子线程与跨线程位置传递的需要。
 
-    /// 收到全局鼠标移动事件时调用（各平台共用）。
+    /// 收到全局鼠标移动事件时调用（macOS 监听器使用）。
     void OnGlobalCursorMoved(float x, float y) {
         pendingX = x;
         pendingY = y;
         hasPending = true;
     }
 
-    // 事件在钩子线程产生，Update() 在主线程读取，通过这组变量做线程间传递。
     std::atomic<float> pendingX{0.0f};
     std::atomic<float> pendingY{0.0f};
     std::atomic<bool> hasPending{false};
@@ -65,33 +59,7 @@ struct GlobalCursorTracker::Impl {
 
 namespace {
 
-#if defined(_WIN32)
-
-/// Windows 低级鼠标钩子的全局状态。
-struct HookState {
-    HHOOK hook = nullptr;
-    GlobalCursorTracker::Impl* owner = nullptr;
-};
-
-HookState g_hookState;
-
-LRESULT CALLBACK MouseHookProc(int code, WPARAM wParam, LPARAM lParam) {
-    if (code == HC_ACTION) {
-        const auto msg = reinterpret_cast<MSG*>(lParam);
-        if (msg && (msg->message == WM_MOUSEMOVE || msg->message == WM_MOUSELAST)) {
-            POINT pt;
-            if (GetCursorPos(&pt)) {
-                if (g_hookState.owner) {
-                    g_hookState.owner->OnGlobalCursorMoved(static_cast<float>(pt.x),
-                                                          static_cast<float>(pt.y));
-                }
-            }
-        }
-    }
-    return CallNextHookEx(g_hookState.hook, code, wParam, lParam);
-}
-
-#elif defined(__APPLE__)
+#if defined(__APPLE__)
 
 /// macOS 全局事件监听器持有者。
 @interface PPetGlobalMouseMonitor : NSObject
@@ -129,48 +97,19 @@ bool GlobalCursorTracker::Start(std::string& error) {
     impl_ = new Impl();
 
 #if defined(_WIN32)
-    // 在独立线程安装钩子并维持消息循环：低级鼠标钩子的回调
-    // 会被投递到安装它的线程，若在渲染线程安装会与 OpenGL 消息泵争抢。
-    impl_->readyEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    if (!impl_->readyEvent) {
-        error = "创建事件对象失败";
-        Stop();
-        return false;
-    }
-
-    g_hookState.owner = impl_;
-
-    impl_->messageThread = std::thread([this]() {
-        impl_->threadId = GetCurrentThreadId();
-        impl_->hook = SetWindowsHookExW(WH_MOUSE_LL, &MouseHookProc, nullptr, 0);
-        // 把钩子句柄同步给全局状态，供 CallNextHookEx 使用。
-        g_hookState.hook = impl_->hook;
-        SetEvent(impl_->readyEvent);
-
-        MSG msg;
-        while (!impl_->stopRequested.load()) {
-            // 用超时等待代替阻塞 GetMessage，以便响应停止请求。
-            const DWORD r = MsgWaitForMultipleObjects(0, nullptr, FALSE, 50, QS_ALLINPUT);
-            if (r == WAIT_OBJECT_0) {
-                while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
-                    TranslateMessage(&msg);
-                    DispatchMessageW(&msg);
-                }
-            }
-        }
-        if (impl_->hook) {
-            UnhookWindowsHookEx(impl_->hook);
-            impl_->hook = nullptr;
-        }
-        g_hookState.hook = nullptr;
-    });
-
-    WaitForSingleObject(impl_->readyEvent, 3000);
-    if (!impl_->hook) {
-        error = "安装全局鼠标钩子失败";
-        Stop();
-        return false;
-    }
+    // 【不再安装 WH_MOUSE_LL 全局低级鼠标钩子】
+    // 低级鼠标钩子的回调运行在**系统输入链**上：每次鼠标移动，Windows 都要
+    // 同步等待本进程回调返回。一旦钩子线程被阻塞、或与第三方 overlay 注入层
+    // （游戏加加 GamePP / RTSS / MSI Afterburner / 录屏与帧率监控软件）的
+    // 钩子互相等待，整个系统的鼠标消息都会被拖慢，表现为「连鼠标一起卡」。
+    // 另外 WH_MOUSE_LL 的 lParam 是 MSLLHOOKSTRUCT* 而不是 MSG*，旧实现按
+    // MSG 解读 msg->message，实际从未正确投递过位置；Stop() 与回调之间还存在
+    // owner 悬垂指针窗口，可能直接触发 0xC0000005。
+    //
+    // 全屏追踪只需要「光标在哪」，GetCursorPos 就能给出整个虚拟桌面的绝对
+    // 坐标：不受点击穿透、窗口边界、其它应用遮挡影响，也不进入系统钩子链。
+    // 因此这里只创建 Impl，真正的坐标由 Update() 每帧轮询。
+    (void)error;  // Windows 轮询没有可失败的资源申请。
 
 #elif defined(__APPLE__)
     impl_->monitor = [[PPetGlobalMouseMonitor alloc] init];
@@ -212,26 +151,15 @@ bool GlobalCursorTracker::Start(std::string& error) {
 void GlobalCursorTracker::Stop() {
     if (!impl_) return;
 
-#if defined(_WIN32)
-    if (impl_->readyEvent) {
-        impl_->stopRequested.store(true);
-        // 唤醒消息线程使其退出等待循环。
-        PostThreadMessage(impl_->threadId, WM_QUIT, 0, 0);
-        if (impl_->messageThread.joinable()) impl_->messageThread.join();
-        CloseHandle(impl_->readyEvent);
-        impl_->readyEvent = nullptr;
-    }
-    g_hookState.owner = nullptr;
-    g_hookState.hook = nullptr;
-
-#elif defined(__APPLE__)
+#if defined(__APPLE__)
     if (impl_->globalMonitor) {
         [NSEvent removeMonitor:impl_->globalMonitor];
         impl_->globalMonitor = nil;
     }
     impl_->monitor = nil;
 
-#else
+#elif !defined(_WIN32)
+    // Windows 没有任何需要释放的系统资源（无钩子、无线程、无 Display）。
     if (impl_->display) {
         XCloseDisplay(impl_->display);
         impl_->display = nullptr;
@@ -246,14 +174,23 @@ void GlobalCursorTracker::Stop() {
 void GlobalCursorTracker::Update() {
     state_.moved = false;
 
-    // 优先消费钩子/监听器投递的位置。
+#if defined(_WIN32)
+    // 每帧一次 GetCursorPos：整个虚拟桌面的绝对坐标，不进入系统钩子链。
+    // 点击穿透、全屏追踪关闭、光标在其它显示器上都照样有效。
+    Vec2 osCursor;
+    if (QueryCursor(osCursor)) {
+        state_.position = osCursor;
+        state_.valid = true;
+    }
+#else
+    // 优先消费监听器投递的位置（macOS）。
     if (impl_ && impl_->hasPending.exchange(false)) {
         state_.position = Vec2(impl_->pendingX.load(), impl_->pendingY.load());
         state_.valid = true;
     }
 
-#if !defined(_WIN32) && !defined(__APPLE__)
-    // X11 退化为轮询：即使没有 XRecord 也能拿到全局坐标。
+#if !defined(__APPLE__)
+    // X11 轮询：即使没有 XRecord 也能拿到全局坐标。
     if (impl_ && impl_->display) {
         Window root = DefaultRootWindow(impl_->display);
         Window rootRet = 0, childRet = 0;
@@ -265,6 +202,7 @@ void GlobalCursorTracker::Update() {
             state_.valid = true;
         }
     }
+#endif
 #endif
 
     if (state_.valid) {

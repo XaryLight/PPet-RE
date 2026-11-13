@@ -125,6 +125,7 @@ ctest --output-on-failure
 | `model_naming_unit` | 模型命名：中文 / Windows 路径 / URL 查询 / 复合后缀 / **非法 UTF-8 字节路径不抛异常** / 重名序号 / 列表补齐 |
 | `stability_unit` | 长期稳定性：饱和递增 / 安全无符号差值 / `dt` 钳制 NaN·Inf·负数·超大值 / 30 年运行相位精度 |
 | `console_queue_unit` | 控制台队列有界：注入 5000 条命令验证上限 4096、丢弃计数、单帧最多 32 条、剩余命令最终消费完 |
+| `crash_classify_unit` | 崩溃模块归类：自身 / 第三方 overlay DLL / 大小写与路径分隔符 / 未知，异常码可读名称 |
 | `zip_package_test` | 生成测试用 zip（fixture） |
 | `zip_import_test` | 解压中央目录、定位包内模型、幂等重导入、非法输入 |
 | `pmx_package_gen` | 生成 4 种 PMX 包（fixture）：完整 / 缺贴图 / 大小写 / 子目录 |
@@ -135,9 +136,9 @@ ctest --output-on-failure
 | `render_verify_pmx` / `render_verify_vrm` | 用渲染验证 CLI 对仓库素材跑「加载 → 渲染 → 读回像素 → 判定」（xvfb） |
 | `render_verify_clear_contract` | 主循环每帧清屏契约：连续帧读回像素一致、无上一帧残影（xvfb） |
 
-共 **38 项**测试（含 fixture）。调试面板冒烟测试还会校验 7 个页签、骨架/图片/详细错误区与
+共 **39 项**测试（含 fixture）。调试面板冒烟测试还会校验 7 个页签、骨架/图片/详细错误区与
 表情与说话页；气泡冒烟测试校验无边框气泡的显隐、文本与定位。
-本轮实测：Release + 桩 / Release + 真实 SDK / Debug + 无后端 **三配置均 38/38 通过，0 警告**。
+本轮实测：Release + 桩 / Release + 真实 SDK / Debug + 无后端 **三配置均 39/39 通过，0 警告**。
 
 ### 三配置构建矩阵
 
@@ -159,6 +160,25 @@ done
 > **纯逻辑优先**：待机动画、骨骼动作、Live2D 物理、动作分组这几块的实现
 > 都刻意做成「不碰 GL / Qt / 文件 IO」的纯逻辑模块，因此上面三种配置都能编译并运行
 > 对应单测，不需要为每种配置单独维护测试分支。
+
+### Windows 分支的交叉编译验证
+
+`#if defined(_WIN32)` 里的代码在 Linux 上根本不会被编译，三配置全绿**不能**证明
+Windows 分支语法正确。改动平台层后必须额外用 MinGW 做一次真实编译检查：
+
+```bash
+x86_64-w64-mingw32-g++ -std=c++23 -Wall -Wextra -I. \
+    -c src/tools/platform/GlobalCursorTracker.cpp -o /tmp/gct.o
+x86_64-w64-mingw32-g++ -std=c++23 -Wall -Wextra -I. \
+    -c src/tools/platform/CrashHandler.cpp -o /tmp/ch.o
+# 连 Win32 分支一起链接成 exe，验证 API 签名与链接符号
+x86_64-w64-mingw32-g++ -std=c++23 -Wall -Wextra -I. \
+    tools/crash_classify_test.cpp src/tools/platform/CrashHandler.cpp \
+    -o /tmp/crash_classify_test.exe
+```
+
+本轮移除 `WH_MOUSE_LL` 钩子、新增 `CrashHandler` 后，上述三处均 **0 警告**通过。
+这一步曾抓到过「删掉 Windows 分支后 X11 代码泄漏进 Win32 编译单元」的条件编译错误。
 
 渲染验证 CLI（可单独用于人工核验或 CI）：
 

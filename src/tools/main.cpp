@@ -1,7 +1,9 @@
 // PPet - C++ 移植版
 // 程序入口。
+#include <charconv>
 #include <cstdio>
 #include <string_view>
+#include <system_error>
 
 #if defined(_WIN32)
 // Windows 控制台默认使用本地代码页（简体中文系统是 GBK/936），
@@ -18,6 +20,7 @@
 
 #include <src/tools/app/App.hpp>
 #include <src/tools/core/Log.hpp>
+#include <src/tools/platform/CrashHandler.hpp>
 
 namespace {
 
@@ -60,6 +63,9 @@ int main(int argc, char** argv) {
     // 调试日志落地到 ./last.log（UTF-8 + BOM，避免中文被当成 GBK 显示成乱码）。
     ppet::Logger::Init("last.log");
     ApplyLogOptions(argc, argv);
+    // 顶层异常过滤器：0xC0000005 时把异常码与所属模块写进 last.log，
+    // 便于区分「PPet 自己崩」与「第三方 overlay 注入 DLL 崩」。
+    ppet::crash::Install();
 
     PPET_LOG("PPet 启动 | C++ 标准=%d | 构建=%s %s | 日志=%s（级别 %s / 控制台 %s）",
              PPET_CXX_STANDARD, __DATE__, __TIME__, ppet::Logger::Path().c_str(),
@@ -73,14 +79,29 @@ int main(int argc, char** argv) {
     //                            启动时按顺序执行一批指令，便于脚本化验收
     bool consoleForce = false;
     std::string consoleScript;
+    bool safeModeFlag = false;
+    int maxFpsArg = -1;  // -1 = 未指定；0 = 显式不限帧
     for (int i = 1; i < argc; ++i) {
         const std::string_view arg(argv[i] ? argv[i] : "");
         if (arg == "--console") {
             consoleForce = true;
         } else if (arg.starts_with("--command=")) {
             consoleScript = std::string(arg.substr(std::string_view("--command=").size()));
+        } else if (arg == "--safe-mode") {
+            safeModeFlag = true;
+        } else if (arg.starts_with("--max-fps=")) {
+            constexpr std::string_view kFps = "--max-fps=";
+            const auto text = arg.substr(kFps.size());
+            int parsed = 0;
+            const auto [ptr, ec] =
+                std::from_chars(text.data(), text.data() + text.size(), parsed);
+            if (ec == std::errc{} && ptr == text.data() + text.size() && parsed >= 0) {
+                maxFpsArg = parsed;
+            }
         }
     }
+    if (safeModeFlag) app.SetSafeMode(true);
+    if (maxFpsArg >= 0) app.SetMaxFps(maxFpsArg);
     app.SetConsoleOptions(consoleForce, consoleScript);
 
     std::string error;

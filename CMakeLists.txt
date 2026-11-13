@@ -569,6 +569,7 @@ set(PPET_PLATFORM_SOURCES
     src/tools/platform/OpenExternal.cpp
     src/tools/platform/FileDialog.cpp
     src/tools/platform/GlobalCursorTracker.cpp
+    src/tools/platform/CrashHandler.cpp
 )
 
 # MSVC CRT 兼容层：历史遗留的安全网。
@@ -1071,6 +1072,15 @@ add_executable(ppet_console_queue_test
 )
 add_test(NAME console_queue_unit
          COMMAND ppet_console_queue_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# 崩溃诊断：区分 PPet 主程序与第三方 overlay 注入 DLL（GamePP / RTSS 等）。
+add_executable(ppet_crash_classify_test
+    tools/crash_classify_test.cpp
+    src/tools/platform/CrashHandler.cpp
+)
+add_test(NAME crash_classify_unit
+         COMMAND ppet_crash_classify_test
          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
 # 结构化模型加载错误：分类推断 / 明细 / 建议（纯头文件，无需链接模型层）。

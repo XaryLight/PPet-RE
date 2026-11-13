@@ -660,28 +660,39 @@ void Window::UpdatePlatformStateImpl() {
     HWND hwnd = glfwGetWin32Window(window_);
     if (!hwnd) return;
 
-    // ---- 全屏独占检测 ----
+    const double now = NowSeconds();
+
+    // ---- 全屏独占检测（节流到 250 ms）----
     // 独占全屏的游戏切换显示模式时会重置 Z 序，把普通置顶窗口压到后面。
     // 判定方法：前台窗口的矩形覆盖了其所在显示器的整个区域。
-    bool fullscreen = false;
-    HWND foreground = GetForegroundWindow();
-    if (foreground && foreground != hwnd) {
-        RECT windowRect{};
-        if (GetWindowRect(foreground, &windowRect)) {
-            HMONITOR monitor = MonitorFromWindow(foreground, MONITOR_DEFAULTTONEAREST);
-            MONITORINFO info{};
-            info.cbSize = sizeof(info);
-            if (GetMonitorInfoW(monitor, &info)) {
-                const RECT& area = info.rcMonitor;
-                constexpr int kTolerance = 2;  // 允许 2px 误差（边框/任务栏残留）
-                fullscreen = windowRect.left <= area.left + kTolerance &&
-                             windowRect.top <= area.top + kTolerance &&
-                             windowRect.right >= area.right - kTolerance &&
-                             windowRect.bottom >= area.bottom - kTolerance;
+    //
+    // 这里原先每帧执行 4 次跨进程系统调用（GetForegroundWindow /
+    // GetWindowRect / MonitorFromWindow / GetMonitorInfoW）。当前台窗口卡死、
+    // 或第三方 overlay 注入层挂住了窗口枚举时，这些调用可能阻塞渲染主线程，
+    // 透明置顶窗口停止刷新会让人觉得「整个界面都卡了」。250ms 对置顶维持
+    // 已经足够灵敏，故改为节流检测。
+    if (now - lastFullscreenCheck_ >= 0.25) {
+        lastFullscreenCheck_ = now;
+        bool fullscreen = false;
+        HWND foreground = GetForegroundWindow();
+        if (foreground && foreground != hwnd) {
+            RECT windowRect{};
+            if (GetWindowRect(foreground, &windowRect)) {
+                HMONITOR monitor = MonitorFromWindow(foreground, MONITOR_DEFAULTTONEAREST);
+                MONITORINFO info{};
+                info.cbSize = sizeof(info);
+                if (GetMonitorInfoW(monitor, &info)) {
+                    const RECT& area = info.rcMonitor;
+                    constexpr int kTolerance = 2;  // 允许 2px 误差（边框/任务栏残留）
+                    fullscreen = windowRect.left <= area.left + kTolerance &&
+                                 windowRect.top <= area.top + kTolerance &&
+                                 windowRect.right >= area.right - kTolerance &&
+                                 windowRect.bottom >= area.bottom - kTolerance;
+                }
             }
         }
+        fullscreenHostActive_ = fullscreen;
     }
-    fullscreenHostActive_ = fullscreen;
 
     if (!alwaysOnTop_) return;
 
@@ -689,8 +700,7 @@ void Window::UpdatePlatformStateImpl() {
     // 全屏独占时每 250ms 补一次置顶，普通情况下每 2s 补一次：
     // 前者保证游戏切回桌面后窗口立即回到顶层，后者防止其它程序（例如某些
     // 全屏播放器）把窗口压下去，同时不至于过于频繁地干扰系统。
-    const double now = NowSeconds();
-    const double interval = fullscreen ? 0.25 : 2.0;
+    const double interval = fullscreenHostActive_ ? 0.25 : 2.0;
     if (now - lastTopmostReassert_ >= interval) {
         lastTopmostReassert_ = now;
         SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,

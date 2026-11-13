@@ -211,10 +211,14 @@ PMX / VRM 不受影响。调度器的正确性由 `motion_director_unit`（状�
 | 帧宽高比 | `IModel::PreferredFrameAspect()` | PMX / VRM 取网格包围盒 X/Y，Live2D 取 `canvas.sizeInPixels`；`App::LoadModel()` 据此调整 GLFW 窗口，`feature_verify --auto-size` 复用 |
 | 气泡自适应 | `src/ui/BubbleWidget.{hpp,cpp}` | `SetMaxWidth()` / `MaxWidth()` / `Width()` / `Height()`；最大宽度与字号跟随渲染窗口，相同宽度短路避免每帧重设样式 |
 | 多行日志 | `src/tools/core/Log.{hpp,cpp}` | `SetMultiLine()` / `MultiLine()` / `FormatMultiLine()`；续行以 `> ` 开头且每行保留完整前缀，`Format()` 仍保持严格单行 |
+| 无钩子光标轮询 | `src/tools/platform/GlobalCursorTracker.cpp` | Windows 分支移除 `WH_MOUSE_LL` 钩子及其钩子线程 / 消息循环，`Update()` 每帧 `GetCursorPos`；不再进入系统输入链 |
+| 崩溃诊断 | `src/tools/platform/CrashHandler.{hpp,cpp}` | `SetUnhandledExceptionFilter` + `GetModuleHandleExW(FROM_ADDRESS)` 定位异常模块；纯逻辑 `ClassifyOrigin()` 区分自身 / 第三方注入 DLL，异常路径不用堆分配 |
+| 限帧与兼容模式 | `src/tools/core/Stability.hpp` / `App::Run()` / `Window.cpp` | `EffectiveMaxFps()` / `FrameBudgetSeconds()` 软限帧 60 FPS；`--safe-mode` 降 30 并跳过帧读回；全屏检测节流到 250 ms |
 
-新增单测：`model_naming_unit` / `stability_unit` / `console_queue_unit`，
-`bone_motion_unit` 另加 `TestCrossFade()` 与 `TestArmRotationGeometry()`（用
-`Mat4::RotationZ().TransformDirection()` 验证下垂方向），CTest 总数 38。
+新增单测：`model_naming_unit` / `stability_unit` / `console_queue_unit` /
+`crash_classify_unit`，`bone_motion_unit` 另加 `TestCrossFade()` 与
+`TestArmRotationGeometry()`（用 `Mat4::RotationZ().TransformDirection()` 验证下垂方向），
+CTest 总数 39。
 
 ## 构建目标层次
 

@@ -15,14 +15,20 @@
 > 桌宠是透明无边框窗口，**未加载模型时它本身就是完全不可见的** —— 这是预期行为，
 > 不是 bug。首次启动或检测到「没有已配置模型」时会自动弹出设置面板，请在里面导入模型。
 
-### 命令行参数（与日志相关）
+### 命令行参数
 
 ```bash
 ./build/bin/ppet --log-level=trace              # 文件日志开到最细
 ./build/bin/ppet --log-console-level=debug     # 控制台也打印 DEBUG
+./build/bin/ppet --console                      # 开启交互式控制台
+./build/bin/ppet --command='list;status;quit'   # 脚本模式一次执行一串指令
+./build/bin/ppet --max-fps=30                   # 软限帧（0 = 不限帧，只依赖 VSync）
+./build/bin/ppet --safe-mode                    # 兼容模式：30 FPS + 跳过帧读回自检
 ```
 
-详见 [调试与日志](debugging.md#日志级别与开关)。
+`--max-fps=` 与 `--safe-mode` 只作用于本次运行，**不写入配置文件**；永久生效请改
+配置里的 `maxFps` / `safeMode`。日志级别详见 [调试与日志](debugging.md#日志级别与开关)，
+卡顿与崩溃排查见 [调试与日志 · Windows 崩溃与系统级卡顿](debugging.md#windows-崩溃与系统级卡顿)。
 
 ---
 
@@ -90,7 +96,7 @@ Speaking: 你好，我是桌面宠物
 | `expression list` | 列出表情预设，含**表情动作组 + 参数级预设**两类 |
 | `expression <id>` | 切换表情；Live2D 没有表情动作组时自动回退到参数预设 |
 | `speak <txt>` | 显示气泡文字并驱动口型 |
-| `status` | 运行时状态（帧率 / 对话 / 追踪 / 控制台模式 / `uptime` / `cmdDropped` / `autoFitWin` / `armRestDrop` / `window` / `bubbleMaxW` / `osCursor`） |
+| `status` | 运行时状态（帧率 / 对话 / 追踪 / 控制台模式 / `uptime` / `cmdDropped` / `autoFitWin` / `safeMode` / `maxFps` / `armRestDrop` / `window` / `bubbleMaxW` / `osCursor`） |
 | `help` / `?` | 输出完整帮助 |
 | `quit` / `exit` | 退出程序 |
 
@@ -306,9 +312,16 @@ PMX 与 VRM 模型没有 Live2D 那样的「动作文件」，因此待机表现
 
 | 平台 | 全局光标获取 |
 | --- | --- |
-| Windows | `SetWindowsHookEx(WH_MOUSE_LL)` 低级鼠标钩子 |
+| Windows | 每帧 `GetCursorPos` 轮询（**不使用全局低级鼠标钩子**） |
 | macOS | `NSEvent` 全局监视器（AppKit） |
-| Linux | X11 `XRecord` 扩展；不可用时退化为轮询 `XQueryPointer` |
+| Linux | 每帧 `XQueryPointer` 轮询根窗口 |
+
+> **为什么 Windows 不用 `WH_MOUSE_LL` 钩子**：低级鼠标钩子的回调运行在系统输入链上，
+> 每次鼠标移动 Windows 都要同步等待本进程返回。一旦钩子线程被阻塞，或与第三方
+> overlay 注入层（游戏加加 / RTSS / 微星小飞机等）的钩子互相等待，会拖慢**整个系统**
+> 的鼠标消息，表现为「连鼠标一起卡」。全屏追踪只需要坐标，`GetCursorPos` 就能给出
+> 整个虚拟桌面的绝对位置，且不受点击穿透、窗口边界、其它应用遮挡影响。
+> 详见 [调试与日志 · Windows 崩溃与系统级卡顿](debugging.md#windows-崩溃与系统级卡顿)。
 
 追踪器不可用时会自动降级为窗口内跟随，并在日志里记一条 ERROR，不影响启动。
 
@@ -341,6 +354,8 @@ PMX 与 VRM 模型没有 Live2D 那样的「动作文件」，因此待机表现
 | `autoFitWindow` | 渲染窗口按模型实际帧宽高比自适应 | `true` |
 | `askModelNameOnImport` | GUI 导入模型时弹出命名输入框（脚本模式不弹） | `true` |
 | `armRestDropDeg` | PMX / VRM 默认手臂下垂角度；`0` = 用后端默认值，负值可反转方向 | `0` |
+| `maxFps` | 渲染帧率软上限；`0` = 不限帧（只依赖 VSync），合法范围 0~240 | `60` |
+| `safeMode` | 兼容模式：帧率压到 30 且跳过 `glReadPixels` 帧读回自检 | `false` |
 
 字段缺失时使用默认值，旧版本配置文件可以直接加载。数值越界会自动回退到合法范围。
 

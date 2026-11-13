@@ -42,4 +42,18 @@ inline float PhaseOf(double elapsedSeconds, double frequencyHz, double offset = 
     return static_cast<float>(std::fmod(phase, kTwoPi));
 }
 
+/// 计算本帧允许的最大帧率：安全模式强制 30；0 表示不额外限帧（只依赖 VSync）；
+/// 负值与异常高值收敛到 [0, 240]，避免坏配置把主循环压成忙等或无响应。
+inline int EffectiveMaxFps(int configuredFps, bool safeMode) {
+    if (safeMode) return 30;
+    if (configuredFps <= 0) return 0;
+    if (configuredFps > 240) return 240;
+    return configuredFps;
+}
+
+/// 帧预算（秒）：effectiveFps <= 0 时返回 0，调用方跳过软限帧。
+inline double FrameBudgetSeconds(int effectiveFps) {
+    return effectiveFps > 0 ? 1.0 / static_cast<double>(effectiveFps) : 0.0;
+}
+
 }  // namespace ppet::stability

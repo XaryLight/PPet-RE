@@ -118,6 +118,8 @@ bool ConfigStore::Load(const std::string& path, std::string& error) {
     get_float("trackingRadius", config_.trackingRadius);
     get_float("maxTrackingAngle", config_.maxTrackingAngle);
     get_float("armRestDropDeg", config_.armRestDropDeg);
+    get_int("maxFps", config_.maxFps);
+    get_bool("safeMode", config_.safeMode);
 
     if (j.contains("language") && j["language"].is_string()) {
         config_.language = LanguageFromString(j["language"].get<std::string>());
@@ -147,6 +149,8 @@ bool ConfigStore::Load(const std::string& path, std::string& error) {
     }
     if (config_.windowWidth < 100 || config_.windowWidth > 4000) config_.windowWidth = 350;
     if (config_.windowHeight < 100 || config_.windowHeight > 4000) config_.windowHeight = 600;
+    // 0 表示不限帧（合法）；负值或超过 240 的配置回落到默认 60。
+    if (config_.maxFps < 0 || config_.maxFps > 240) config_.maxFps = 60;
 
     return true;
 }
@@ -185,6 +189,8 @@ bool ConfigStore::Save(const std::string& path, std::string& error) const {
     j["windowHeight"] = config_.windowHeight;
     j["trackingRadius"] = config_.trackingRadius;
     j["maxTrackingAngle"] = config_.maxTrackingAngle;
+    j["maxFps"] = config_.maxFps;
+    j["safeMode"] = config_.safeMode;
 
     // 走跨平台写入接口：Windows 上窄字符路径无法写入含中文的目录。
     if (!WriteFileText(path, j.dump(4))) {

@@ -76,6 +76,16 @@ struct AppConfig {
 
     /// 【全屏追踪】最大偏转角度（度）。
     float maxTrackingAngle = 30.0f;
+
+    /// 【稳定性】渲染帧率上限（0 = 不额外限帧，只依赖 VSync）。
+    /// 默认 60：透明置顶窗口高频刷新会持续占用 DWM 合成与 GPU，
+    /// 渲染异常或第三方 overlay 注入时容易连带拖慢整个桌面。
+    int maxFps = 60;
+
+    /// 【稳定性】兼容模式：跳过 glReadPixels 帧读回自检、帧率压到 30，
+    /// 用于排查第三方 overlay 注入（GamePP / RTSS 等）导致的卡顿与崩溃。
+    /// 可用命令行 --safe-mode 临时开启，不写入配置文件。
+    bool safeMode = false;
 };
 
 /// 配置存储：读写 JSON 文件，字段缺失时使用默认值（向后兼容）。

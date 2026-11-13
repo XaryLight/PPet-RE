@@ -9,6 +9,7 @@
 #include <cstring>
 #include <filesystem>
 #include <random>
+#include <thread>
 
 #include <GLFW/glfw3.h>
 
@@ -120,6 +121,17 @@ bool App::Initialize(std::string& error) {
     strings_ = GetStrings(configStore_.config().language);
     currentLanguage_ = configStore_.config().language;
     showTool_ = configStore_.config().showTool;
+
+    // 运行时兼容选项：命令行 --safe-mode / --max-fps= 优先于配置文件，
+    // 但只作用于本次运行，不写回磁盘。
+    safeMode_ = hasSafeModeOverride_ ? safeModeOverride_
+                                    : configStore_.config().safeMode;
+    configuredMaxFps_ = hasMaxFpsOverride_ ? maxFpsOverride_
+                                          : configStore_.config().maxFps;
+    if (safeMode_) {
+        PPET_LOG("已启用兼容模式（--safe-mode）：帧率上限 30、跳过 glReadPixels "
+                 "帧读回自检，用于排查第三方 overlay 注入导致的卡顿 / 崩溃");
+    }
 
     // 虚拟桌面几何要尽早取到：加载配置、托盘重置、拖动结束都靠它把窗口钳制在
     // 可见范围内。追踪器不一定启动（fullscreenTracking 可能关闭），所以这里显式
@@ -1173,8 +1185,11 @@ void App::Run() {
         // 每 kEvidenceProbeFrames 帧做一次轻量读回自检，结果也写日志。
         // 这样「draw calls 正常但帧缓冲全空」不打开面板也能被发现。
         const bool refreshPanel = debugPanel_.ShouldRefresh();
-        if (refreshPanel ||
-            stability::SafeDelta(frameCount_, lastEvidenceFrame_) >= kEvidenceProbeFrames) {
+        // safeMode 下不做 glReadPixels：它是同步阻塞 GPU 的调用，渲染异常或
+        // 第三方 overlay 注入时可能长时间挂住主线程，反而放大卡顿。
+        if (!safeMode_ &&
+            (refreshPanel ||
+             stability::SafeDelta(frameCount_, lastEvidenceFrame_) >= kEvidenceProbeFrames)) {
             CollectFrameEvidence(refreshPanel);
         }
 
@@ -1272,6 +1287,21 @@ void App::Run() {
         debugPanel_.PumpEvents();
 
         window_.SwapBuffers();
+
+        // 软限帧：glfwSwapInterval(1) 在部分驱动 / overlay 注入下会失效
+        // （实测 xvfb 下 200+ FPS）。高频刷新透明分层窗口会持续占用 DWM
+        // 合成与 GPU，一旦渲染异常就可能拖慢整个桌面，故按配置压到 60 FPS。
+        const int effectiveFps =
+            stability::EffectiveMaxFps(configuredMaxFps_, safeMode_);
+        const double budget = stability::FrameBudgetSeconds(effectiveFps);
+        if (budget > 0.0) {
+            const double spent =
+                std::chrono::duration<double>(clock::now() - now).count();
+            if (spent < budget) {
+                std::this_thread::sleep_for(
+                    std::chrono::duration<double>(budget - spent));
+            }
+        }
     }
 }
 

@@ -6,7 +6,7 @@
 // 整个虚拟桌面范围内的光标位置，使追踪范围不再受窗口边界限制。
 //
 // 平台实现：
-//   - Windows: SetWindowsHookEx(WH_MOUSE_LL) 全局低级鼠标钩子
+//   - Windows: GetCursorPos 轮询（**不安装全局低级鼠标钩子**，避免拖慢系统输入链）
 //   - macOS  : NSEvent 的 global monitor（需 AppKit）
 //   - Linux  : X11 XRecord 扩展；若不可用则退化为轮询 XQueryPointer
 #pragma once
@@ -39,7 +39,8 @@ struct VirtualDesktop {
 /// 全局光标追踪器。
 ///
 /// 使用方式：每帧调用 Update()，然后通过 Position() 读取最新位置。
-/// 钩子回调会被投递到主线程处理，避免跨线程访问 UI 状态。
+/// Windows 下 Update() 直接同步查询 GetCursorPos，不产生跨线程回调；
+/// 不安装任何系统钩子，因此不会影响其它进程的鼠标响应。
 class GlobalCursorTracker {
 public:
     GlobalCursorTracker() = default;
@@ -74,12 +75,13 @@ public:
     /// 【独立于追踪器启停】直接向操作系统查询当前光标的全局屏幕坐标。
     ///
     /// 这是「忽略鼠标点击 / 鼠标不在桌宠窗口上方」时仍能拿到鼠标位置的关键：
-    /// 窗口开启点击穿透后收不到任何 GLFW 鼠标事件，全局钩子也可能因
-    /// fullscreenTracking 关闭或权限不足而没有启动；但 GetCursorPos /
-    /// XQueryPointer / NSEvent.mouseLocation 这类 OS 级查询始终可用，
+    /// 窗口开启点击穿透后收不到任何 GLFW 鼠标事件，全屏追踪也可能被用户
+    /// 关闭；但 GetCursorPos / XQueryPointer / NSEvent.mouseLocation 这类
+    /// OS 级查询始终可用，
     /// 且返回的是整个虚拟桌面的绝对坐标，不受窗口边界与其它应用遮挡影响。
     ///
     /// 不需要 Start()，不安装钩子，可每帧调用；失败（无 DISPLAY 等）返回 false。
+    /// Windows 实现只有一次 GetCursorPos 系统调用，无跨进程开销。
     static bool QueryCursor(Vec2& out);
 
     /// 刷新虚拟桌面范围（显示器插拔、分辨率变化后需调用）。
@@ -102,8 +104,8 @@ public:
 
 private:
     // 各平台内部实现通过 pimpl 隔离，避免在头文件暴露平台头文件。
-    // 注意：Impl 必须在 public 区域声明，否则 .cpp 中的平台钩子自由函数
-    // （如 Windows 的 MouseHookProc）无法引用该类型。
+    // 注意：Impl 必须在 public 区域声明，否则 .cpp 中的平台自由函数
+    // （如 macOS 的 Objective-C 监听器）无法引用该类型。
 public:
     struct Impl;
 private:

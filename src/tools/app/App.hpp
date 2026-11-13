@@ -42,6 +42,17 @@ public:
     /// 配置控制台：由 main 解析 --console / --command= 后调用，须在 Initialize 之前。
     void SetConsoleOptions(bool force, std::string script);
 
+    /// 运行时兼容选项：由 main 解析 --safe-mode / --max-fps= 后调用，
+    /// 须在 Initialize 之前，且只在出现对应参数时调用；覆盖配置文件但不写回。
+    void SetSafeMode(bool on) {
+        safeModeOverride_ = on;
+        hasSafeModeOverride_ = true;
+    }
+    void SetMaxFps(int fps) {
+        maxFpsOverride_ = fps;
+        hasMaxFpsOverride_ = true;
+    }
+
 private:
     /// 加载指定路径的模型（精简版，只取字符串错误，不弹窗）。
     bool LoadModel(const std::string& path, std::string& error);
@@ -144,6 +155,15 @@ private:
     bool consoleForce_ = false;
     std::string consoleScript_;
     float lastFrameTime_ = 0.0f;
+
+    /// 运行时兼容模式：跳过帧读回自检、把帧率上限压到 30，减少与
+    /// 第三方 overlay 注入层的交互面（GamePP / RTSS / MSI Afterburner 等）。
+    bool safeMode_ = false;
+    int configuredMaxFps_ = 60;
+    bool safeModeOverride_ = false;
+    bool hasSafeModeOverride_ = false;
+    int maxFpsOverride_ = 0;
+    bool hasMaxFpsOverride_ = false;
 
     /// 最近一次导入的模型包信息（单文件导入时为空），供诊断面板显示「来源」。
     ModelPackage lastPackage_;

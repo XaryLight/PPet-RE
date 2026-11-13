@@ -59,6 +59,16 @@ int main() {
         std::nextafter(asFloat, std::numeric_limits<float>::infinity()) - asFloat;
     Check(ulp > 1.0f, "对照：30 年量级的 float 时间分辨率已退化到秒级以上");
 
+    // 帧率上限：安全模式强制 30；非法配置收敛；0 = 不限帧。
+    Check(EffectiveMaxFps(60, false) == 60, "限帧：正常配置原样保留");
+    Check(EffectiveMaxFps(60, true) == 30, "限帧：安全模式强制降到 30");
+    Check(EffectiveMaxFps(0, false) == 0, "限帧：0 表示不额外限帧");
+    Check(EffectiveMaxFps(-5, false) == 0, "限帧：负值按不限帧处理");
+    Check(EffectiveMaxFps(9999, false) == 240, "限帧：异常高值收敛到 240");
+    Check(FrameBudgetSeconds(0) == 0.0, "限帧：不限帧时预算为 0");
+    Check(FrameBudgetSeconds(60) > 0.016 && FrameBudgetSeconds(60) < 0.017,
+          "限帧：60 FPS 预算约 16.7ms");
+
     std::printf("== 结果：%s（失败 %d 项）==\n", g_failures == 0 ? "全部通过" : "存在失败",
                 g_failures);
     return g_failures == 0 ? 0 : 1;

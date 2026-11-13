@@ -149,6 +149,11 @@ private:
     /// 记录上一次置顶维持的时间戳（Windows / Linux 用），避免每帧调用系统 API。
     double lastTopmostReassert_ = 0.0;
 
+    /// 上一次做「前台窗口是否独占全屏」检测的时间戳。
+    /// GetForegroundWindow / GetWindowRect / GetMonitorInfoW 是跨进程调用，
+    /// 前台窗口卡死或第三方 overlay 挂住窗口枚举时会阻塞渲染主线程。
+    double lastFullscreenCheck_ = 0.0;
+
     /// Linux 下 XShape 是否可用；不可用时点击穿透退化为「只屏蔽自身事件处理」。
     bool nativeClickThrough_ = false;
 

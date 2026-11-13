@@ -1,0 +1,87 @@
+PPet Windows 兼容性与「系统级卡顿」修复 · 验证记录
+=========================================================
+日期：2026-11-13
+基线：cf8b8fb（前一轮 10 项增强收尾）
+
+一、问题定性
+---------------------------------------------------------
+用户报告：控制台输出
+
+  [E][2026-11-13 19:18:35.012][operator ()] fail CreateSemaphore[5]: ... GAMEPP-IPC-OVERLAY
+  [E][2026-11-13 19:18:35.018][operator ()] fail CreateFileMapping[5]: __CA_CONN__
+  [E][2026-11-13 19:18:35.019][operator ()] [cc_acc] acquire failed: __CA_CONN__
+
+随后进程退出码 -1073741819 (0xC0000005)，且「渲染有问题时会带动
+所有界面包括鼠标一起卡」。
+
+结论 1：这些 [E] 行不是 PPet 打印的。本项目日志格式固定为
+  "时间 | +相对毫秒 | Δ | 级别 | 线程 | [模块] 文件:行号 函数 | 消息"
+例如
+  2026-11-13 19:31:37.951 | +0000000.105 | Δ 0.105 | INFO | ddb2 | [main] main.cpp:70 main | ...
+它们是第三方注入 DLL（游戏加加 GamePP 的 IPC overlay，同类还有 RTSS /
+MSI Afterburner / GeForce Experience Overlay / Discord Overlay / 录屏软件）
+写到 stderr 的输出。CreateSemaphore / CreateFileMapping 的错误码 5 是
+ERROR_ACCESS_DENIED；注入层在 "[cc_acc] acquire failed" 之后仍使用空句柄，
+最终触发 EXCEPTION_ACCESS_VIOLATION（0xC0000005），崩溃点在注入模块内。
+
+结论 2：「连鼠标一起卡」与本项目原有实现有关。Windows 分支用
+SetWindowsHookEx(WH_MOUSE_LL) 安装全局低级鼠标钩子，回调运行在系统输入链上：
+每次鼠标移动 Windows 都要同步等待本进程回调返回。钩子线程用
+MsgWaitForMultipleObjects(0, ..., 50, QS_ALLINPUT) 等待，与第三方 overlay
+钩子叠加时会拖慢整个系统的鼠标消息。另发现两处真实缺陷：
+  · WH_MOUSE_LL 的 lParam 是 MSLLHOOKSTRUCT*，旧代码却 reinterpret_cast 成
+    MSG* 并读 msg->message，钩子实际从未正确投递过位置；
+  · Stop() 与回调之间存在 g_hookState.owner 悬垂指针窗口，可触发 0xC0000005。
+
+二、修复内容
+---------------------------------------------------------
+1) 移除 WH_MOUSE_LL 钩子及钩子线程 / 消息循环 / 全局状态，Windows 改为
+   Update() 每帧 GetCursorPos 轮询（与 Linux XQueryPointer 同构）。
+   彻底退出系统输入链；顺带消除 lParam 类型错误与悬垂指针。
+2) 新增 src/tools/platform/CrashHandler.{hpp,cpp}：Windows 顶层异常过滤器，
+   崩溃时把异常码 / 地址 / 所属模块写进 last.log，用纯逻辑 ClassifyOrigin()
+   判定是 ppet.exe 自身还是第三方注入 DLL 并给出排查建议。
+   异常路径只用栈缓冲 + Win32 WriteFile，不分配堆内存。
+3) 默认软限帧 60 FPS（maxFps，0 = 不限帧，合法 0~240）；
+   --safe-mode 强制 30 FPS 并跳过 glReadPixels 帧读回自检；
+   --max-fps=N 可单独指定。二者只作用于本次运行，不写回配置文件。
+4) Window::UpdatePlatformStateImpl() 把「前台窗口是否独占全屏」的 4 个
+   跨进程系统调用节流到 250 ms 一次，避免前台窗口卡死时阻塞渲染主线程。
+5) 新增纯函数 EffectiveMaxFps / FrameBudgetSeconds（Stability.hpp）与
+   crash_classify_unit 单测；status 增加 safeMode / maxFps 字段。
+
+三、验证结果
+---------------------------------------------------------
+[MinGW 交叉编译 Windows 分支]  x86_64-w64-mingw32-g++ -std=c++23 -Wall -Wextra
+  src/tools/platform/GlobalCursorTracker.cpp   OK，0 警告
+  src/tools/platform/CrashHandler.cpp          OK，0 警告
+  tools/crash_classify_test.cpp + CrashHandler.cpp 链接成 .exe  OK，0 警告
+  （首次编译曾抓到「删掉 Windows 分支后 X11 代码泄漏进 Win32 编译单元」
+    的条件编译错误，已修正为 #elif !defined(_WIN32)）
+
+[Linux 三配置全量]  build_stub / build_cubism / build_nocubism
+  编译 0 warning / 0 error，ctest 39/39 全部通过（新增 crash_classify_unit）
+
+[交互控制台实跑 · 默认 maxFps=60]  2 秒后 status：
+  frameCount : 111
+  frameMs    : 16.7274
+  fps        : 59.7821          ← 修复前实测约 200+ FPS
+  osCursor   : (640,512) (与点击穿透无关)
+
+[兼容模式实跑]  --safe-mode --max-fps=30 --command='list;status;quit'
+  启动日志：已启用兼容模式（--safe-mode）：帧率上限 30、跳过 glReadPixels 帧读回自检
+  status：  safeMode : on / maxFps : 30（0=不限帧，仅依赖 VSync）
+  正常退出，退出码 0
+
+[日志审计] 正常交互会话的 last.log：
+  [CONSOLE] 成功指令日志行数 : 0
+  [CRASH] 行数               : 0
+  日志总行数                 : 3（启动 / 托盘降级 / 正常退出）
+
+四、给用户的排查顺序（详见 docs/debugging.md）
+---------------------------------------------------------
+1. 退出游戏加加 / RTSS / 微星小飞机 / GeForce Experience / Discord /
+   录屏软件，或把 PPet 加入它们的「不注入 / 白名单」。
+2. 临时用 --safe-mode 或 --max-fps=30 启动。
+3. 若再崩，看 last.log 的 [CRASH] 判定行：
+   模块名与 ppet.exe 不同 = 第三方注入；相同 = PPet 自身（请提交 Issues）。
