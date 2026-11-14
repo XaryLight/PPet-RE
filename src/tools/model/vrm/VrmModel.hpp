@@ -62,6 +62,10 @@ public:
     /// 窗口尺寸变化（用于重新计算取景）。
     void OnResize(int width, int height) override;
 
+    /// 【Q5】配置页「最大偏转角」下发到 VRM 视线追踪（受模型 lookAt 上限约束）。
+    void SetMaxTrackingAngle(float degrees) override;
+    float MaxTrackingAngle() const override { return maxTrackingAngleDeg_; }
+
     /// 显示名：优先用 VRM meta.name，缺失时退回文件名。
     std::string DisplayName() const override;
 
@@ -359,6 +363,8 @@ private:
     /// 视线角度上限（弧度），来自 VRM lookAt 的 rangeMap。
     float lookYawLimit_ = 0.0f;
     float lookPitchLimit_ = 0.0f;
+    /// 配置下发的最大偏转角（度，0..90），默认与 AppConfig 一致。
+    float maxTrackingAngleDeg_ = 30.0f;
     /// 待机动画参数。
     float idleTime_ = 0.0f;
     float idleYaw_ = 0.0f;

@@ -271,6 +271,13 @@ bool App::Initialize(std::string& error) {
                      static_cast<int>(fb.x), static_cast<int>(fb.y));
     };
 
+    window_.onMouseLeave = [this]() {
+        // 【Q5】鼠标离开窗口后必须立刻失效窗口内光标：旧实现从未绑定该回调，
+        // hasWindowCursor_ 一旦置 true 就永远为 true，模型会一直看着最后位置。
+        hasWindowCursor_ = false;
+        windowCursor_ = Vec2(0.0f, 0.0f);
+    };
+
     window_.onClose = [this]() { running_ = false; };
 
     // --- 全局鼠标追踪（全屏追踪的核心）---
@@ -467,6 +474,14 @@ void App::ApplyConfig() {
         cursorTracker_.Start(err);
     } else if (!cfg.fullscreenTracking && cursorTracker_.IsRunning()) {
         cursorTracker_.Stop();
+    }
+
+    // 【Q5】配置变化后立即作废窗口内光标：关闭全屏追踪、或开启点击穿透时，
+    // 窗口可能再也不会收到 onMouseLeave（GLFW 在穿透下会跳过 enter/leave 派发），
+    // 残留的旧坐标会让模型一直看着某处，看起来像「开关没生效」。
+    if (!cfg.fullscreenTracking || cfg.ignoreMouseEvents) {
+        hasWindowCursor_ = false;
+        windowCursor_ = Vec2(0.0f, 0.0f);
     }
 
     // 需求 7 修复：把「最大偏转角度」配置实时回写到模型。
@@ -1151,48 +1166,55 @@ RenderContext App::BuildRenderContext(float deltaTime) const {
     ctx.modelScreenCenter = Vec2(pos.x + size.x * 0.5f, pos.y + size.y * 0.5f);
     ctx.modelScreenRadius = std::max(size.x, size.y) * 0.5f;
 
-    // 【光标位置与窗口是否接收鼠标事件无关】
-    // 点击穿透开启后窗口收不到任何 GLFW 鼠标事件，全局钩子也可能因为
-    // fullscreenTracking 关闭 / 权限不足而没启动。此时直接向操作系统查询
-    // 光标在整个虚拟桌面上的绝对坐标：GetCursorPos / XQueryPointer /
-    // NSEvent.mouseLocation 不受窗口边界、穿透设置与其它应用遮挡影响。
-    // 这样「忽略鼠标点击」「鼠标不在桌宠窗口上」时视线追踪依然有效。
-    Vec2 cursor;
-    bool hasCursor = false;
-    // 需求 7 修复：全屏追踪关闭后，不再查询全局光标，避免「开关失效、关了还跟」。
-    // 由纯函数 ResolveTrackingSource 决定本帧用哪种光标源（更易单测）：
-    //   - 全屏追踪开启 -> Global（OS 级全局坐标）
-    //   - 全屏追踪关闭且有窗口内光标 -> Window（鼠标在桌宠窗口内时跟随）
-    //   - 其它 -> None（不驱动视线）
+    // 【全屏追踪开启时光标位置与窗口是否接收鼠标事件无关】
+    // 点击穿透开启后窗口收不到任何 GLFW 鼠标事件，但 OS 级查询
+    // （GetCursorPos / XQueryPointer / NSEvent.mouseLocation）仍可拿到整个虚拟
+    // 桌面的绝对坐标，不受窗口边界、穿透设置与其它应用遮挡影响。
+    // 全屏追踪关闭后**不再**做这类查询：只用窗口内光标，没有就不追。
+    // 【Q5】严格按 ResolveTrackingSource 的三分支执行，不再用
+    // `else if (hasWindowCursor_)` 绕过判定：旧写法在「全屏追踪关闭、
+    // 但 hasWindowCursor_ 因未处理鼠标离开而残留 true」时仍会驱动视线，
+    // 表现为「关了全屏追踪却依然跟着鼠标」。
+    //   - Global：OS 级全局光标（整个虚拟桌面）
+    //   - Window：仅窗口内光标，且用配置的「追踪半径」归一化
+    //   - None  ：不写任何光标字段，RenderContext::HasCursorTarget() 为 false，
+    //             模型头部 / 眼睛平滑回正
     const bool fullscreen = configStore_.config().fullscreenTracking;
     const TrackingSource trackingSource = ResolveTrackingSource(fullscreen, hasWindowCursor_);
-    if (trackingSource == TrackingSource::Global) {
-        if (cursorTracker_.IsRunning() && cursorTracker_.HasPosition()) {
-            cursor = cursorTracker_.Position();
-            hasCursor = true;
-        } else if (GlobalCursorTracker::QueryCursor(cursor)) {
-            hasCursor = true;
-        }
-    }
+    // 窗口内追踪也用同一个「追踪半径」配置；配置异常时回退到窗口半对角线。
+    const float radius = EffectiveTrackingRadius(
+        configStore_.config().trackingRadius, std::max(size.x, size.y) * 0.5f);
 
-    if (hasCursor) {
-        ctx.hasGlobalCursor = true;
-        ctx.globalCursor = cursor;
-        const float radius = configStore_.config().trackingRadius;
-        GlobalCursorTracker::NormalizeAround(cursor, ctx.modelScreenCenter, radius,
-                                             &ctx.localCursor);
-    } else if (hasWindowCursor_) {
-        // 【兜底】全局追踪不可用（权限不足 / 被关闭 / 平台不支持）时，
-        // 退化为「窗口内追踪」：鼠标在桌宠窗口内移动时模型照样看向它。
-        // 换算基准是窗口中心，半径取窗口对角线的一半，
-        // 于是鼠标在窗口边缘时归一化坐标约为 ±1。
-        ctx.windowCursor = windowCursor_;
-        ctx.hasWindowCursor = true;
-        const float radius = std::max(1.0f, std::max(size.x, size.y) * 0.5f);
-        ctx.localCursor = Vec2((windowCursor_.x - size.x * 0.5f) / radius,
-                               -(windowCursor_.y - size.y * 0.5f) / radius);
-        ctx.localCursor.x = std::clamp(ctx.localCursor.x, -1.0f, 1.0f);
-        ctx.localCursor.y = std::clamp(ctx.localCursor.y, -1.0f, 1.0f);
+    switch (trackingSource) {
+        case TrackingSource::Global: {
+            Vec2 cursor;
+            bool hasCursor = false;
+            if (cursorTracker_.IsRunning() && cursorTracker_.HasPosition()) {
+                cursor = cursorTracker_.Position();
+                hasCursor = true;
+            } else if (GlobalCursorTracker::QueryCursor(cursor)) {
+                // 追踪器启动失败时仍可用 OS 级查询兜底（不需要 Start / 钩子）。
+                hasCursor = true;
+            }
+            if (hasCursor) {
+                ctx.hasGlobalCursor = true;
+                ctx.globalCursor = cursor;
+                GlobalCursorTracker::NormalizeAround(cursor, ctx.modelScreenCenter, radius,
+                                                     &ctx.localCursor);
+            }
+            break;
+        }
+        case TrackingSource::Window: {
+            ctx.windowCursor = windowCursor_;
+            ctx.hasWindowCursor = true;
+            NormalizeWindowCursor(windowCursor_.x, windowCursor_.y, size.x, size.y,
+                                  radius, &ctx.localCursor.x, &ctx.localCursor.y);
+            break;
+        }
+        case TrackingSource::None:
+        default:
+            // 不驱动视线：所有光标字段保持默认（HasCursorTarget() == false）。
+            break;
     }
 
     return ctx;
@@ -1292,7 +1314,9 @@ void App::Run() {
         // Linux 托盘运行在独立线程，需要每帧把事件投递回主线程。
         tray_.PumpEvents();
 
-        cursorTracker_.Update();
+        // 【Q5】全屏追踪关闭时不再轮询 OS 光标（Update 内部也有 running_ 守卫，
+        // 这里是第二道防线，避免任何无谓的跨进程查询）。
+        if (configStore_.config().fullscreenTracking) cursorTracker_.Update();
 
         ProcessInput();
 

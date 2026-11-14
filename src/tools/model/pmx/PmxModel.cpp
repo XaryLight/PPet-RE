@@ -21,6 +21,7 @@
 #include <unordered_map>
 
 #include <src/tools/core/FileIO.hpp>
+#include <src/tools/core/TrackingPolicy.hpp>
 
 namespace ppet::pmx {
 namespace {
@@ -794,16 +795,24 @@ void PmxModel::UpdateGaze(const RenderContext& ctx, float dt) {
         // localCursor 已归一化到 [-1, 1]，y 向上为正（OpenGL 约定）。
         const float x = Clamp(ctx.localCursor.x, -1.0f, 1.0f);
         const float y = Clamp(ctx.localCursor.y, -1.0f, 1.0f);
-        targetGazeYaw_ = x * kMaxHeadYaw;
+        // 【Q5】头部上限由配置的「最大偏转角」决定（默认 30 度），pitch 沿用
+        // 后端原有的 yaw:pitch 比例；这样滑块对 PMX 也真正生效。
+        const GazeLimits limits = ResolveGazeLimits(
+            maxTrackingAngleDeg_, kMaxHeadPitch / kMaxHeadYaw);
+        targetGazeYaw_ = x * limits.yawRad;
         // RotationX(正角) 会让模型朝向从 +Z 偏向 -Y（即低头），
         // 所以「向上看」需要负角度，这里取负号。
-        targetGazePitch_ = -y * kMaxHeadPitch;
+        targetGazePitch_ = -y * limits.pitchRad;
     }
 
     // 指数平滑：避免鼠标抖动导致头部瞬移。
     const float alpha = 1.0f - std::exp(-kGazeSmoothing * dt);
     gazeYaw_ += (targetGazeYaw_ - gazeYaw_) * alpha;
     gazePitch_ += (targetGazePitch_ - gazePitch_) * alpha;
+}
+
+void PmxModel::SetMaxTrackingAngle(float degrees) {
+    maxTrackingAngleDeg_ = ClampTrackingAngle(degrees);
 }
 
 void PmxModel::UpdateIdle(float dt) {

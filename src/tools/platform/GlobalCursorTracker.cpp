@@ -149,6 +149,12 @@ bool GlobalCursorTracker::Start(std::string& error) {
 }
 
 void GlobalCursorTracker::Stop() {
+    // 先无条件复位运行状态：Start 失败 / 平台无资源时 impl_ 可能为空，
+    // 提前返回会让 running_ 残留 true，导致 Update 继续查询光标（Q5）。
+    running_ = false;
+    state_.valid = false;
+    state_.moved = false;
+    hasLast_ = false;
     if (!impl_) return;
 
 #if defined(__APPLE__)
@@ -168,11 +174,17 @@ void GlobalCursorTracker::Stop() {
 
     delete impl_;
     impl_ = nullptr;
-    running_ = false;
 }
 
 void GlobalCursorTracker::Update() {
     state_.moved = false;
+    if (!running_) {
+        // 【Q5】全屏追踪已关闭：不再向 OS 查询全局光标，也清掉有效位置，
+        // 避免「关了开关但 IsRunning()/HasPosition() 仍残留旧状态」被误用。
+        state_.valid = false;
+        hasLast_ = false;
+        return;
+    }
 
 #if defined(_WIN32)
     // 每帧一次 GetCursorPos：整个虚拟桌面的绝对坐标，不进入系统钩子链。

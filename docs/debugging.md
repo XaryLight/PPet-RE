@@ -295,6 +295,7 @@ RivaTuner RTSS / MSI Afterburner / NVIDIA GeForce Experience Overlay / Discord O
 | 日志报「无法写入配置文件：…（错误码 N）」 | 配置目录不可写：`%APPDATA%` 被指向软驱 / 重定向卷（如 `A:\Roaming`）或磁盘满 / 只读 | 程序**坚持写回原路径**：先直写（对「未就绪 / 共享冲突」短暂重试），失败则在 exe 同目录生成暂存 `.json` 再 `copy_file` 拷到目标路径。括号里的系统错误（如 `5 拒绝访问`、`21 设备未就绪`）说明根因，无需再进 FileIO 断点 |
 | 导入模型报「无法创建目录 / 无法写入文件：…（错误码 N）」 | 模型缓存目录（`%APPDATA%\PPet\models` 等）不可写或不可建目录；本地 `./ppet` 能建是因为工作目录权限不同 | 日志与弹窗现在统一带 `[错误码] 系统文本（中文原因）`，例如 `[5] Access is denied.（权限不足…）`、`[112] …（磁盘空间已满）`。导入前还会先写一次探针文件，区分「目录建不出来」与「目录能建但文件写不进」（后者常见于 `A:` 这类重定向卷）。按提示检查磁盘权限 / 剩余空间，或把程序放到有写入权限的目录 |
 | 不同 DPI / 缩放（x1.06、x2.13）下渲染图变大、超出部分被窗口截断；System Informer 里 GLFW 客户端矩形固定 `[840x600]`，只有 `(x,y)` 变 | Per-monitor V2 下窗口客户区是**逻辑**尺寸，OpenGL framebuffer 是**物理像素**（约 1789x1278）。早期用逻辑尺寸算投影矩阵、主循环又从不显式设置 `glViewport`，「矩阵按 840x600 算、视口按 1789x1278 画」导致错位截断 | 现在每帧把 `glViewport` 与 `ctx.viewportWidth/Height` 统一到 `framebuffer` 物理像素，窗口逻辑尺寸只用于配置、位置与鼠标归一化；刻意不启用 `GLFW_SCALE_TO_MONITOR`，避免逻辑尺寸随 DPI 反复放大配置。启动看 `[WINDOW] 窗口已创建：逻辑 840x600 / framebuffer 1789x1278 / 内容缩放 2.13x2.13`；跨屏看 `[WINDOW] DPI 内容缩放变化` 与 `[WINDOW] 内容缩放变化` |
+| 关闭「全屏追踪」后模型仍跟着鼠标；「追踪半径 / 最大偏转角」滑块无效 | `BuildRenderContext` 用 `else if (hasWindowCursor_)` 绕过了 `TrackingSource::None` 判定，且 `onMouseLeave` 从未绑定使 `hasWindowCursor_` 永不复位；窗口分支硬编码半径、PMX / VRM 也没有 override `SetMaxTrackingAngle` | 现在严格按 `Global / Window / None` 三分支，`None` 不写任何光标字段让模型回正；绑定 `onMouseLeave` 复位窗口光标，配置变化时也清理残留；窗口内追踪同样使用配置半径；PMX / VRM 均实现最大偏转角（VRM 受模型 `lookAt` 上限约束）。可用诊断面板「视口 / 光标」页确认本帧光标源 |
 
 ---
 

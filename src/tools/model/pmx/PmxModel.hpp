@@ -65,6 +65,10 @@ public:
     /// 窗口尺寸变化（用于重新计算取景）。
     void OnResize(int width, int height) override;
 
+    /// 【Q5】配置页「最大偏转角」下发到 PMX 头部 / 眼睛的视线追踪。
+    void SetMaxTrackingAngle(float degrees) override;
+    float MaxTrackingAngle() const override { return maxTrackingAngleDeg_; }
+
     /// 显示名：优先用 PMX 内的模型名，缺失时退回文件名。
     std::string DisplayName() const override;
 
@@ -175,6 +179,8 @@ private:
     float gazePitch_ = 0.0f;
     float targetGazeYaw_ = 0.0f;
     float targetGazePitch_ = 0.0f;
+    /// 配置下发的最大偏转角（度，0..90），默认与 AppConfig 一致。
+    float maxTrackingAngleDeg_ = 30.0f;
 
     /// 待机动画当前角度（弧度）。
     float idleYaw_ = 0.0f;

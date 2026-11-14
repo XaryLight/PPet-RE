@@ -16,6 +16,7 @@
 #include <random>
 #include <sstream>
 
+#include <src/tools/core/TrackingPolicy.hpp>
 #include <src/tools/model/vrm/GltfParser.hpp>
 #include <src/tools/model/vrm/VrmImage.hpp>
 
@@ -1947,15 +1948,27 @@ void VrmModel::ApplyBoneMotion(const model::BonePose& pose) {
     }
 }
 
+void VrmModel::SetMaxTrackingAngle(float degrees) {
+    maxTrackingAngleDeg_ = ClampTrackingAngle(degrees);
+}
+
 void VrmModel::UpdateGaze(const RenderContext& ctx, float dt) {
     if (ctx.HasCursorTarget()) {
         // localCursor 已归一化到 [-1, 1]，y 向上为正（OpenGL 约定）。
         const float x = Clamp(ctx.localCursor.x, -1.0f, 1.0f);
         const float y = Clamp(ctx.localCursor.y, -1.0f, 1.0f);
-        targetGazeYaw_ = x * lookYawLimit_;
+        // 【Q5】上限取「配置角度」与「模型 lookAt.rangeMap」的较小值：
+        // 既让滑块生效（调小明显变窄），又不会把头扭到模型设计之外。
+        // pitch 沿用模型自身的 yaw:pitch 比例。
+        const float ratio = lookYawLimit_ > 0.0001f
+                                ? lookPitchLimit_ / lookYawLimit_
+                                : 0.5f;
+        const GazeLimits limits =
+            ResolveGazeLimits(maxTrackingAngleDeg_, ratio, lookYawLimit_);
+        targetGazeYaw_ = x * limits.yawRad;
         // RotationX(正角) 会让模型朝向从 +Z 偏向 -Y（即低头），
         // 所以「向上看」需要负角度。
-        targetGazePitch_ = -y * lookPitchLimit_;
+        targetGazePitch_ = -y * limits.pitchRad;
     } else {
         targetGazeYaw_ = 0.0f;
         targetGazePitch_ = 0.0f;
