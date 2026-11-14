@@ -34,6 +34,9 @@
 //   csmGetDrawableConstantFlags()        -> 每个部件的常量标志（混合 / 双面 / 反转遮罩）
 //   csmGetDrawableDynamicFlags()         -> 每个部件的动态标志（可见性等）
 //   csmResetDrawableDynamicFlags()       -> 复位动态标志
+//   csmGetPartCount() / csmGetPartIds()  -> 部件组（Part）数量与名字
+//   csmGetPartOpacities()                -> 部件组不透明度（**可写**）
+//   csmGetDrawableParentPartIndices()    -> 每个 drawable 所属的部件组
 //
 // 重要说明（与官方 Core API Reference r12/r13 一致）：
 //   - Core 层**不提供**绘制函数（csmDrawModel / csmSetupEyeBlink / csmSetupMotion /
@@ -177,5 +180,41 @@ bool GetDrawable(const Model* model, int index, Drawable& out);
 /// @param out 接收遮罩引用列表（可能被清空）
 /// @return 该部件有遮罩返回 true。
 bool GetDrawableMasks(const Model* model, int index, std::vector<MaskRef>& out);
+
+// ---------------------------------------------------------------------------
+// 部件组（Part）不透明度
+//
+// motion3.json 的曲线 Target="PartOpacity"（旧版 "Part"）作用于「部件组」
+// 而不是参数或单个 drawable。很多模型把多套互斥的身体 / 换装做进同一 moc3，
+// 靠把其中一套的 part 不透明度置 0 来切换。早期适配层没有这组 API，
+// 部件曲线被整段丢弃 —— 用户看到「同时渲染出多个身体」。
+//
+// 关键语义（真实 Cubism Core 6.0.1 + aimierbeierding_3.moc3 实测）：
+//   1) 写入 csmGetPartOpacities() 返回的可写缓冲区后，csmUpdateModel()
+//      会**自动**把每个 part 的不透明度传播到其下所有 drawable 的 opacity；
+//      因此上层只需按曲线写 part 值，渲染计划里 opacity<=0 的过滤会自动
+//      剔除被隐藏的部件。
+//   2) 该传播是「每帧从基值重算」而非「就地乘法累积」：把所有 part 复位
+//      为 1.0 再 csmUpdateModel()，上一帧被置 0 的 drawable 会完全恢复
+//      （实测可见数 430 -> 290 -> 430 -> 165 -> 430 可循环）。所以每帧只需
+//      ResetPartOpacities() + 写本帧计划即可，不必、也无法手动缓存/还原
+//      drawable opacity —— 这是动作切换能交替显示两套身体的前提。
+//
+// 说明：桩（stub）与「未启用 SDK」构建没有 part 数据，这些函数会安全地
+// 返回 0 / -1 / false。真实修复只在 PPET_WITH_CUBISM（用户实际使用的配置）
+// 下生效，不影响其它两套构建的编译与既有单测。
+// ---------------------------------------------------------------------------
+
+/// 部件组数量（后端不支持时返回 0）。
+int PartCount(const Model* model);
+
+/// 按名字查找部件组下标。不存在或后端不支持返回 -1。
+int FindPart(const Model* model, const std::string& id);
+
+/// 把所有部件组不透明度复位为 1.0（每帧在应用曲线前调用，避免上一帧残留）。
+void ResetPartOpacities(Model* model);
+
+/// 写入指定部件组的不透明度。下标非法或后端不支持时为空操作。
+void SetPartOpacity(Model* model, int index, float value);
 
 }  // namespace ppet::live2d::cubism

@@ -589,4 +589,67 @@ bool GetDrawableMasks(const Model* model, int drawableIndex,
 #endif
 }
 
+// ---------------------------------------------------------------------------
+// 部件组（Part）不透明度
+//
+// 只有真实 Cubism Core 提供 csmGetPart* 系列；桩与「无 SDK」构建没有 part
+// 数据。这里用条件编译隔离：真实 SDK 下完整实现，其它配置安全降级为 no-op，
+// 保证三套构建都能编译、既有单测不受影响。
+// ---------------------------------------------------------------------------
+
+int PartCount(const Model* model) {
+#if defined(PPET_WITH_CUBISM)
+    if (!model || !model->model_) return 0;
+    return csmGetPartCount(model->model_);
+#else
+    (void)model;
+    return 0;
+#endif
+}
+
+int FindPart(const Model* model, const std::string& id) {
+#if defined(PPET_WITH_CUBISM)
+    if (!model || !model->model_ || id.empty()) return -1;
+    const int count = csmGetPartCount(model->model_);
+    const char** ids = csmGetPartIds(model->model_);
+    if (!ids) return -1;
+    for (int i = 0; i < count; ++i) {
+        if (ids[i] && id == ids[i]) return i;
+    }
+    return -1;
+#else
+    (void)model;
+    (void)id;
+    return -1;
+#endif
+}
+
+void ResetPartOpacities(Model* model) {
+#if defined(PPET_WITH_CUBISM)
+    if (!model || !model->model_) return;
+    float* opacities = csmGetPartOpacities(model->model_);
+    if (!opacities) return;
+    const int count = csmGetPartCount(model->model_);
+    for (int i = 0; i < count; ++i) opacities[i] = 1.0f;
+#else
+    (void)model;
+#endif
+}
+
+void SetPartOpacity(Model* model, int index, float value) {
+#if defined(PPET_WITH_CUBISM)
+    if (!model || !model->model_) return;
+    float* opacities = csmGetPartOpacities(model->model_);
+    if (!opacities) return;
+    const int count = csmGetPartCount(model->model_);
+    if (index < 0 || index >= count) return;
+    // 不透明度钳制到 [0,1]：曲线在淡入淡出时可能算出略微越界的值。
+    opacities[index] = std::min(1.0f, std::max(0.0f, value));
+#else
+    (void)model;
+    (void)index;
+    (void)value;
+#endif
+}
+
 }  // namespace ppet::live2d::cubism

@@ -15,6 +15,7 @@
 #include <api/live2d/CubismRenderPlan.hpp>
 #include <api/live2d/Live2DFrame.hpp>
 #include <api/live2d/MotionQueue.hpp>
+#include <api/live2d/PartOpacityPlan.hpp>
 
 // stb_image：本文件是 Live2D 后端唯一一处 STB_IMAGE_IMPLEMENTATION。
 //
@@ -413,6 +414,14 @@ struct Live2DModel::Impl {
     std::vector<Motion> motions;
     /// 与 motions 一一对应的显示名（控制台 action list / action <name> do）。
     std::vector<std::string> motionNames;
+
+    /// 静止姿势：从所有动作的 PartOpacity 首帧采样里推导出的默认部件不透明度。
+    /// 动作队列为空时也把这几套互斥身体收敛到唯一一套，避免「同时多个身体」。
+    PartOpacityMap defaultPartOpacity;
+    /// partId -> Core 部件组下标（加载后解析一次，避免每帧字符串查找）。
+    std::map<std::string, int> partIndexByName;
+    /// 是否至少存在一条部件不透明度曲线（无则完全跳过 part 写入，零开销）。
+    bool hasPartOpacityCurves = false;
 
     /// 动作组 -> 动作下标，用于随机播放。
     std::vector<std::vector<int>> motionGroups;
@@ -908,6 +917,49 @@ void Live2DModel::LoadMotions() {
         loops.push_back(m.loop);
     }
 
+    // 【部件不透明度 / 互斥身体】从所有动作的 PartOpacity 首帧采样推导静止姿势，
+    // 并把部件名解析成 Core 的部件组下标缓存起来。
+    //
+    // 背景：aimierbeierding_3 这类模型把两套完整身体（PartPoseStand /
+    // PartPoseDefault）做进同一个 moc3，靠 motion 的 PartOpacity 曲线把其中
+    // 一套置 0 来切换。渲染层早期把部件曲线整段丢弃，两套身体会同时显示
+    // （且都响应 Parameter 动作、只有部分随鼠标偏转）。这里补齐：
+    //   1) 收集每条部件曲线的首帧值 -> DeriveDefaultPartOpacity 选默认姿势；
+    //   2) 逐动作层混合 -> BuildPartOpacityPlan（在 Update 里做）；
+    //   3) 写入 part opacity 缓冲，Core 会自动传播到 drawable opacity。
+    impl_->defaultPartOpacity.clear();
+    impl_->partIndexByName.clear();
+    impl_->hasPartOpacityCurves = false;
+    {
+        std::vector<std::vector<PartOpacitySample>> firstFrames;
+        std::size_t partCurveCount = 0;
+        for (const Motion& motion : impl_->motions) {
+            std::vector<float> sampled;
+            motion.Sample(0.0f, sampled);  // 首帧值（Sample 对每条曲线都出值）
+            std::vector<PartOpacitySample> frame;
+            for (std::size_t i = 0; i < motion.curves.size(); ++i) {
+                const MotionCurve& curve = motion.curves[i];
+                if (!IsPartOpacityTarget(curve.target) || curve.id.empty()) continue;
+                const float value = i < sampled.size() ? sampled[i] : 1.0f;
+                frame.push_back({curve.id, value});
+                impl_->hasPartOpacityCurves = true;
+                ++partCurveCount;
+            }
+            if (!frame.empty()) firstFrames.push_back(std::move(frame));
+        }
+        impl_->defaultPartOpacity = DeriveDefaultPartOpacity(firstFrames);
+        for (const auto& entry : impl_->defaultPartOpacity) {
+            const int index = cubism::FindPart(impl_->model, entry.first);
+            if (index >= 0) impl_->partIndexByName[entry.first] = index;
+        }
+        if (impl_->hasPartOpacityCurves) {
+            PPET_LOG_TAG("LIVE2D",
+                         "识别到 %zu 条部件不透明度曲线、%zu 个部件组；默认姿势部件 %zu 个",
+                         partCurveCount, static_cast<std::size_t>(cubism::PartCount(impl_->model)),
+                         impl_->defaultPartOpacity.size());
+        }
+    }
+
     motionDirector_.Configure(std::move(directorGroups), std::move(hitAreaNames),
                               impl_->motions.size());
     motionDirector_.SetMotionMeta(durations, fadeIns, fadeOuts, loops);
@@ -1091,6 +1143,13 @@ void Live2DModel::Update(const RenderContext& ctx) {
     // 每帧先复位到默认姿态，再依次叠加各层。否则动作结束后它写过的参数
     // 会一直停留在最后一帧（表情/手臂「卡住」），也不会随淡出平滑回落。
     cubism::ResetParametersToDefault(impl_->model);
+
+    // 【部件不透明度】Core 不会自动还原上一帧写过的 part opacity，因此每帧
+    // 先整体复位到 1.0，再由 UpdateMotion 按本帧动作的 PartOpacity 曲线把
+    // 互斥姿势里不用的那套置 0。仅当模型确实含部件曲线时才做（零开销）。
+    if (impl_->hasPartOpacityCurves) {
+        cubism::ResetPartOpacities(impl_->model);
+    }
 
     // 【顺序很重要】
     //   1) 眨眼 / 呼吸：模型自带的基础动作
@@ -1299,6 +1358,12 @@ void Live2DModel::UpdateMotion(float deltaTime) {
     //           与 CubismMotion.cpp::DoUpdateParameters 的
     //               v = sourceValue + (value - sourceValue) * paramWeight
     const std::vector<QueueBlend> blends = motionDirector_.Blends();
+
+    // 【部件不透明度】本帧每个生效动作层对部件组的采样，稍后与默认姿势
+    // 混合成最终不透明度。仅当模型含部件曲线时才收集（零开销）。
+    std::vector<PartOpacityLayer> partLayers;
+    if (impl_->hasPartOpacityCurves) partLayers.reserve(blends.size());
+
     for (const QueueBlend& blend : blends) {
         if (blend.motionIndex < 0 || blend.weight <= 0.0f) continue;
         if (blend.motionIndex >= static_cast<int>(impl_->motions.size())) continue;
@@ -1307,10 +1372,21 @@ void Live2DModel::UpdateMotion(float deltaTime) {
         std::vector<float> values;
         motion.Sample(blend.time, values);
 
+        PartOpacityLayer partLayer;
+        partLayer.weight = blend.weight;
+
         for (std::size_t i = 0; i < motion.curves.size() && i < values.size(); ++i) {
             const MotionCurve& curve = motion.curves[i];
-            // motion3.json 的曲线还可作用于部件不透明度（Target="PartOpacity"），
-            // 本渲染层未建立部件索引映射，暂时只处理 Parameter 曲线。
+
+            // motion3.json 的曲线还可作用于部件不透明度（Target="PartOpacity"
+            // / 旧版 "Part"）：收集进本层，稍后混合成 part opacity 写回 Core，
+            // 由 Core 传播到 drawable opacity 以隐藏互斥身体。
+            if (IsPartOpacityTarget(curve.target)) {
+                if (impl_->hasPartOpacityCurves && !curve.id.empty()) {
+                    partLayer.samples.push_back({curve.id, values[i]});
+                }
+                continue;
+            }
             if (curve.target != "Parameter") continue;
             const int index = cubism::FindParameter(impl_->model, curve.id);
             if (index < 0) continue;
@@ -1324,6 +1400,28 @@ void Live2DModel::UpdateMotion(float deltaTime) {
                 value = Clamp(value, minValue, maxValue);
             }
             cubism::SetParameterValue(impl_->model, index, value);
+        }
+
+        if (impl_->hasPartOpacityCurves && !partLayer.samples.empty()) {
+            partLayers.push_back(std::move(partLayer));
+        }
+    }
+
+    // 把本帧的部件不透明度计划写进 Core。即使动作队列为空，也要以默认
+    // 姿势（baseline）写入，保证静止时互斥身体只显示唯一一套。
+    if (impl_->hasPartOpacityCurves) {
+        const PartOpacityMap plan =
+            BuildPartOpacityPlan(impl_->defaultPartOpacity, partLayers);
+        for (const auto& [id, value] : plan) {
+            auto it = impl_->partIndexByName.find(id);
+            int index = (it != impl_->partIndexByName.end()) ? it->second : -1;
+            if (index < 0) {
+                // 少数部件只出现在个别动作曲线里、不在默认姿势中：按需解析并缓存。
+                index = cubism::FindPart(impl_->model, id);
+                if (index < 0) continue;
+                impl_->partIndexByName[id] = index;
+            }
+            cubism::SetPartOpacity(impl_->model, index, value);
         }
     }
 }

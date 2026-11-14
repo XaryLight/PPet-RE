@@ -1160,6 +1160,14 @@ add_test(NAME render_plan_unit
          COMMAND ppet_render_plan_test
          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
+# Live2D 部件不透明度合并（Q1）：把 PartOpacity 曲线从「丢弃」改为逐帧写入，
+# 修复同一 moc3 里两套互斥身体被同时渲染。纯头文件、零依赖，三配置均可跑。
+add_executable(ppet_part_opacity_plan_test tools/part_opacity_plan_test.cpp)
+target_include_directories(ppet_part_opacity_plan_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME part_opacity_plan_unit
+         COMMAND ppet_part_opacity_plan_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
 # 真实内容帧 / 动态像素比：按模型真实渲染像素推算窗口比例与居中 contain fit，
 # 验证横向宽幅内容在方形窗口里不被截断（需求 3）。纯头文件、零依赖。
 add_executable(ppet_live2d_frame_test tools/live2d_frame_test.cpp)
