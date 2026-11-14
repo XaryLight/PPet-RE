@@ -1,17 +1,20 @@
 // PPet - C++ 移植版
-// 配置落盘单测：重点回归「%APPDATA% 指向不可写盘（A: 软驱 / 重定向卷）时
-// 配置写不出去、且只报含糊的『无法写入配置文件』」这一类故障。
+// 配置落盘单测：重点回归「A: 这类『资源管理器能写、但程序 CreateFileW 写不进』
+// 的磁盘上配置保存失败、且只报含糊的『无法写入配置文件』」这一类故障。
 //
 // 覆盖：
-//   1) DefaultConfigPath 返回的目录一定是可写的（本次修复的核心保证）；
+//   1) DefaultConfigPath 仍是系统约定路径（A:\Roaming\PPet\config.json 之类），
+//      其所在目录可建目录、可写入；
 //   2) Save/Load 往返字段不丢；
-//   3) 写入失败时不再吞掉 GetLastError / errno，错误信息带系统原因；
-//   4) ExecutableDir 可取得且不含尾部分隔符（便携回退用）。
+//   3) 直写失败时有「暂存到 exe 同目录 + 拷贝到目标」的回退，且失败信息带系统原因；
+//   4) ExecutableDir 可取得且不含尾部分隔符（暂存回退用）。
 #include <src/tools/core/Config.hpp>
 #include <src/tools/core/FileIO.hpp>
 
 #include <cstdio>
 #include <filesystem>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <string>
 #include <vector>
 
@@ -127,6 +130,34 @@ int main() {
         Check(exeDir.back() != '/' && exeDir.back() != '\\',
               "ExecutableDir 无尾部斜杠");
     }
+
+    // --- 5) 直写失败时应走「暂存到 exe 同目录 + 拷贝」回退，且不崩溃、报错带原因 ---
+    // 这一支在 Windows 的 A: 软驱 / 重定向卷场景才会真正成功；在 POSIX 上我们
+    // 用只读目录制造「直写失败 + 拷贝也失败」来确认回退分支能正常执行并报告系统原因。
+    // 注意：root 会绕过目录权限位，因此仅在非 root 时执行该构造。
+#if defined(__unix__) || defined(__APPLE__)
+    if (::geteuid() != 0) {
+        const std::string roDir = "./ppet_config_test_ro";
+        std::error_code ec;
+        fs::create_directories(fs::path(roDir), ec);
+        Check(!ec, "创建只读测试目录");
+        // 去掉写权限：目标文件写不进、拷贝也进不去。
+        ::chmod(roDir.c_str(), 0555);
+
+        const std::string target = JoinPath(roDir, "config.json");
+        ConfigStore s3;
+        s3.config().maxFps = 20;
+        std::string serr;
+        Check(!s3.Save(target, serr), "直写 + 拷贝均失败时 Save 失败");
+        Check(!serr.empty(), "回退失败仍给出错误原因（不再吞掉系统原因）");
+
+        ::chmod(roDir.c_str(), 0755);
+        fs::remove(fs::path(target), ec);
+        fs::remove(fs::path(roDir), ec);
+    } else {
+        std::printf("[SKIP] 只读目录回退测试（以 root 运行，权限位被绕过）\n");
+    }
+#endif
 
     std::printf(g_failures == 0 ? "\n全部通过\n" : "\n存在 %d 处失败\n", g_failures);
     return g_failures == 0 ? 0 : 1;

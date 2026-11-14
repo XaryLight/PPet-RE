@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <climits>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -59,14 +60,14 @@ std::string WideToUtf8(const std::wstring& wide) {
 
 #endif  // _WIN32
 
-/// 取最近一次系统调用的错误文本（必须紧接在失败的 API 之后调用）。
+/// 取系统错误码对应的文本（Windows 为 GetLastError 文本，POSIX 为 errno 文本）。
 ///
-/// Windows 读 GetLastError()、POSIX 读 errno，都转成 UTF-8 串。
 /// 之所以单独成函数：格式化错误文本本身会触发其它系统调用、可能清掉
 /// LastError/errno，所以调用方务必在失败点「立刻」取一次，不要隔行再读。
-std::string OsErrorText() {
 #if defined(_WIN32)
-    const DWORD code = GetLastError();
+
+/// 取指定系统错误码对应的文本（Windows：GetLastError 文本）。
+std::string OsErrorText(std::uint32_t code) {
     if (code == 0) return std::string();
     LPWSTR buf = nullptr;
     const DWORD len = FormatMessageW(
@@ -81,10 +82,51 @@ std::string OsErrorText() {
         msg.pop_back();
     }
     return WideToUtf8(msg) + "（错误码 " + std::to_string(code) + "）";
+}
+
+#endif  // _WIN32
+
+/// 取最近一次系统调用的错误文本（等价 OsErrorText(GetLastError()/errno)）。
+std::string OsErrorText() {
+#if defined(_WIN32)
+    return OsErrorText(GetLastError());
 #else
     return std::strerror(errno);
 #endif
 }
+
+#if defined(_WIN32)
+
+/// 这类错误属于「介质瞬时未就绪 / 被别人短暂占用」，稍等片刻重试往往能成。
+
+/// 这类错误属于「介质瞬时未就绪 / 被别人短暂占用」，稍等片刻重试往往能成。
+/// 典型场景：A: 软驱 / 重定向卷、防病毒正在扫描目标文件。
+bool IsTransientWriteError(DWORD code) {
+    return code == ERROR_NOT_READY || code == ERROR_SHARING_VIOLATION ||
+           code == ERROR_LOCK_VIOLATION;
+}
+
+/// 以「可重试」的方式打开一个用于覆盖写的文件句柄。
+///
+/// 与裸 CreateFileW(CREATE_ALWAYS) 的区别：对软驱 / 重定向卷常见的瞬时错误
+/// （未就绪、共享冲突、路径尚未就绪）做几次短延时重试，避免一次失败就放弃 ——
+/// 这正是「资源管理器能写、程序 CreateFileW 写不进」那类故障的对症处理。
+HANDLE OpenForWriteRetry(const std::wstring& widePath, std::string* outError) {
+    HANDLE handle = INVALID_HANDLE_VALUE;
+    DWORD lastErr = 0;
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        handle = CreateFileW(widePath.c_str(), GENERIC_WRITE, 0, nullptr,
+                             CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (handle != INVALID_HANDLE_VALUE) return handle;
+        lastErr = GetLastError();
+        if (!IsTransientWriteError(lastErr)) break;
+        Sleep(120);  // 给介质 / 占用方一点恢复时间
+    }
+    if (outError) *outError = OsErrorText(lastErr);
+    return INVALID_HANDLE_VALUE;
+}
+
+#endif  // _WIN32
 
 }  // namespace
 
@@ -305,12 +347,8 @@ bool WriteFileText(const std::string& path, const std::string& text,
         return false;
     }
 
-    HANDLE handle = CreateFileW(widePath.c_str(), GENERIC_WRITE, 0, nullptr,
-                                CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (handle == INVALID_HANDLE_VALUE) {
-        if (outError) *outError = OsErrorText();
-        return false;
-    }
+    HANDLE handle = OpenForWriteRetry(widePath, outError);
+    if (handle == INVALID_HANDLE_VALUE) return false;
 
     bool ok = true;
     std::size_t total = 0;
@@ -364,12 +402,8 @@ bool WriteFileBytes(const std::string& path, const std::vector<std::uint8_t>& da
         return false;
     }
 
-    HANDLE handle = CreateFileW(widePath.c_str(), GENERIC_WRITE, 0, nullptr,
-                                CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (handle == INVALID_HANDLE_VALUE) {
-        if (outError) *outError = OsErrorText();
-        return false;
-    }
+    HANDLE handle = OpenForWriteRetry(widePath, outError);
+    if (handle == INVALID_HANDLE_VALUE) return false;
 
     bool ok = true;
     std::size_t total = 0;

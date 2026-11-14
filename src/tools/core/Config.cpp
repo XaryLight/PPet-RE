@@ -24,74 +24,54 @@ Language LanguageFromString(const std::string& s) {
     return s == "en" ? Language::English : Language::Chinese;
 }
 
-/// 配置目录候选顺序：优先系统约定位置，逐级回退到便携 / 当前目录。
+/// 配置落盘的「暂存」位置：可执行文件同目录下的 PPet/config.json。
 ///
-/// 为什么需要回退：曾经出现 `%APPDATA%` 被指向 `A:\Roaming`（软驱 / 重定向卷 /
-/// 不可写盘）的机器，ConfigStore 直接拿它拼出 `A:\Roaming\PPet\config.json`，
-/// 每次保存都因 INVALID_HANDLE_VALUE 失败，却只报一句含糊的「无法写入配置文件」。
-/// 因此这里只「列候选」，是否可用由 DirIsWritable 实测决定。
-std::vector<std::string> CandidateConfigDirs() {
-    std::vector<std::string> dirs;
-
-#if defined(_WIN32)
-    const std::string appData = GetEnvVar("APPDATA");
-    if (!appData.empty()) dirs.push_back(JoinPath(appData, "PPet"));
-    const std::string localAppData = GetEnvVar("LOCALAPPDATA");
-    if (!localAppData.empty()) dirs.push_back(JoinPath(localAppData, "PPet"));
-#else
-    const std::string xdg = GetEnvVar("XDG_CONFIG_HOME");
-    if (!xdg.empty()) dirs.push_back(JoinPath(xdg, "PPet"));
-    const std::string home = GetEnvVar("HOME");
-#if defined(__APPLE__)
-    if (!home.empty()) {
-        dirs.push_back(JoinPath(JoinPath(home, "Library/Application Support"), "PPet"));
-    }
-#else
-    if (!home.empty()) dirs.push_back(JoinPath(JoinPath(home, ".config"), "PPet"));
-#endif
-#endif
-
-    // 便携 / 兜底：可执行文件所在目录、当前工作目录。
+/// 为什么需要它：在 `A:` 这类「资源管理器能写、但程序自己 CreateFileW 写不进
+/// 去」的磁盘（软驱 / 重定向卷 / 瞬时未就绪）上，直写目标路径会失败。这时先把
+/// 配置写到 exe 同目录（这里一定可写），再 std::filesystem::copy_file 到目标
+/// 路径 —— CopyFileW 用的是另一套打开标志，往往能绕过直写失败的那类问题。
+std::string StagingConfigPath() {
     const std::string exeDir = ExecutableDir();
-    if (!exeDir.empty()) dirs.push_back(JoinPath(exeDir, "PPet"));
-    dirs.push_back("PPet");  // 相对当前工作目录
-
-    // 去重，避免同一目录被重复实测。
-    std::vector<std::string> unique;
-    for (auto& d : dirs) {
-        bool seen = false;
-        for (auto& u : unique) {
-            if (u == d) {
-                seen = true;
-                break;
-            }
-        }
-        if (!seen) unique.push_back(std::move(d));
-    }
-    return unique;
-}
-
-/// 实测目录是否可写：能建目录 + 能落一个临时文件 + 能删掉。
-/// 任何一个环节失败（权限不足 / 介质只读 / 路径非法）都返回 false。
-bool DirIsWritable(const std::string& dir) {
-    namespace fs = std::filesystem;
-    std::error_code ec;
-    fs::create_directories(ToFsPath(dir), ec);
-    if (ec) return false;
-    const std::string probe = JoinPath(dir, ".ppet_writetest");
-    if (!WriteFileText(probe, "ok")) return false;
-    fs::remove(ToFsPath(probe), ec);
-    return true;
+    if (exeDir.empty()) return std::string();
+    return FromFsPath(ToFsPath(exeDir) / "PPet" / "config.json");
 }
 
 }  // namespace
 
 std::string ConfigStore::DefaultConfigPath() {
-    for (const auto& dir : CandidateConfigDirs()) {
-        if (DirIsWritable(dir)) return JoinPath(dir, "config.json");
+    // 配置的目标位置就是系统约定目录（用户机器上是 A:\Roaming\PPet\config.json）。
+    // 这里只负责「算出一个合法路径」，能不能写、写不进怎么办，全部交给 Save 处理，
+    // 不再因为某次实测不可写就把配置悄悄挪到别处。
+#if defined(_WIN32)
+    const std::string appData = GetEnvVar("APPDATA");
+    if (!appData.empty()) {
+        return FromFsPath(ToFsPath(appData) / "PPet" / "config.json");
     }
-    // 极端兜底：任何目录都写不了时退回当前目录散落文件，至少让程序能跑
-    // （用户可手动把配置拷到可写位置）。
+    const std::string localAppData = GetEnvVar("LOCALAPPDATA");
+    if (!localAppData.empty()) {
+        return FromFsPath(ToFsPath(localAppData) / "PPet" / "config.json");
+    }
+#else
+    const std::string xdg = GetEnvVar("XDG_CONFIG_HOME");
+    if (!xdg.empty()) {
+        return FromFsPath(ToFsPath(xdg) / "PPet" / "config.json");
+    }
+    const std::string home = GetEnvVar("HOME");
+    if (!home.empty()) {
+#if defined(__APPLE__)
+        return FromFsPath(ToFsPath(home) / "Library" / "Application Support" /
+                          "PPet" / "config.json");
+#else
+        return FromFsPath(ToFsPath(home) / ".config" / "PPet" / "config.json");
+#endif
+    }
+#endif
+
+    // 兜底：环境变量缺失时退回 exe 同目录或当前目录，至少让程序能跑起来。
+    const std::string exeDir = ExecutableDir();
+    if (!exeDir.empty()) {
+        return FromFsPath(ToFsPath(exeDir) / "PPet" / "config.json");
+    }
     return "ppet-config.json";
 }
 
@@ -204,16 +184,7 @@ bool ConfigStore::Load(const std::string& path, std::string& error) {
 bool ConfigStore::Save(const std::string& path, std::string& error) const {
     namespace fs = std::filesystem;
 
-    std::error_code ec;
-    const fs::path p = ToFsPath(path);
-    if (p.has_parent_path()) {
-        fs::create_directories(p.parent_path(), ec);
-        if (ec) {
-            error = "无法创建配置目录：" + FromFsPath(p.parent_path()) + "（" + ec.message() + "）";
-            return false;
-        }
-    }
-
+    // 先把要落盘的内容一次性拼好，两路尝试（直写 / 暂存后拷贝）复用同一份。
     json j;
     j["alwaysOnTop"] = config_.alwaysOnTop;
     j["ignoreMouseEvents"] = config_.ignoreMouseEvents;
@@ -237,15 +208,58 @@ bool ConfigStore::Save(const std::string& path, std::string& error) const {
     j["maxTrackingAngle"] = config_.maxTrackingAngle;
     j["maxFps"] = config_.maxFps;
     j["safeMode"] = config_.safeMode;
+    const std::string text = j.dump(4);
 
-    // 走跨平台写入接口：Windows 上窄字符路径无法写入含中文的目录。
-    std::string sysErr;
-    if (!WriteFileText(path, j.dump(4), &sysErr)) {
+    // 第 1 路：直接写到目标路径（先保证父目录存在）。
+    // WriteFileText 内部对软驱 / 重定向卷常见的「未就绪 / 共享冲突」做了重试，
+    // 多数情况下这一路就能成功。
+    {
+        std::error_code ec;
+        const fs::path p = ToFsPath(path);
+        if (p.has_parent_path()) {
+            fs::create_directories(p.parent_path(), ec);
+            if (ec) {
+                error = "无法创建配置目录：" + FromFsPath(p.parent_path()) + "（" + ec.message() + "）";
+                return false;
+            }
+        }
+        std::string sysErr;
+        if (WriteFileText(path, text, &sysErr)) return true;
         error = "无法写入配置文件：" + path;
         if (!sysErr.empty()) error += "（" + sysErr + "）";
-        return false;
     }
-    return true;
+
+    // 第 2 路：直写失败（如 A: 这类「资源管理器能写、程序 CreateFileW 写不进」的盘），
+    // 先把配置落到 exe 同目录的暂存文件，再用 copy_file 拷到目标路径。
+    // CopyFileW 走的是另一套打开标志，通常能绕过直写失败的那类问题。
+    const std::string staged = StagingConfigPath();
+    if (!staged.empty()) {
+        std::error_code ec;
+        fs::create_directories(ToFsPath(staged).parent_path(), ec);
+        if (!ec) {
+            std::string sysErr;
+            if (WriteFileText(staged, text, &sysErr)) {
+                std::error_code cec;
+                fs::create_directories(ToFsPath(path).parent_path(), cec);
+                fs::copy_file(ToFsPath(staged), ToFsPath(path),
+                              fs::copy_options::overwrite_existing, cec);
+                if (!cec) {
+                    // 拷过去就成功了，清掉暂存文件。
+                    std::error_code rec;
+                    fs::remove(ToFsPath(staged), rec);
+                    return true;
+                }
+                error = "已生成暂存文件，但拷贝到 " + path + " 失败：" + cec.message();
+            } else {
+                error = "无法在程序同目录生成暂存配置：" + staged + "（" + sysErr + "）";
+            }
+        } else {
+            error = "无法创建暂存目录：" + FromFsPath(ToFsPath(staged).parent_path()) +
+                    "（" + ec.message() + "）";
+        }
+    }
+
+    return false;
 }
 
 }  // namespace ppet
