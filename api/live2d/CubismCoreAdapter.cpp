@@ -567,17 +567,23 @@ bool GetDrawableMasks(const Model* model, int drawableIndex,
     const int* indices = lists[drawableIndex];
     if (!indices) return false;
 
-    // 反转遮罩标志在**遮罩部件自己**的常量标志里
-    // （Core 4.0 起的 csmIsInvertedMask）。
+    // 【反转遮罩标志的归属】官方 Framework 的
+    // CubismModel::GetDrawableInvertedMask(drawableIndex) 读的是**被裁剪
+    // drawable 自己**的 constantFlags，而不是遮罩源 drawable 的。
+    // 早期实现用 constantFlags[maskIndex] 取遮罩源的标志，遇到反转遮罩
+    // 模型会判断错（该挖洞的不挖、不该挖的挖掉），典型表现是眼睛/脸部
+    // 被错误裁剪。同一 drawable 的所有遮罩共享这一个标志。
     const csmFlags* constantFlags = csmGetDrawableConstantFlags(model->model_);
     const int drawableCount = csmGetDrawableCount(model->model_);
+    const bool inverted = constantFlags &&
+                          (constantFlags[drawableIndex] & csmIsInvertedMask) != 0;
 
     for (int i = 0; i < count; ++i) {
         const int maskIndex = indices[i];
         if (maskIndex < 0 || maskIndex >= drawableCount) continue;
         MaskRef ref;
         ref.drawableIndex = maskIndex;
-        ref.inverted = constantFlags && (constantFlags[maskIndex] & csmIsInvertedMask) != 0;
+        ref.inverted = inverted;
         out.push_back(ref);
     }
     return !out.empty();

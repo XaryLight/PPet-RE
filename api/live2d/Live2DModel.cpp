@@ -126,7 +126,9 @@ inline std::vector<DrawableDesc> CollectDrawableDescs(
         if (static_cast<std::size_t>(i) < masks.size() && !masks[static_cast<std::size_t>(i)].empty()) {
             desc.useMask = true;
             desc.maskCount = static_cast<int>(masks[static_cast<std::size_t>(i)].size());
-            // 多遮罩里只要有一个是反转遮罩（挖洞），整体按反转处理。
+            // csmIsInvertedMask 属于**被裁剪 drawable 自身**（官方 Framework
+            // 的 GetDrawableInvertedMask(drawableIndex)），同一部件的所有遮罩
+            // 共享该标志；只要任一 ref 命中就整体按反转（挖洞）处理。
             for (const cubism::MaskRef& ref : masks[static_cast<std::size_t>(i)]) {
                 if (ref.inverted) { desc.invertMask = true; break; }
             }
@@ -190,9 +192,6 @@ uniform float u_invertMask;
 /// Cubism 的遮罩是「另一块部件的几何形状」，与它贴图上哪里透明无关；
 /// 早期版本用贴图 alpha 当覆盖度，导致遮罩范围收缩 → 被裁剪部件出现透明破洞。
 uniform float u_maskPass;
-/// 加法混合（发光）标志：>0.5 时启用钳制式加法混合。
-uniform float u_additive;
-
 out vec4 fragColor;
 
 void main() {
@@ -221,21 +220,9 @@ void main() {
         color *= m;
     }
 
-    if (u_additive > 0.5) {
-        // 加法混合（发光）：与目标色相加并**钳制到 1.0**。
-        //
-        // 【为什么必须钳制】官方 Cubism 5.3+ 的 ColorBlend 着色器对
-        // ADD 模式写的是 min(colorSource + colorDestination, 1.0)。
-        // 不钳制时，多个发光部件叠加会让 RGB 迅速溢出成纯白，
-        // 整个角色被自己的高光糊住 —— 表现为「渲染异常偏白」。
-        // 官方用离屏纹理实现（读回目标色再相加），
-        // 本项目在主帧缓冲上做等价处理：加法部件用 GL_ONE/GL_ONE 叠加，
-        // 由片元着色器把结果限制在 1.0 以内。
-        color.rgb = min(color.rgb, vec3(1.0));
-        // 发光不增加不透明度：alpha 通道保持目标值。
-        color.a = min(color.a, 1.0);
-    }
-
+    // 加法混合由 GL 层的 glBlendFuncSeparate（Add: RGB ONE/ONE, A ZERO/ONE）
+    // 完成；片元阶段拿不到目标色，钳制无意义（帧缓冲归一化会处理溢出）。
+    // 早期这里有一段 u_additive 分支，但 uniform 从未被设置过，属死代码。
     fragColor = color;
 }
 )";
@@ -1911,34 +1898,41 @@ bool Live2DModel::RenderMaskTexture(const std::vector<cubism::MaskRef>& masks,
     // 遮罩通道：片元只输出几何覆盖度，不采样部件贴图。
     glUniform1f(impl_->uniformMaskPass, 1.0f);
 
-    // 遮罩纹理作为 s_mask 绑定，但遮罩本身不使用遮罩。
+    // 【修复 feedback loop】target.texture 此刻是本 FBO 的 COLOR_ATTACHMENT0，
+    // 绝不能再把它绑到 s_mask 采样的 TEXTURE1 —— 那是 framebuffer feedback
+    // loop（GL 未定义行为）。Windows 驱动上常表现为遮罩纹理静默变全黑，
+    // 于是所有被裁剪部件（典型是眼睛）整块消失，而 Linux 下未必能复现。
+    // mask pass 的 shader 不采样任何纹理，用 1x1 白纹理占位即可。
     glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, target.texture);
+    glBindTexture(GL_TEXTURE_2D, impl_->whiteTexture);
     glActiveTexture(GL_TEXTURE0);
 
-    // 【关键修复】遍历该部件挂载的**所有**遮罩，把几何覆盖度叠加进同一张
-    // 遮罩纹理（GL_ONE/ONE_MINUS_SRC_ALPHA 使 alpha 累积 => 并集语义）。
-    // 早期版本只画 masks[0]，多遮罩模型会缺裁剪区，被裁部件出现透明破洞。
-    // 官方 Framework 同样是把 masks 数组里的每个 drawable 都画进裁剪缓冲。
+    // 【修复遮罩源 opacity】遮罩形状只由几何决定，写入裁剪缓冲的颜色恒为
+    // 不透明白（MaskPassColor 是纯逻辑契约，可单测）。早期实现把遮罩源
+    // drawable 的 opacity 乘进 u_baseColor.a，opacity=0 的遮罩源会让整张
+    // 遮罩纹理变空 —— 被裁剪部件消失。Q1 之后隐藏身体下的 drawable
+    // opacity 同样为 0，更不能参与遮罩计算。
+    //
+    // 遍历该部件挂载的**所有**遮罩，覆盖度叠加进同一张纹理
+    //（GL_ONE/ONE_MINUS_SRC_ALPHA 使 alpha 累积 => 并集语义）。
+    const ModelColor maskColor = MaskPassColor(0.0f);
+    glUniform4f(impl_->uniformBaseColor, maskColor.r, maskColor.g,
+                maskColor.b, maskColor.a);
     glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
     for (const cubism::MaskRef& ref : masks) {
         if (ref.drawableIndex < 0) continue;
-        cubism::Drawable maskDrawable;
-        float maskOpacity = 1.0f;
-        if (cubism::GetDrawable(impl_->model, ref.drawableIndex, maskDrawable)) {
-            maskOpacity = maskDrawable.opacity;
-        }
-        const ModelColor color = ModelColorWithOpacity(maskOpacity);
-        glUniform4f(impl_->uniformBaseColor, color.r, color.g, color.b, color.a);
         DrawDrawable(ref.drawableIndex, transform, true);
     }
 
     glUniform1f(impl_->uniformMaskPass, 0.0f);
+    // 必须先解绑 FBO，再把遮罩纹理绑到 TEXTURE1 供主 pass 的 s_mask 采样；
+    // 顺序反了就又构成 feedback loop。
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    // 遮罩纹理已经在 GL_TEXTURE1 上绑定好了；这里只恢复主画面的 viewport，
-    // 不能把遮罩纹理绑到 TEXTURE0（会覆盖部件贴图）。
-    glViewport(0, 0, ctx.viewportWidth, ctx.viewportHeight);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, target.texture);
     glActiveTexture(GL_TEXTURE0);
+    // 只恢复主画面的 viewport；不要把遮罩纹理绑到 TEXTURE0（会覆盖部件贴图）。
+    glViewport(0, 0, ctx.viewportWidth, ctx.viewportHeight);
     return true;
 }
 

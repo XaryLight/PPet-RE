@@ -172,6 +172,27 @@ void TestOpacityAndBlendInPlan() {
     Check(plan[2].useMask && plan[2].invertMask, "遮罩标记透传");
 }
 
+/// Q2 回归：遮罩通道（mask pass）写入裁剪缓冲的颜色是纯逻辑契约。
+/// 遮罩形状只由几何覆盖度决定，绝不能乘遮罩源 drawable 的 opacity ——
+/// 否则 opacity=0 的遮罩源会把整张遮罩纹理画空，眼睛等被裁剪部件消失。
+void TestMaskPassColor() {
+    std::printf("-- 遮罩通道颜色（Q2 回归）--\n");
+    const float opacities[] = {0.0f, 0.01f, 0.5f, 1.0f, -1.0f, 2.0f};
+    for (float op : opacities) {
+        const ModelColor c = MaskPassColor(op);
+        Check(Near(c.a, 1.0f) && Near(c.r, 1.0f) && Near(c.g, 1.0f) &&
+                  Near(c.b, 1.0f),
+              "遮罩通道颜色恒为不透明白，不随遮罩源 opacity 缩放");
+    }
+    // 关键回归：opacity=0 的遮罩源（Cubism 常见；Q1 之后隐藏身体下的
+    // drawable opacity 同样为 0）必须仍能产生有效裁剪覆盖度。
+    Check(MaskPassColor(0.0f).a > 0.999f,
+          "opacity=0 的遮罩源不产生空遮罩（不会让眼睛消失）");
+    // 与主 pass 明确区分：主 pass 的颜色必须按 opacity 缩放。
+    Check(Near(ModelColorWithOpacity(0.0f).a, 0.0f),
+          "主 pass 仍按 opacity 缩放（与遮罩通道区分）");
+}
+
 }  // namespace
 
 int main() {
@@ -182,6 +203,7 @@ int main() {
     TestFiltering();
     TestOpacityAndBlendInPlan();
     TestMaskSourceRegression();
+    TestMaskPassColor();
     std::printf("=== %d 项检查，失败 %d ===\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

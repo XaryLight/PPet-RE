@@ -85,6 +85,26 @@ inline ModelColor ModelColorWithOpacity(float opacity, float modelR = 1.0f,
     return {modelR * a, modelG * a, modelB * a, a};
 }
 
+/// 遮罩通道（mask pass）写入裁剪缓冲的 baseColor。
+///
+/// 【为什么恒为不透明白、绝不能乘遮罩源的 opacity】
+///   Cubism 的遮罩是「另一块部件的几何形状」，裁剪范围只由三角形覆盖度决定，
+///   与遮罩源自己显示得多淡、甚至是否可见都无关。官方 Framework 的
+///   CubismClippingManager 在裁剪缓冲里也是用固定白色绘制。
+///
+///   早期实现把 maskDrawable.opacity 乘进 u_baseColor.a，于是 opacity=0 的
+///   遮罩源会把整张遮罩纹理画成全透明 -> 主 pass 采样到的 m=0 ->
+///   被裁剪部件整体消失。这类遮罩源在 Cubism 里很常见（纯裁剪部件本身
+///   csmIsVisible=false / opacity=0），Q1 之后被隐藏身体下的 drawable
+///   opacity 同样被 Core 置 0。典型症状就是「所有 moc3 的眼睛都渲染不出来」。
+///
+/// @param maskSourceOpacity 遮罩源 drawable 的不透明度。**刻意忽略**：
+///        保留参数是为了让「此处不按 opacity 缩放」成为显式、可单测的契约。
+inline ModelColor MaskPassColor(float maskSourceOpacity) {
+    (void)maskSourceOpacity;
+    return {1.0f, 1.0f, 1.0f, 1.0f};
+}
+
 /// 一个 Drawable 的渲染元数据（由 Cubism Core 适配层每帧填充）。
 struct DrawableDesc {
     int index = -1;
