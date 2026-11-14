@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <map>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -24,6 +25,8 @@
 #include <src/tools/core/ModelPackage.hpp>
 #include <src/tools/core/ModelNaming.hpp>
 #include <src/tools/core/Stability.hpp>
+#include <src/tools/core/TrackingPolicy.hpp>
+#include <src/tools/plugin/BuiltinPlugins.hpp>
 #include <src/tools/render/FrameCapture.hpp>
 #include <src/ui/ErrorDialog.hpp>
 #include <src/tools/platform/AutoStart.hpp>
@@ -138,6 +141,17 @@ bool App::Initialize(std::string& error) {
     // 刷新一次，不能依赖 Start() 里的那次。
     cursorTracker_.RefreshDesktop();
 
+    // --- 插件系统（需求 6）---
+    // 记录启动时刻（给插件事件打时间戳），注入配置快照，注册内置插件。
+    appStartTime_ = std::chrono::steady_clock::now();
+    lastPluginTick_ = appStartTime_;
+    pluginManager_.SetConfigSource(&configStore_.config());
+    pluginManager_.Register(std::make_shared<plugin::GreeterPlugin>());
+    pluginManager_.Register(std::make_shared<plugin::CounterPlugin>());
+    EmitPluginEvent(plugin::PluginEventKind::AppStart);
+    PPET_LOG_TAG("PLUGIN", "插件系统就绪：已注册 %zu 个内置插件",
+                 pluginManager_.List().size());
+
     // --- 窗口 ---
     WindowOptions opts;
     opts.width = configStore_.config().windowWidth;
@@ -192,6 +206,15 @@ bool App::Initialize(std::string& error) {
                     const float ny = std::clamp(
                         static_cast<float>(dragGrabY_ / size.y), 0.0f, 1.0f);
                     model_->OnInteract(nx, ny);
+                    // 需求 6：广播「用户互动」事件（区域由归一化坐标分区得出）。
+                    std::string region;
+                    if (nx < 0.25f) region = "left";
+                    else if (nx > 0.75f) region = "right";
+                    else if (ny < 0.28f) region = "head";
+                    else if (ny > 0.72f) region = "leg";
+                    else region = "body";
+                    EmitPluginEvent(plugin::PluginEventKind::Interaction,
+                                    std::string(), {{"region", region}});
                     // 点击角色时来一句问候，配合口型让桌宠更有回应感。
                     SayState(agent::AgentStateKind::Greeting, 2);
                 }
@@ -393,6 +416,22 @@ bool App::Initialize(std::string& error) {
     return true;
 }
 
+void App::EmitPlugin(const plugin::PluginEvent& event) {
+    pluginManager_.Emit(event);
+}
+
+void App::EmitPluginEvent(plugin::PluginEventKind kind, std::string source,
+                          std::map<std::string, std::string> payload) {
+    plugin::PluginEvent event;
+    event.kind = kind;
+    event.source = std::move(source);
+    event.payload = std::move(payload);
+    const auto now = std::chrono::steady_clock::now();
+    event.timestamp =
+        std::chrono::duration<double>(now - appStartTime_).count();
+    pluginManager_.Emit(event);
+}
+
 void App::ApplyConfig() {
     const auto& cfg = configStore_.config();
     window_.SetAlwaysOnTop(cfg.alwaysOnTop);
@@ -404,6 +443,16 @@ void App::ApplyConfig() {
     } else if (!cfg.fullscreenTracking && cursorTracker_.IsRunning()) {
         cursorTracker_.Stop();
     }
+
+    // 需求 7 修复：把「最大偏转角度」配置实时回写到模型。
+    // 此前该值从未落地到模型，拖动滑块毫无反应、且模型永远停在默认 30°（偏大）。
+    if (model_) model_->SetMaxTrackingAngle(cfg.maxTrackingAngle);
+
+    // 需求 6：广播「配置变更」事件（含本次变化的关键字段），插件可据此响应。
+    EmitPluginEvent(plugin::PluginEventKind::ConfigChanged, std::string(),
+                    {{"fullscreenTracking", cfg.fullscreenTracking ? "1" : "0"},
+                     {"maxTrackingAngle", std::to_string(cfg.maxTrackingAngle)},
+                     {"trackingRadius", std::to_string(cfg.trackingRadius)}});
 }
 
 void App::RefreshLanguageIfNeeded() {
@@ -635,6 +684,11 @@ bool App::LoadModel(const std::string& path, ModelLoadError& out, bool notifyUse
     model_ = model;
     auto& cfg = configStore_.config();
     model_->SetArmRestDrop(cfg.armRestDropDeg);
+    // 需求 7：加载模型后同样把最大偏转角度落到模型，保证「换模型」后偏转设置不丢。
+    model_->SetMaxTrackingAngle(cfg.maxTrackingAngle);
+
+    // 需求 6：广播「模型加载」事件，插件可据此做初始化 / 打招呼。
+    EmitPluginEvent(plugin::PluginEventKind::ModelLoaded, cleanPath);
 
     // 【渲染窗口按实际帧宽高比自适应】
     // 3D 后端用包围盒 X/Y，Live2D 用 Cubism 画布尺寸。横向模型（宽 > 高）
@@ -1042,21 +1096,26 @@ RenderContext App::BuildRenderContext(float deltaTime) const {
     // 这样「忽略鼠标点击」「鼠标不在桌宠窗口上」时视线追踪依然有效。
     Vec2 cursor;
     bool hasCursor = false;
-    if (cursorTracker_.IsRunning() && cursorTracker_.HasPosition()) {
-        cursor = cursorTracker_.Position();
-        hasCursor = true;
-    } else if (GlobalCursorTracker::QueryCursor(cursor)) {
-        hasCursor = true;
+    // 需求 7 修复：全屏追踪关闭后，不再查询全局光标，避免「开关失效、关了还跟」。
+    // 由纯函数 ResolveTrackingSource 决定本帧用哪种光标源（更易单测）：
+    //   - 全屏追踪开启 -> Global（OS 级全局坐标）
+    //   - 全屏追踪关闭且有窗口内光标 -> Window（鼠标在桌宠窗口内时跟随）
+    //   - 其它 -> None（不驱动视线）
+    const bool fullscreen = configStore_.config().fullscreenTracking;
+    const TrackingSource trackingSource = ResolveTrackingSource(fullscreen, hasWindowCursor_);
+    if (trackingSource == TrackingSource::Global) {
+        if (cursorTracker_.IsRunning() && cursorTracker_.HasPosition()) {
+            cursor = cursorTracker_.Position();
+            hasCursor = true;
+        } else if (GlobalCursorTracker::QueryCursor(cursor)) {
+            hasCursor = true;
+        }
     }
 
     if (hasCursor) {
         ctx.hasGlobalCursor = true;
         ctx.globalCursor = cursor;
-        // 全屏追踪开启时按配置半径；关闭时退化为以窗口尺寸为参照的较钝半径，
-        // 但数据源仍是全局坐标，不会因为鼠标移出窗口就丢失目标。
-        const float radius = configStore_.config().fullscreenTracking
-                                 ? configStore_.config().trackingRadius
-                                 : std::max(1.0f, std::max(size.x, size.y) * 0.75f);
+        const float radius = configStore_.config().trackingRadius;
         GlobalCursorTracker::NormalizeAround(cursor, ctx.modelScreenCenter, radius,
                                              &ctx.localCursor);
     } else if (hasWindowCursor_) {
@@ -1146,6 +1205,19 @@ void App::Run() {
         // 饱和递增：即使极端情况下到达 uint64 上限也不回绕，
         // 否则「每 N 帧自检」的差值判断会瞬间变成天文数字。
         frameCount_ = stability::SaturatingIncrement(frameCount_);
+
+        // 需求 6：节流后的「帧心跳」事件（每秒一次），供插件做周期性逻辑，
+        // 避免每帧广播造成刷屏。fps 由平滑帧时换算。
+        {
+            const auto tickNow = clock::now();
+            if (std::chrono::duration<double>(tickNow - lastPluginTick_).count() >= 1.0) {
+                lastPluginTick_ = tickNow;
+                const float fps = frameMsSmoothed_ > 0.0f ? (1000.0f / frameMsSmoothed_) : 0.0f;
+                EmitPluginEvent(plugin::PluginEventKind::FrameTick, std::string(),
+                                {{"fps", std::to_string(static_cast<int>(fps))},
+                                 {"frame", std::to_string(frameCount_)}});
+            }
+        }
 
         window_.PollEvents();
         // 维持置顶：在独占全屏游戏中窗口会被压到后面，需要周期性提升。

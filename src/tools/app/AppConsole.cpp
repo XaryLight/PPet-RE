@@ -445,14 +445,33 @@ std::string App::ExecuteConsoleCommand(const console::Command& cmd) {
             return console::FormatTable({"Idx", "Action"}, rows);
         }
         if (first == "stop") {
-            return model_->StopMotion() ? "Success: 已停止动作" : "fail: 停止动作失败";
+            const bool ok = model_->StopMotion();
+            if (ok) EmitPluginEvent(plugin::PluginEventKind::MotionStopped);
+            return ok ? "Success: 已停止动作" : "fail: 停止动作失败";
+        }
+        // 需求 2：随机待机动作。
+        if (first == "random") {
+            if (!model_) return "fail: 当前没有模型";
+            return model_->PlayRandomIdle() ? "Success: 随机待机动作"
+                                            : "fail: 没有可用待机动作";
+        }
+        // 需求 2：分区触摸（head/body/leg/left/right）。
+        if (first == "touch") {
+            if (!model_) return "fail: 当前没有模型";
+            const std::string region = a.size() > 1 ? a[1] : std::string("body");
+            const bool ok = model_->TriggerTouch(region);
+            if (ok) EmitPluginEvent(plugin::PluginEventKind::Interaction,
+                                    std::string(), {{"region", region}});
+            return ok ? ("Success: 触摸 " + region) : ("fail: 触摸 " + region + " 失败");
         }
         const std::string option = a.size() > 1 ? a[1] : std::string("do");
         std::string lowerOption = option;
         std::transform(lowerOption.begin(), lowerOption.end(), lowerOption.begin(),
                        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
         if (lowerOption == "stop") {
-            return model_->StopMotion() ? "Success: 已停止动作" : "fail: 停止动作失败";
+            const bool ok = model_->StopMotion();
+            if (ok) EmitPluginEvent(plugin::PluginEventKind::MotionStopped);
+            return ok ? "Success: 已停止动作" : "fail: 停止动作失败";
         }
         if (lowerOption != "do" && lowerOption != "play" && lowerOption != "start") {
             return "用法: action <name|idx> do|stop（未知选项 " + option + "）";
@@ -468,12 +487,38 @@ std::string App::ExecuteConsoleCommand(const console::Command& cmd) {
         }
         const std::string& motionId = target.first;
         if (model_->PlayMotion(motionId)) {
+            // 需求 6：广播「动作播放」事件，插件可据此联动（换表情/播台词等）。
+            EmitPluginEvent(plugin::PluginEventKind::MotionPlayed, motionId);
             // 索引命中时回显「[idx] 名字」便于核对；名字命中时原样回显。
             const std::string echo =
                 (motionId == a[0]) ? a[0] : ("[" + a[0] + "] " + motionId);
             return "Success: 播放动作 " + echo;
         }
         return "fail: 没有找到动作 " + motionId + "（用 action list 查看）";
+    }
+
+    // ---------------------------------------------------------------- plugin
+    if (v == "plugin") {
+        if (a.empty()) return "用法: plugin list | plugin <enable|disable> <name>";
+        const std::string sub = a[0];
+        if (sub == "list") {
+            const auto status = pluginManager_.Status();
+            if (status.empty()) return "当前没有已注册的插件。";
+            std::vector<std::vector<std::string>> rows;
+            for (const auto& kv : status) {
+                rows.push_back({kv.first, kv.second ? "启用" : "禁用"});
+            }
+            return "插件列表：\n" + console::FormatTable({"名称", "状态"}, rows);
+        }
+        if (sub == "enable" || sub == "disable") {
+            if (a.size() < 2) return "用法: plugin <enable|disable> <name>";
+            const bool want = (sub == "enable");
+            if (pluginManager_.SetEnabled(a[1], want)) {
+                return "Success: 插件 " + a[1] + (want ? " 已启用" : " 已禁用");
+            }
+            return "fail: 找不到插件 " + a[1] + "（用 plugin list 查看）";
+        }
+        return "用法: plugin list | plugin <enable|disable> <name>";
     }
 
     // ---------------------------------------------------------------- expression

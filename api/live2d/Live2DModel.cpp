@@ -81,6 +81,7 @@
 #include <api/live2d/Live2DManifest.hpp>
 #include <api/live2d/Live2DPhysics.hpp>
 #include <src/tools/render/RenderUtils.hpp>
+#include <src/tools/model/MotionRecognizer.hpp>
 
 namespace ppet::live2d {
 namespace {
@@ -1376,6 +1377,21 @@ bool Live2DModel::StopMotion() {
     return true;
 }
 
+bool Live2DModel::PlayRandomIdle() {
+    // 需求 2：随机起一个待机动作。MotionDirector 内部按 idle 组随机挑、带冷却，
+    // 因此「动一下停一下」的节奏由它把关，这里只负责触发。
+    if (!loaded_) return false;
+    return motionDirector_.PlayRandomIdle();
+}
+
+bool Live2DModel::TriggerTouch(const std::string& region) {
+    // 需求 2：分区触摸。把区域换算成归一化坐标后交给 MotionDirector::Interact，
+    // 由其按「命中区 -> 互动组」匹配（head/body/leg/left/right 与模型 HitArea 双向包含）。
+    if (!loaded_) return false;
+    const Vec2 p = NormalizedFromRegion(region);
+    return motionDirector_.Interact(p.x, p.y);
+}
+
 void Live2DModel::ReloadRenderer() {
     if (!loaded_ || !impl_) return;
     // 释放全部 GPU 资源后重建纹理；program / VAO / 遮罩关系由下一帧
@@ -1466,6 +1482,12 @@ void Live2DModel::SetRandomIdleExpression(bool enabled) {
 
 void Live2DModel::SetTrackingStrength(float strength) {
     trackingStrength_ = Clamp(strength, 0.0f, 3.0f);
+}
+
+void Live2DModel::SetMaxTrackingAngle(float degrees) {
+    // 与 AppConfig 的合法范围一致（0..90）。越界值钳制，避免异常配置把模型拧到
+    // 不自然的姿势。需求 7 修复：此前没有这个方法，配置里的最大偏转角度永远是空谈。
+    maxTrackingAngle_ = Clamp(degrees, 0.0f, 90.0f);
 }
 
 bool Live2DModel::RandomIdleExpression() const {
@@ -2022,6 +2044,12 @@ ModelDebugInfo Live2DModel::DebugInfo() const {
                              " / 互动组 " +
                              (motionDirector_.HasInteractionGroups() ? "有" : "无");
         info.motionStatus = motionDirector_.StatusText();
+
+        // 需求 2：智能识别动作组语义（idle/touch/expression + 区域映射），
+        // 把识别结论也写进诊断面板，便于确认「随机待机 / 分区触摸」的素材是否齐全。
+        const MotionSetAnalysis recognize =
+            AnalyzeMotionGroups(motionDirector_.Groups());
+        info.motionSummary += " | 识别：" + recognize.Summary();
 
         // --- 表情系统状态 ---
         // Live2D 的表情有两条通道：表情动作组（Exp*）与表情参数（ParamBrowLY 等）。

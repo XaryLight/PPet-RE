@@ -428,6 +428,14 @@ public:
         idleCooldown_ = 0.2f;
     }
 
+    /// 立刻随机起一个待机动作（需求 2：控制台 `action random`）。
+    /// 没有待机组时返回 false。若当前正在播放普通互动动作，会被新待机动作覆盖。
+    bool PlayRandomIdle() {
+        if (!HasIdleGroups()) return false;
+        PickNextIdle();
+        return current_.motionIndex >= 0;
+    }
+
     /// 诊断：当前队列里有几条动作（含淡出中的）。
     std::size_t ActiveMotionCount() const { return queue_.Size(); }
 

@@ -3,6 +3,8 @@
 #pragma once
 
 #include <cstdint>
+#include <chrono>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -18,6 +20,7 @@
 #include <src/tools/platform/GlobalCursorTracker.hpp>
 #include <src/tools/platform/Tray.hpp>
 #include <src/tools/platform/Window.hpp>
+#include <src/tools/plugin/PluginManager.hpp>
 #include <src/ui/BubbleWidget.hpp>
 #include <src/ui/DebugPanel.hpp>
 #include <src/ui/SettingsPanel.hpp>
@@ -104,6 +107,16 @@ private:
     /// 配置语言变化时刷新界面文案与托盘菜单（由设置面板回调触发）。
     void RefreshLanguageIfNeeded();
 
+    /// 广播一个插件事件（需求 6：插件系统事件总线）。
+    /// 应用各处的「模型加载 / 动作播放 / 配置变更 / 互动 / 帧心跳」都会经此发出，
+    /// 所有已启用且关心该类型的插件都会收到。
+    void EmitPlugin(const plugin::PluginEvent& event);
+
+    /// 便捷封装：用 kind + source + payload 构造并广播一个事件（时间戳自动填充）。
+    void EmitPluginEvent(plugin::PluginEventKind kind,
+                        std::string source = std::string(),
+                        std::map<std::string, std::string> payload = {});
+
     /// 构建本帧的渲染上下文。
     RenderContext BuildRenderContext(float deltaTime) const;
 
@@ -176,6 +189,9 @@ private:
     std::uint64_t frameCount_ = 0;
     float frameMsSmoothed_ = 0.0f;
 
+    /// 上一次向插件广播「帧心跳」的时刻（需求 6：节流到约 1 秒一次）。
+    std::chrono::steady_clock::time_point lastPluginTick_;
+
     /// 帧缓冲像素证据：判断「是否真的出图」，不靠 draw calls / GL 错误猜。
     bool hasFrameEvidence_ = false;
     FramePixelStats lastFrameStats_;
@@ -198,6 +214,12 @@ private:
     /// 用于全屏追踪不可用时的视线追踪兜底。
     Vec2 windowCursor_{0.0f, 0.0f};
     bool hasWindowCursor_ = false;
+
+    /// 插件管理器（需求 6）：注册内置插件、广播应用事件。
+    plugin::PluginManager pluginManager_;
+
+    /// 应用启动时刻（steady_clock），用于给插件事件打时间戳。
+    std::chrono::steady_clock::time_point appStartTime_;
 
     // 「移动窗口」模式：临时关闭点击穿透，让平时鼠标穿透的窗口也能被拖动。
     // 退出时按「当前配置」恢复穿透，不保存进入时的快照，避免覆盖用户中途的改动。

@@ -81,6 +81,10 @@ public:
     std::vector<std::string> MotionNames() const override;
     bool PlayMotion(const std::string& id) override;
     bool StopMotion() override;
+    /// 需求 2：随机播放一个待机动作（控制台 `action random`）。
+    bool PlayRandomIdle() override;
+    /// 需求 2：按区域触发触摸互动（控制台 `action touch <region>`）。
+    bool TriggerTouch(const std::string& region) override;
     void ReloadRenderer() override;
     std::vector<std::pair<std::string, std::string>> RenderResources() const override;
     float PreferredFrameAspect() const override;
@@ -100,6 +104,14 @@ public:
     /// 设置视线追踪强度倍率（0 = 关闭眼睛跟随，1 = 默认，2 = 双倍）。
     void SetTrackingStrength(float strength);
     float TrackingStrength() const { return trackingStrength_; }
+
+    /// 设置视线追踪的【最大偏转角度】（度），由 App 在配置变化时调用。
+    /// 关闭全屏追踪、或拖动设置页「最大偏转角度」滑块时实时生效。
+    /// 这是需求 7 的修复点：此前该值从未从配置回写到模型，
+    /// 拖动滑块模型无反应、且一直停在默认 30°（偏大）。
+    void SetMaxTrackingAngle(float degrees) override;
+    float MaxTrackingAngle() const override { return maxTrackingAngle_; }
+
     bool RandomIdleExpression() const override;
     bool TriggerRandomExpression() override;
 
@@ -218,7 +230,8 @@ private:
     int paramEyeROpen_ = -1;
     int paramBreath_ = -1;
 
-    /// 视线追踪的最大偏转角度（度）。由 App 通过 SetMaxTrackingAngle 设置。
+    /// 视线追踪的最大偏转角度（度）。由 App 通过 SetMaxTrackingAngle 配置回写，
+    /// 默认 30°，与 AppConfig::maxTrackingAngle 初值一致。
     float maxTrackingAngle_ = 30.0f;
 
     /// 三通道视线阻尼（眼/头/身体各自指数追向目标，参考 FULASKA 的 GazeChannels）。

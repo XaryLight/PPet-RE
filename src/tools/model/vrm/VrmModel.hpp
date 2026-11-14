@@ -23,6 +23,7 @@
 #pragma once
 
 #include <memory>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -32,6 +33,7 @@
 #include <src/tools/model/ExpressionDirector.hpp>
 #include <src/tools/model/Model.hpp>
 #include <src/tools/model/SkinnedMesh.hpp>
+#include <src/tools/model/vrm/VrmMotionProfile.hpp>
 #include <src/tools/render/Renderer.hpp>
 
 namespace ppet::vrm {
@@ -101,6 +103,10 @@ public:
     std::vector<std::string> MotionNames() const override;
     bool PlayMotion(const std::string& id) override;
     bool StopMotion() override;
+    /// 需求 2：随机播放一个内置骨骼动作（点头/摇头/挥手…），用于 `action random`。
+    bool PlayRandomIdle() override;
+    /// 需求 2：分区触摸。VRM 没有 Live2D 式的命中区，统一随机触发一个骨骼动作反馈。
+    bool TriggerTouch(const std::string& region) override;
     void ReloadRenderer() override;
     float PreferredFrameAspect() const override;
     void SetArmRestDrop(float degrees) override;
@@ -365,6 +371,12 @@ private:
     model::BoneMotionPlayer boneMotion_;
     /// 手臂自然下垂修正（度），VRM 的 T-pose 默认水平平举双手。
     float armRestDropDeg_ = 55.0f;
+
+    /// 随机源（随机待机 / 触摸反馈用）。
+    std::mt19937 rng_{20240501u};
+
+    /// 加载后识别到的动作相关能力（需求 4：供 AnalyzeVrmCapabilities 推导动作画像）。
+    VrmCapabilities capabilities_;
 
     // --- 眨眼 -------------------------------------------------------------
     /// 距离下一次眨眼的剩余时间。

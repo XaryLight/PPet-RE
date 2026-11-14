@@ -35,6 +35,19 @@ inline const char* ModelTypeName(ModelType type) {
 /// 由文件后缀推断模型类型。
 ModelType DetectModelType(const std::string& path);
 
+/// 把分区名映射成窗口内归一化坐标（nx, ny ∈ [0,1]，左上原点、y 向下），
+/// 供 TriggerTouch 触发互动使用。未知区域退回窗口中心。
+/// 声明在 IModel 之前，使其默认实现 TriggerTouch 能直接调用。
+inline Vec2 NormalizedFromRegion(const std::string& region) {
+    if (region == "head") return Vec2(0.5f, 0.14f);
+    if (region == "body") return Vec2(0.5f, 0.5f);
+    if (region == "leg") return Vec2(0.5f, 0.85f);
+    if (region == "left") return Vec2(0.15f, 0.5f);
+    if (region == "right") return Vec2(0.85f, 0.5f);
+    return Vec2(0.5f, 0.5f);
+}
+
+
 /// 渲染环境信息，描述当前窗口与全局鼠标状态。
 struct RenderContext {
     int viewportWidth = 0;
@@ -279,6 +292,19 @@ public:
     /// 停止当前动作（回到待机）。
     virtual bool StopMotion() { return false; }
 
+    /// 随机播放一个待机动作（需求 2：控制台 `action random`）。
+    /// 没有可用待机动作的后端返回 false。
+    virtual bool PlayRandomIdle() { return false; }
+
+    /// 按区域触发一次触摸互动（需求 2：控制台 `action touch <region>`）。
+    /// region 取值 head / body / leg / left / right；
+    /// 默认实现把区域映射到窗口内归一化坐标后调用 OnInteract（Live2D 据此按命中区
+    /// 触发 TapHead / TapBody 等）。不支持的后端（无命中区）默认返回 false。
+    virtual bool TriggerTouch(const std::string& region) {
+        const Vec2 p = NormalizedFromRegion(region);
+        return OnInteract(p.x, p.y);
+    }
+
     /// 重建渲染资源（控制台 `re draw`）。
     virtual void ReloadRenderer() {}
 
@@ -301,6 +327,17 @@ public:
     /// 手臂自然下垂修正（度）：PMX 的 A-pose / VRM 的 T-pose 默认把手臂平举，
     /// 桌宠看起来「总抬着手」。0 = 用后端默认，<0 = 关闭，>0 = 强制角度。
     virtual void SetArmRestDrop(float degrees) { (void)degrees; }
+
+    /// 视线追踪的最大偏转角度（度，0..90）。
+    ///
+    /// 需求 7：配置页「最大偏转角」必须真正作用到模型，因此把它提到基类接口，
+    /// 由 App 通过 IModel 指针统一下发，不依赖具体后端类型。
+    /// 只有 Live2D 后端实现了真正的视线追踪；VRM / PMX 目前无光标追踪，
+    /// 保留默认空实现（忽略该值），新增后端不会破坏上层。
+    virtual void SetMaxTrackingAngle(float degrees) { (void)degrees; }
+
+    /// 当前生效的最大偏转角度（度）。不支持追踪的后端返回 0。
+    virtual float MaxTrackingAngle() const { return 0.0f; }
 };
 
 using ModelPtr = std::shared_ptr<IModel>;

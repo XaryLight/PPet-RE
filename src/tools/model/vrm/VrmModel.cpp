@@ -432,6 +432,11 @@ bool VrmModel::BuildMesh(std::string& error) {
     // --- 动画 ---------------------------------------------------------------
     BuildAnimations();
 
+    // 需求 4：回填「内嵌动画条数」与「弹簧骨链数」到能力结构。
+    capabilities_.gltfAnimationCount =
+        static_cast<int>(doc_->Animations().size());
+    capabilities_.springBoneCount = static_cast<int>(springChains_.size());
+
     mesh_.isSkinned = !mesh_.bones.empty();
     baseVertices_ = mesh_.vertices;
     morphWeights_.assign(mesh_.morphs.size(), 0.0f);
@@ -1187,6 +1192,14 @@ void VrmModel::BuildHumanoid() {
     rightUpperLegBone_ = boneOf("rightUpperLeg");
     // 躯干通道：优先 spine，没有就用 hips。
     if (spineBone_ < 0) spineBone_ = bodyBone_;
+
+    // 需求 4：把 humanoid 骨骼识别结果填进能力结构，供 VrmMotionProfile 推导动作。
+    capabilities_.hasHead = headBone_ >= 0;
+    capabilities_.hasSpine = spineBone_ >= 0 || chestBone_ >= 0;
+    capabilities_.hasArms =
+        leftUpperArmBone_ >= 0 && rightUpperArmBone_ >= 0;
+    capabilities_.hasLegs =
+        leftUpperLegBone_ >= 0 && rightUpperLegBone_ >= 0;
 
     mesh_.headBoneIndex = headBone_;
     mesh_.leftEyeBoneIndex = leftEyeBone_;
@@ -2203,6 +2216,22 @@ bool VrmModel::StopMotion() {
     return true;
 }
 
+bool VrmModel::PlayRandomIdle() {
+    // 需求 2：VRM 没有 Cubism 式的待机动作组，随机播一个内置骨骼动作（点头/摇头/挥手）
+    // 作为「随机待机」反馈。骨骼动作自带一次性播完回待机的语义，不会卡住。
+    const auto builtins = model::bone_motions::Builtin();
+    if (builtins.empty()) return false;
+    const std::size_t idx =
+        std::uniform_int_distribution<std::size_t>(0, builtins.size() - 1)(rng_);
+    return boneMotion_.Play(builtins[idx]);
+}
+
+bool VrmModel::TriggerTouch(const std::string&) {
+    // 需求 2：VRM 无命中区，分区触摸统一随机触发一个骨骼动作作为反馈。
+    // （后续可结合 humanoid 头/躯干骨骼做更细的区域化反应。）
+    return PlayRandomIdle();
+}
+
 void VrmModel::ReloadRenderer() {
     gpuReady_ = false;
 }
@@ -2537,6 +2566,9 @@ ModelDebugInfo VrmModel::DebugInfo() const {
                             " / 通道 " + std::to_string(expressionDirector_.ChannelCount()) +
                             " / 当前 " + (expressionDirector_.ActivePreset().empty()
                                               ? "自定义" : expressionDirector_.ActivePreset());
+
+    // 需求 4：VRM 动作识别画像（待机 / 基础动作 / 骨骼 / 动画 / 弹簧骨）。
+    info.motionSummary = AnalyzeVrmCapabilities(capabilities_).Summary();
 
     const bool meshOk = !mesh_.indices.empty() && !mesh_.materials.empty();
     info.renderingOk = loaded_ && gpuReady_ && meshOk && info.glError == 0;

@@ -244,6 +244,7 @@ set(PPET_MODEL_SOURCES
     src/tools/model/vrm/GltfParser.cpp
     src/tools/model/vrm/VrmImage.cpp
     src/tools/model/vrm/VrmModel.cpp
+    src/tools/model/MotionRecognizer.cpp
 )
 
 # ---------------------------------------------------------------------------
@@ -719,6 +720,7 @@ set(PPET_CORE_SOURCES
     src/tools/core/Log.cpp
     src/tools/core/ModelPackage.cpp
     src/tools/core/ZipArchive.cpp
+    src/tools/plugin/PluginManager.cpp
     src/tools/model/Model.cpp
     src/tools/app/App.cpp
     # 交互式控制台：stdin 读取线程 + 命令执行器。
@@ -1158,6 +1160,40 @@ add_test(NAME live2d_frame_unit
 add_executable(ppet_console_motion_idx_test tools/console_motion_idx_test.cpp)
 add_test(NAME console_motion_idx_unit
          COMMAND ppet_console_motion_idx_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# 视线追踪策略（需求 7）：全屏追踪开关 -> 光标源判定 / 最大偏转角度钳制。
+# 纯逻辑、零依赖，直接单测。
+add_executable(ppet_tracking_policy_test tools/tracking_policy_test.cpp)
+add_test(NAME tracking_policy_unit
+         COMMAND ppet_tracking_policy_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# 插件系统（需求 6）：注册 / 启用禁用 / 事件分发 / 兴趣过滤。
+# 纯逻辑、零依赖，直接单测。
+add_executable(ppet_plugin_test
+    tools/plugin_test.cpp
+    src/tools/plugin/PluginManager.cpp
+)
+add_test(NAME plugin_unit
+         COMMAND ppet_plugin_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# VRM 动作识别（需求 4）：从 humanoid 骨骼 / glTF 动画 / 弹簧骨推导
+# 「该 VRM 模型能做什么基础动作」（nod/shake/wave、待机）。纯逻辑、零依赖。
+add_executable(ppet_vrm_motion_profile_test tools/vrm_motion_profile_test.cpp)
+add_test(NAME vrm_motion_profile_unit
+         COMMAND ppet_vrm_motion_profile_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# 智能动作识别（需求 2）：按文件名 / 动作组识别 idle / touch / expression
+# 并产出「区域 -> 触摸动作」映射。纯逻辑、零依赖。
+add_executable(ppet_motion_recognizer_test
+    tools/motion_recognizer_test.cpp
+    src/tools/model/MotionRecognizer.cpp
+)
+add_test(NAME motion_recognizer_unit
+         COMMAND ppet_motion_recognizer_test
          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
 # 程序化待机动画（呼吸 / 重心 / 头部 / 手臂 / 腿部）：IdleAnimator 是纯头文件，
