@@ -145,6 +145,29 @@ inline std::string FormatTable(const std::vector<std::string>& headers,
     return out;
 }
 
+/// 解析动作目标：同时支持「按名字」与「按数字索引（idx）」调试动画。
+/// - token 为纯数字且在 [0, names.size()) 内：返回对应 names[idx]，ok=true（命中索引）。
+/// - token 为纯数字但越界：返回 {"", false}（调用方应提示可用范围）。
+/// - 其它情况：原样返回 token，ok=true（交给 PlayMotion 按名字 / 模糊匹配）。
+/// 索引与 `action list` 展示的 Idx 列一一对应（同一份 MotionNames() 快照）。
+inline std::pair<std::string, bool> ResolveMotionTarget(
+    const std::string& token, const std::vector<std::string>& names) {
+    if (!token.empty()) {
+        bool allDigit = true;
+        for (char c : token) {
+            if (!std::isdigit(static_cast<unsigned char>(c))) { allDigit = false; break; }
+        }
+        if (allDigit) {
+            const int idx = std::atoi(token.c_str());
+            if (idx >= 0 && static_cast<std::size_t>(idx) < names.size()) {
+                return {names[static_cast<std::size_t>(idx)], true};
+            }
+            return {"", false};
+        }
+    }
+    return {token, true};
+}
+
 /// 帮助文本（控制台 help 指令的输出）。
 inline const char* HelpText() {
     return
@@ -157,8 +180,8 @@ inline const char* HelpText() {
         "  debug [section]              输出模型分析（status|res|params|bones|parts|\n"
         "                               motion|expression|error|all，缺省 = all）\n"
         "  re [model|draw|all]          重载模型 / 重建渲染资源 / 两者\n"
-        "  action list                  列出可播放的动作\n"
-        "  action <name> do|stop        播放 / 停止动作\n"
+        "  action list                  列出可播放的动作（含 Idx 索引）\n"
+        "  action <name|idx> do|stop    按名字或索引播放 / 停止动作\n"
         "  action stop                  停止当前动作\n"
         "  expression list              列出表情预设\n"
         "  expression <id>              切换表情\n"

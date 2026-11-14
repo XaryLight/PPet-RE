@@ -6,8 +6,9 @@
 //   1. 官方三套 glBlendFuncSeparate（尤其 Add/Mult 的 Alpha = ZERO/ONE）
 //   2. premultiplied GetModelColorWithOpacity：RGB 与 A 一起乘 opacity
 //   3. 按 renderOrder 稳定排序、相同 order 保持下标顺序
-//   4. 跳过不可见 / 全透明 / 遮罩本体 / 无贴图部件
+//   4. 跳过不可见 / 全透明 / 无贴图部件
 //   5. 遮罩标记透传
+//   6. 【回归】兼作遮罩源的可见部件必须照常绘制（脸/腿透明块 bug）
 #include <api/live2d/CubismRenderPlan.hpp>
 
 #include <cstdio>
@@ -104,6 +105,7 @@ void TestFiltering() {
     DrawableDesc transparent = Make(2, 2);
     transparent.opacity = 0.0f;
     descs.push_back(transparent);
+    // 兼作遮罩源、但自身可见且有贴图：必须保留（不能再被 isMaskDrawable 剔除）。
     DrawableDesc maskPart = Make(3, 3);
     maskPart.isMaskDrawable = true;
     descs.push_back(maskPart);
@@ -114,8 +116,34 @@ void TestFiltering() {
     descs.push_back(negativeIndex);
 
     const auto plan = BuildRenderPlan(descs);
-    Check(plan.size() == 1, "只剩 1 个有效部件");
-    Check(plan[0].drawableIndex == 0, "有效部件下标正确");
+    // 正常部件(0) + 可见遮罩源(3) 都要画；无贴图(4)、不可见(1)、
+    // 全透明(2)、负下标 被剔除。
+    Check(plan.size() == 2, "正常部件 + 可见遮罩源都要保留");
+    Check(plan[0].drawableIndex == 0 && plan[1].drawableIndex == 3,
+          "可见遮罩源按 renderOrder 正常入计划");
+}
+
+void TestMaskSourceRegression() {
+    std::printf("-- 遮罩源可见性回归（脸/腿透明块）--\n");
+    std::vector<DrawableDesc> descs;
+    DrawableDesc face = Make(0, 0);
+    face.isMaskDrawable = true;   // 被眼睛当遮罩
+    face.useMask = false;
+    DrawableDesc eye = Make(1, 1);
+    eye.useMask = true;           // 眼睛被脸裁剪
+    eye.maskCount = 1;
+    DrawableDesc pureMask = Make(2, 2);
+    pureMask.isMaskDrawable = true;
+    pureMask.hasOwnTexture = false;  // 纯几何遮罩：画出来是白块，必须跳过
+    descs.push_back(face);
+    descs.push_back(eye);
+    descs.push_back(pureMask);
+
+    const auto plan = BuildRenderPlan(descs);
+    Check(plan.size() == 2, "遮罩源(脸)与被裁剪部件(眼)都绘制，纯几何遮罩跳过");
+    Check(plan[0].drawableIndex == 0, "遮罩源按 renderOrder 先画");
+    Check(plan[1].drawableIndex == 1 && plan[1].maskCount == 1,
+          "被裁剪部件的遮罩数量透传到 GL 层");
 }
 
 void TestOpacityAndBlendInPlan() {
@@ -153,6 +181,7 @@ int main() {
     TestOrdering();
     TestFiltering();
     TestOpacityAndBlendInPlan();
+    TestMaskSourceRegression();
     std::printf("=== %d 项检查，失败 %d ===\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

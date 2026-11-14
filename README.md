@@ -92,7 +92,7 @@ cmake --build build -j
 ```
 
 常用指令速查：`list` / `add <path>` / `select <idx>` / `remove <idx>` / `debug status|res|expression` /
-`re model|draw` / `action list|<name> do|stop` / `expression list|<id>` / `speak <txt>` / `status` / `help` / `quit`。
+`re model|draw` / `action list|<name|idx> do|stop` / `expression list|<id>` / `speak <txt>` / `status` / `help` / `quit`。
 完整手册见 **[交互式控制台](docs/usage.md#交互式控制台)**。
 
 首次启动会自动弹出设置面板。右键系统托盘图标可打开菜单，其中：

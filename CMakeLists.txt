@@ -1146,6 +1146,20 @@ add_test(NAME render_plan_unit
          COMMAND ppet_render_plan_test
          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
+# 真实内容帧 / 动态像素比：按模型真实渲染像素推算窗口比例与居中 contain fit，
+# 验证横向宽幅内容在方形窗口里不被截断（需求 3）。纯头文件、零依赖。
+add_executable(ppet_live2d_frame_test tools/live2d_frame_test.cpp)
+add_test(NAME live2d_frame_unit
+         COMMAND ppet_live2d_frame_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# 控制台 action <idx> 索引解析：名字与数字索引统一解析为动作目标，
+# 索引与 `action list` 的 Idx 列一致。纯头文件、零依赖。
+add_executable(ppet_console_motion_idx_test tools/console_motion_idx_test.cpp)
+add_test(NAME console_motion_idx_unit
+         COMMAND ppet_console_motion_idx_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
 # 程序化待机动画（呼吸 / 重心 / 头部 / 手臂 / 腿部）：IdleAnimator 是纯头文件，
 # 零外部依赖，直接单测。
 add_executable(ppet_idle_animator_test tools/idle_animator_test.cpp)

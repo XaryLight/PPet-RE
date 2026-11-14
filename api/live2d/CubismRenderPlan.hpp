@@ -9,7 +9,8 @@
 //     2. 写入参数 → csmUpdateModel(model)
 //     3. GetModelColorWithOpacity：premultiplied 下 RGB 与 A 一起乘 opacity
 //     4. 按 csmGetDrawableRenderOrders 排序（注意不是 DrawOrder）
-//     5. 跳过不可见 / 透明度为 0 / 自身是遮罩的部件
+//     5. 跳过不可见 / 透明度为 0 / 无贴图的纯几何遮罩
+//        （注意：官方会照常绘制「兼作遮罩源的可见部件」，不能按 isMaskDrawable 剔除）
 //     6. 逐个设置 glBlendFuncSeparate、裁剪遮罩、顶点缓冲 → glDrawElements
 //   早期本项目把这些决策散落在 DrawDrawable() 的 GL 调用里，难以单测、也容易
 //   漏掉某一步（例如「RGB 也要乘 opacity」曾导致整幅画面偏白）。
@@ -95,6 +96,7 @@ struct DrawableDesc {
     bool hasOwnTexture = true;   ///< 遮罩部件通常没有贴图
     bool useMask = false;        ///< 本部件需要被裁剪
     bool invertMask = false;
+    int  maskCount = 0;          ///< 挂在身上的遮罩数量（多遮罩并集用）
 };
 
 /// 一条渲染指令：GL 层按顺序执行，不再自己决策。
@@ -106,6 +108,7 @@ struct RenderOp {
     bool useMask = false;
     bool invertMask = false;
     int renderOrder = 0;
+    int maskCount = 0;
 };
 
 /// 构造本帧的渲染指令表。
@@ -119,8 +122,14 @@ inline std::vector<RenderOp> BuildRenderPlan(const std::vector<DrawableDesc>& dr
     selected.reserve(drawables.size());
     for (const DrawableDesc& d : drawables) {
         if (d.index < 0 || !d.visible || d.opacity <= 0.0f) continue;
-        if (d.isMaskDrawable) continue;  // 遮罩只提供形状，不直接画进主画面
-        if (!d.hasOwnTexture) continue;  // 无贴图的部件画出来是一块白矩形
+        // 【关键修复】绝不能因为「被别的部件当作遮罩源」就剔除。
+        // 官方 Cubism Framework 的 DoDrawModel() 会照常绘制遮罩源本身，
+        // 只有 csmIsVisible=false / opacity=0 的部件才不画。脸、腿这类
+        // 大面积部件常被用作眼睛、发饰、服装的裁剪遮罩，早期版本按
+        // isMaskDrawable 一刀切剔除后，这些部位整块消失 → 用户看到的
+        // 「脸部和腿部是透明的透明块」。
+        // 真正要跳过的只有「无贴图的纯几何遮罩」（画出来是一块白矩形）。
+        if (!d.hasOwnTexture) continue;
         selected.push_back(&d);
     }
 
@@ -145,6 +154,7 @@ inline std::vector<RenderOp> BuildRenderPlan(const std::vector<DrawableDesc>& dr
         op.useMask = d->useMask;
         op.invertMask = d->invertMask;
         op.renderOrder = d->renderOrder;
+        op.maskCount = d->maskCount;
         plan.push_back(op);
     }
     return plan;

@@ -157,6 +157,11 @@ private:
     /// 遮罩关系在模型加载后是静态的，只需要在结构变化时解析一次。
     void ResolveMaskRelations(int drawableCount);
 
+    /// 遍历 Core 顶点计算真实内容包围盒（Load 时调用一次）。
+    /// 结果供 PreferredFrameAspect() 与 BuildTransform() 使用，实现
+    /// 「按模型真实像素推算动态像素比 + 居中 contain fit，不截断」。
+    void ComputeContentFrame();
+
     /// 把遮罩画进遮罩纹理。
     ///
     /// 遮罩用与主画面相同的 MVP 矩阵绘制，因此遮罩纹理与主画面的

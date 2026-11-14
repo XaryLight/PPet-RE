@@ -90,9 +90,9 @@ Speaking: 你好，我是桌面宠物
 | `remove <idx>` / `rm` | 从列表移除第 `idx` 个模型；移除当前项会自动切到新的第一项 |
 | `debug [section]` | 输出模型分析内容：`status`（渲染状态）/ `res`（加载的资源）/ `params` / `bones` / `parts` / `motion` / `expression` / `error` / `all`；缺省 = `all` |
 | `re [model\|draw\|all]` | `model` 重新加载模型、`draw` 重建渲染资源（纹理 / GPU 资源）、`all` 两者；缺省 = `model` |
-| `action list` | 列出可播放动作（`Idx Action`） |
-| `action <name> do` | 播放指定动作 |
-| `action <name> stop` / `action stop` | 停止动作 |
+| `action list` | 列出可播放动作（含 `Idx` 索引列） |
+| `action <name\|idx> do` | 按名字或索引播放动作；索引对应 list 的 `Idx` 列，便于调试 |
+| `action <name\|idx> stop` / `action stop` | 停止动作 |
 | `expression list` | 列出表情预设，含**表情动作组 + 参数级预设**两类 |
 | `expression <id>` | 切换表情；Live2D 没有表情动作组时自动回退到参数预设 |
 | `speak <txt>` | 显示气泡文字并驱动口型 |

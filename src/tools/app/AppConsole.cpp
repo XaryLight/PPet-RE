@@ -10,7 +10,7 @@
 //   > select 0                      "To turn 0 model Xxx" + "Success" / "fail: ..."
 //   > debug status|res|...          分节的模型分析内容
 //   > re model|draw|...            重载模型 / 重建渲染资源
-//   > action list|<name> do|stop   列出 / 播放 / 停止动作
+//   > action list|<name|idx> do|stop  列出 / 按名字或索引播放 / 停止动作
 //   > speak <txt>                  气泡文字 + 口型
 #include <src/tools/app/App.hpp>
 
@@ -455,11 +455,25 @@ std::string App::ExecuteConsoleCommand(const console::Command& cmd) {
             return model_->StopMotion() ? "Success: 已停止动作" : "fail: 停止动作失败";
         }
         if (lowerOption != "do" && lowerOption != "play" && lowerOption != "start") {
-            return "用法: action <name> do|stop（未知选项 " + option + "）";
+            return "用法: action <name|idx> do|stop（未知选项 " + option + "）";
         }
-        return model_->PlayMotion(a[0])
-                   ? "Success: 播放动作 " + a[0]
-                   : "fail: 没有找到动作 " + a[0] + "（用 action list 查看）";
+        // 支持按索引调试动画：token 是纯数字且在范围内时映射成对应动作名，
+        // 与 `action list` 展示的 Idx 列一致；否则按名字 / 模糊匹配。
+        const std::vector<std::string> motionNames = model_->MotionNames();
+        const auto target = console::ResolveMotionTarget(a[0], motionNames);
+        if (!target.second) {
+            return "fail: 动作索引 " + a[0] + " 越界（可用范围 0.." +
+                   std::to_string(motionNames.empty() ? 0 : motionNames.size() - 1) +
+                   "，用 action list 查看）";
+        }
+        const std::string& motionId = target.first;
+        if (model_->PlayMotion(motionId)) {
+            // 索引命中时回显「[idx] 名字」便于核对；名字命中时原样回显。
+            const std::string echo =
+                (motionId == a[0]) ? a[0] : ("[" + a[0] + "] " + motionId);
+            return "Success: 播放动作 " + echo;
+        }
+        return "fail: 没有找到动作 " + motionId + "（用 action list 查看）";
     }
 
     // ---------------------------------------------------------------- expression

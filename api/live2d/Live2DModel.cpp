@@ -13,6 +13,7 @@
 #include <src/tools/core/FileIO.hpp>
 #include <src/tools/core/Log.hpp>
 #include <api/live2d/CubismRenderPlan.hpp>
+#include <api/live2d/Live2DFrame.hpp>
 #include <api/live2d/MotionQueue.hpp>
 
 // stb_image：本文件是 Live2D 后端唯一一处 STB_IMAGE_IMPLEMENTATION。
@@ -122,7 +123,11 @@ inline std::vector<DrawableDesc> CollectDrawableDescs(
             static_cast<std::size_t>(i) < isMaskDrawable.size() && isMaskDrawable[static_cast<std::size_t>(i)] != 0;
         if (static_cast<std::size_t>(i) < masks.size() && !masks[static_cast<std::size_t>(i)].empty()) {
             desc.useMask = true;
-            desc.invertMask = masks[static_cast<std::size_t>(i)][0].inverted;
+            desc.maskCount = static_cast<int>(masks[static_cast<std::size_t>(i)].size());
+            // 多遮罩里只要有一个是反转遮罩（挖洞），整体按反转处理。
+            for (const cubism::MaskRef& ref : masks[static_cast<std::size_t>(i)]) {
+                if (ref.inverted) { desc.invertMask = true; break; }
+            }
         }
         descs.push_back(desc);
     }
@@ -179,12 +184,25 @@ uniform sampler2D s_mask;
 uniform vec4 u_baseColor;
 uniform float u_useMask;
 uniform float u_invertMask;
+/// 遮罩通道标志：>0.5 时只输出几何覆盖度（alpha），完全忽略贴图内容。
+/// Cubism 的遮罩是「另一块部件的几何形状」，与它贴图上哪里透明无关；
+/// 早期版本用贴图 alpha 当覆盖度，导致遮罩范围收缩 → 被裁剪部件出现透明破洞。
+uniform float u_maskPass;
 /// 加法混合（发光）标志：>0.5 时启用钳制式加法混合。
 uniform float u_additive;
 
 out vec4 fragColor;
 
 void main() {
+    // --- 遮罩通道：只输出几何覆盖度 ---
+    // 遮罩纹理的 RGB 无关紧要（主 pass 只采样 .a），这里输出纯 alpha。
+    // 用 GL_ONE/ONE_MINUS_SRC_ALPHA 叠加多个遮罩 => alpha 累积即「并集」，
+    // 与官方 Cubism 把多个 mask 画进同一张裁剪缓冲的语义一致。
+    if (u_maskPass > 0.5) {
+        fragColor = vec4(u_baseColor.a);
+        return;
+    }
+
     vec4 texColor = texture(s_texture0, v_texCoord);
 
     // Live2D 纹理本身是 **premultiplied alpha**（官方 Cubism 导出规范即如此），
@@ -415,6 +433,7 @@ struct Live2DModel::Impl {
     GLint uniformMask = -1;
     GLint uniformUseMask = -1;
     GLint uniformInvertMask = -1;
+    GLint uniformMaskPass = -1;
 
     /// 白色占位纹理。
     GLuint whiteTexture = 0;
@@ -467,6 +486,12 @@ struct Live2DModel::Impl {
 
     /// 遮罩关系是否已解析。
     bool masksResolved = false;
+
+    /// 真实内容包围盒（模型单位）：由 Load() 遍历可见部件顶点算出。
+    /// 画布 canvas.sizeInPixels 往往远大于角色本身（大量透明留白），
+    /// 用画布做窗口宽高比会把模型缩得很小甚至横向截断；内容帧才是
+    /// 「模型渲染的真实像素」对应的取景框。见 Live2DFrame.hpp。
+    ppet::live2d::ContentFrame contentFrame;
 
     /// Live2D 物理（头发/裙摆摇曳）。
     Live2DPhysics physics;
@@ -566,8 +591,56 @@ bool Live2DModel::Load(const std::string& path, std::string& error) {
     // --- 7) 探测表情参数（待机随机小表情）---
     ResolveFaceParameters();
 
+    // --- 8) 计算真实内容帧 ---
+    // 必须在 Load() 内完成：feature_verify --auto-size 会在创建 GL 窗口**之前**
+    // 先 Load 一次并调 PreferredFrameAspect() 探测动态像素比，那时还没有
+    // 任何一帧 Render()。内容帧只依赖 CPU 侧的 moc3 顶点，不依赖 GL 上下文。
+    ComputeContentFrame();
+
     loaded_ = true;
     return true;
+}
+
+void Live2DModel::ComputeContentFrame() {
+    impl_->contentFrame = ppet::live2d::ContentFrame{};
+    if (!impl_ || !impl_->model) return;
+
+    // 让 Core 以默认参数重算一次顶点（Load 阶段可能还没跑过 UpdateModel）。
+    cubism::ResetParametersToDefault(impl_->model);
+    cubism::UpdateModel(impl_->model);
+
+    const int count = cubism::DrawableCount(impl_->model);
+    // 用清单里的贴图数量判「有贴图」，不能依赖 impl_->textures：
+    // 无 GL 上下文时 LoadTextures() 会推迟上传，textures 为空会误判。
+    const int textureCount = std::max(
+        1, static_cast<int>(impl_->manifest.texturePaths.size()));
+    ppet::live2d::ContentFrameBuilder builder;
+    for (int i = 0; i < count; ++i) {
+        cubism::Drawable d;
+        if (!cubism::GetDrawable(impl_->model, i, d)) continue;
+        const bool hasTexture = d.textureIndex >= 0 && d.textureIndex < textureCount;
+        // 只统计「可见 + 有贴图」的部件：纯几何遮罩（无贴图）与隐藏部件
+        // 不该撑大取景框，否则又回到「画布过大 → 角色缩小」的老问题。
+        const bool include = d.visible && d.opacity > 0.0f && hasTexture;
+        builder.AddDrawable(d.positions, d.vertexCount, include);
+    }
+    impl_->contentFrame = builder.Frame();
+
+    PPET_LOG_TAG_DEBUG(
+        "LIVE2D",
+        "真实内容帧：%s，宽高比 %.3f（画布 %.0fx%.0f，宽高比 %.3f），内容范围 "
+        "x[%.2f,%.2f] y[%.2f,%.2f]",
+        impl_->contentFrame.valid ? "有效" : "无效",
+        static_cast<double>(impl_->contentFrame.Aspect()),
+        static_cast<double>(impl_->canvas.sizeInPixels.x),
+        static_cast<double>(impl_->canvas.sizeInPixels.y),
+        static_cast<double>(impl_->canvas.sizeInPixels.y > 0.0f
+                                ? impl_->canvas.sizeInPixels.x / impl_->canvas.sizeInPixels.y
+                                : 0.0f),
+        static_cast<double>(impl_->contentFrame.minX),
+        static_cast<double>(impl_->contentFrame.maxX),
+        static_cast<double>(impl_->contentFrame.minY),
+        static_cast<double>(impl_->contentFrame.maxY));
 }
 
 void Live2DModel::LoadPhysics() {
@@ -1315,8 +1388,13 @@ void Live2DModel::ReloadRenderer() {
 
 float Live2DModel::PreferredFrameAspect() const {
     if (!loaded_ || !impl_) return 0.0f;
-    // Cubism 的画布尺寸就是模型设计时的取景框；用它做窗口宽高比，
-    // 横向画布（宽 > 高）的模型在竖窗口里才不会被左右截断。
+    // 【需求 3】优先用「真实内容包围盒」的宽高比，而不是画布尺寸。
+    // 画布 sizeInPixels 是导出画板，常留大量透明边；用户说的「真实像素
+    // 2000x600 / 框 600x600 / 横向被截断」正是拿画布当取景框造成的。
+    // 内容帧由 Load() 遍历可见部件顶点算出，反映实际出图范围。
+    const float contentAspect = impl_->contentFrame.Aspect();
+    if (contentAspect > 0.05f && contentAspect < 20.0f) return contentAspect;
+    // 回退：模型异常（没有可见顶点）时仍用画布比例，保证不返回 0。
     const float w = impl_->canvas.sizeInPixels.x;
     const float h = impl_->canvas.sizeInPixels.y;
     if (w <= 1.0f || h <= 1.0f) return 0.0f;
@@ -1452,37 +1530,32 @@ void Live2DModel::OnResize(int width, int height) {
 }
 
 Mat4 Live2DModel::BuildTransform(const RenderContext& ctx) const {
-    // Cubism Core 的顶点坐标（csmGetDrawableVertexPositions）单位是「模型单位」
-    // （model unit），不是画布像素。以 aidang_2 实测：
-    //   sizeInPixels = (3400, 4100)、pixelsPerUnit = 186.36
-    //   -> 画布尺寸 = sizeInPixels / pixelsPerUnit = (18.24, 22.0) 模型单位
-    //   -> 顶点范围约 (-7.8, -8.9) ~ (5.0, 10.7) 模型单位
-    // 因此换算必须除以 pixelsPerUnit，否则模型会被缩小上百倍（看起来只有一个小点）。
-    //
-    // 官方 Framework 的 GetCanvasWidth() 同样是 sizeInPixels / pixelsPerUnit，
-    // 可作为权威依据（CubismModel.cpp）。
-    //
-    // 顶点已以模型原点为中心、Y 轴向上，与 OpenGL 裁剪空间一致，无需翻转。
-    const cubism::CanvasInfo& canvas = impl_->canvas;
-    const float ppu = canvas.pixelsPerUnit > 0.0f ? canvas.pixelsPerUnit : 1.0f;
-    const float W = canvas.sizeInPixels.x / ppu;  // 模型单位下的画布宽
-    const float H = canvas.sizeInPixels.y / ppu;  // 模型单位下的画布高
-
     const float vw = ctx.viewportWidth > 0 ? static_cast<float>(ctx.viewportWidth) : 1.0f;
     const float vh = ctx.viewportHeight > 0 ? static_cast<float>(ctx.viewportHeight) : 1.0f;
 
-    // 等比适配：模型单位 -> 窗口像素的缩放系数（取较小边铺满，留 5% 边距）。
-    // 顶点以模型原点为中心，因此平移为 0，模型自然居中。
-    const float fit = 0.95f;
+    // 【需求 3】用真实内容帧做 contain fit + 居中。相较旧的「画布 fit」：
+    //   - 画布常含大量透明留白，按画布 fit 会把角色缩得很小；
+    //   - 旧实现假设顶点以原点为中心（平移=0），偏心导出的模型会偏出画面；
+    //   - contain fit 取较小边铺满，任何窗口比例下内容都完整不截断。
+    float fitMatrix[16];
+    if (ppet::live2d::ComputeFitMatrix(impl_->contentFrame, vw, vh,
+                                       ctx.renderScale, 0.95f, fitMatrix)) {
+        Mat4 m;
+        for (int i = 0; i < 16; ++i) m.m[i] = fitMatrix[i];
+        return m;
+    }
+
+    // 回退：内容帧不可用时（异常模型没有可见顶点）用画布 fit。
+    // 单位换算必须除以 pixelsPerUnit，否则模型会被缩小上百倍。
+    const cubism::CanvasInfo& canvas = impl_->canvas;
+    const float ppu = canvas.pixelsPerUnit > 0.0f ? canvas.pixelsPerUnit : 1.0f;
+    const float W = canvas.sizeInPixels.x / ppu;
+    const float H = canvas.sizeInPixels.y / ppu;
     const float k = std::min(vw / (W > 0.0f ? W : 1.0f),
-                              vh / (H > 0.0f ? H : 1.0f)) * fit * ctx.renderScale;
-
-    const float sx = k / (vw * 0.5f);
-    const float sy = k / (vh * 0.5f);
-
+                              vh / (H > 0.0f ? H : 1.0f)) * 0.95f * ctx.renderScale;
     Mat4 m = Mat4::Identity();
-    m.At(0, 0) = sx;
-    m.At(1, 1) = sy;
+    m.At(0, 0) = k / (vw * 0.5f);
+    m.At(1, 1) = k / (vh * 0.5f);
     return m;
 }
 
@@ -1499,6 +1572,7 @@ void Live2DModel::Render(const RenderContext& ctx) {
         impl_->uniformMask = glGetUniformLocation(impl_->program, "s_mask");
         impl_->uniformUseMask = glGetUniformLocation(impl_->program, "u_useMask");
         impl_->uniformInvertMask = glGetUniformLocation(impl_->program, "u_invertMask");
+        impl_->uniformMaskPass = glGetUniformLocation(impl_->program, "u_maskPass");
     }
 
     // --- 准备部件缓冲 ---
@@ -1529,6 +1603,7 @@ void Live2DModel::Render(const RenderContext& ctx) {
     glUniformMatrix4fv(impl_->uniformMatrix, 1, GL_FALSE, transform.m);
     glUniform1i(impl_->uniformTexture, 0);
     glUniform1i(impl_->uniformMask, 1);
+    glUniform1f(impl_->uniformMaskPass, 0.0f);
     glActiveTexture(GL_TEXTURE0);
 
     // 桌宠窗口是透明叠加窗口：premultiplied alpha 混合。
@@ -1557,6 +1632,7 @@ void Live2DModel::Render(const RenderContext& ctx) {
                 : empty;
 
         if (op.useMask && !masks.empty() && RenderMaskTexture(masks, transform, ctx)) {
+            glUniform1f(impl_->uniformMaskPass, 0.0f);
             glUniform1f(impl_->uniformUseMask, 1.0f);
             glUniform1f(impl_->uniformInvertMask, op.invertMask ? 1.0f : 0.0f);
         } else {
@@ -1600,6 +1676,41 @@ void Live2DModel::ResolveMaskRelations(int drawableCount) {
         }
     }
     impl_->masksResolved = true;
+
+    // --- 遮罩拓扑诊断（DEBUG 级）---
+    // 曾经把「兼作遮罩源的可见部件」整块从主画面剔除，导致脸/腿变透明块。
+    // 这里统计各类部件数量，便于用真实模型核对渲染计划是否漏画。
+    {
+        int multiMask = 0, inverted = 0, maskSourceVisible = 0, maskSourceHidden = 0;
+        int noTexture = 0, invisible = 0;
+        for (int i = 0; i < drawableCount; ++i) {
+            const auto& refs = impl_->masks[static_cast<std::size_t>(i)];
+            if (refs.size() > 1) ++multiMask;
+            for (const auto& r : refs) if (r.inverted) ++inverted;
+            cubism::Drawable d;
+            if (cubism::GetDrawable(impl_->model, i, d)) {
+                if (!d.visible || d.opacity <= 0.0f) ++invisible;
+                if (d.textureIndex < 0 ||
+                    d.textureIndex >= static_cast<int>(impl_->textures.size())) ++noTexture;
+            }
+            if (static_cast<std::size_t>(i) < impl_->isMaskDrawable.size() &&
+                impl_->isMaskDrawable[static_cast<std::size_t>(i)] != 0) {
+                if (cubism::GetDrawable(impl_->model, i, d) && d.visible && d.opacity > 0.0f &&
+                    d.textureIndex >= 0 &&
+                    d.textureIndex < static_cast<int>(impl_->textures.size())) {
+                    ++maskSourceVisible;
+                } else {
+                    ++maskSourceHidden;
+                }
+            }
+        }
+        PPET_LOG_TAG_DEBUG(
+            "LIVE2D",
+            "遮罩拓扑：部件 %d / 被遮罩 %d / 多遮罩 %d / 反转 %d / 遮罩源可见(有贴图) %d / "
+            "遮罩源隐藏 %d / 无贴图 %d / 不可见 %d",
+            drawableCount, maskCount, multiMask, inverted, maskSourceVisible,
+            maskSourceHidden, noTexture, invisible);
+    }
 
     if (maskCount > 0) {
         PPET_LOG_TAG("LIVE2D", "已解析遮罩关系：%d 个部件带遮罩", maskCount);
@@ -1677,28 +1788,32 @@ bool Live2DModel::RenderMaskTexture(const std::vector<cubism::MaskRef>& masks,
     glUniform1i(impl_->uniformMask, 1);
     glUniform1f(impl_->uniformUseMask, 0.0f);
     glUniform1f(impl_->uniformInvertMask, 0.0f);
+    // 遮罩通道：片元只输出几何覆盖度，不采样部件贴图。
+    glUniform1f(impl_->uniformMaskPass, 1.0f);
 
     // 遮罩纹理作为 s_mask 绑定，但遮罩本身不使用遮罩。
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, target.texture);
     glActiveTexture(GL_TEXTURE0);
 
-    // 只画第一个遮罩：Cubism 3 以后每个部件实际只挂一个遮罩，
-    // 多遮罩叠加的语义在官方渲染器里也是「取第一个」。
-    // 遮罩通道用普通 alpha 混合 + 白色实心（形状由几何决定），
-    // baseColor 按遮罩部件自身不透明度做 premultiplied 缩放。
-    {
+    // 【关键修复】遍历该部件挂载的**所有**遮罩，把几何覆盖度叠加进同一张
+    // 遮罩纹理（GL_ONE/ONE_MINUS_SRC_ALPHA 使 alpha 累积 => 并集语义）。
+    // 早期版本只画 masks[0]，多遮罩模型会缺裁剪区，被裁部件出现透明破洞。
+    // 官方 Framework 同样是把 masks 数组里的每个 drawable 都画进裁剪缓冲。
+    glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+    for (const cubism::MaskRef& ref : masks) {
+        if (ref.drawableIndex < 0) continue;
         cubism::Drawable maskDrawable;
         float maskOpacity = 1.0f;
-        if (cubism::GetDrawable(impl_->model, masks[0].drawableIndex, maskDrawable)) {
+        if (cubism::GetDrawable(impl_->model, ref.drawableIndex, maskDrawable)) {
             maskOpacity = maskDrawable.opacity;
         }
         const ModelColor color = ModelColorWithOpacity(maskOpacity);
-        glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
         glUniform4f(impl_->uniformBaseColor, color.r, color.g, color.b, color.a);
+        DrawDrawable(ref.drawableIndex, transform, true);
     }
-    DrawDrawable(masks[0].drawableIndex, transform, true);
 
+    glUniform1f(impl_->uniformMaskPass, 0.0f);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     // 遮罩纹理已经在 GL_TEXTURE1 上绑定好了；这里只恢复主画面的 viewport，
     // 不能把遮罩纹理绑到 TEXTURE0（会覆盖部件贴图）。
@@ -1710,8 +1825,13 @@ bool Live2DModel::RenderMaskTexture(const std::vector<cubism::MaskRef>& masks,
 void Live2DModel::DrawDrawable(int index, const Mat4& transform, bool maskPass) {
     cubism::Drawable drawable;
     if (!cubism::GetDrawable(impl_->model, index, drawable)) return;
-    if (!drawable.visible) return;
-    if (drawable.opacity <= 0.0f) return;
+    // 遮罩通道画的是「形状」：Cubism 里纯裁剪部件常 csmIsVisible=false 或
+    // opacity=0，但它的几何仍要进遮罩纹理。早期版本在这里一刀切 return，
+    // 会让这类遮罩纹理全空 → 被裁剪部件整块消失 / 出现透明块。
+    if (!maskPass) {
+        if (!drawable.visible) return;
+        if (drawable.opacity <= 0.0f) return;
+    }
     if (!drawable.positions || !drawable.uvs || !drawable.indices) return;
 
     // transform（模型视图矩阵）在 BuildTransform 中给出，用于把模型放到屏幕位置；
@@ -1786,7 +1906,7 @@ void Live2DModel::DrawDrawable(int index, const Mat4& transform, bool maskPass) 
 
     // --- 纹理 ---
     GLuint texture = impl_->whiteTexture;
-    if (hasOwnTexture) {
+    if (hasOwnTexture && !maskPass) {
         texture = impl_->textures[static_cast<std::size_t>(textureIndex)];
     }
     if (!texture) return;

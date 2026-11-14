@@ -64,6 +64,8 @@ struct Options {
     // 用来暴露「诊断指标全绿但画面为空」这类问题。默认关闭（保持验收语义）。
     bool noClear = false;
     bool swapEachFrame = false;
+    // 按模型「真实内容帧」宽高比自动调整窗口，验证横向内容不被截断（需求 3）。
+    bool autoSize = false;
 };
 
 void Usage(const char* argv0) {
@@ -76,6 +78,7 @@ void Usage(const char* argv0) {
                  "  --min-coverage <pct>  非透明像素占比下限（默认 0.2%%）\n"
                  "  --no-clear            诊断用：渲染前不清屏（模拟错误主循环）\n"
                  "  --swap-each-frame     诊断用：每帧交换缓冲并逐帧记录覆盖率\n"
+                 "  --auto-size           按模型真实内容宽高比调整窗口（不截断横向内容）\n"
                  "支持：.vrm / .pmx / .zip / .model3.json / .moc3 / 目录\n",
                  argv0);
 }
@@ -96,6 +99,7 @@ bool ParseArgs(int argc, char** argv, Options& opt) {
         else if (a == "--min-coverage") opt.minCoverage = std::atof(next().c_str());
         else if (a == "--no-clear") opt.noClear = true;
         else if (a == "--swap-each-frame") opt.swapEachFrame = true;
+        else if (a == "--auto-size") opt.autoSize = true;
         else if (a == "--help" || a == "-h") { Usage(argv[0]); return false; }
         else {
             std::fprintf(stderr, "未知参数：%s\n", a.c_str());
@@ -299,6 +303,36 @@ int main(int argc, char** argv) {
              {"name", info.bones[i].name},
              {"parent", info.bones[i].parentIndex},
              {"depth", info.bones[i].depth}});
+    }
+
+    // --- 3.5) auto-size：按模型真实内容帧宽高比调整窗口 ---
+    // Live2DModel::PreferredFrameAspect() 现在返回「可见部件顶点包围盒」的
+    // 宽高比（而非画布），横向模型自动得到更宽的窗口，contain fit 后完整不截断。
+    if (opt.autoSize) {
+        const float aspect = model->PreferredFrameAspect();
+        if (aspect > 0.05f && aspect < 20.0f) {
+            const int before = opt.width;
+            // 保持窗口高度，按真实内容比例推宽度。
+            const int targetW = std::clamp(
+                static_cast<int>(static_cast<float>(opt.height) * aspect + 0.5f), 64, 2048);
+            glfwSetWindowSize(window, targetW, opt.height);
+            int fbW = 0, fbH = 0;
+            glfwGetFramebufferSize(window, &fbW, &fbH);
+            if (fbW > 0 && fbH > 0) {
+                opt.width = fbW;
+                opt.height = fbH;
+            } else {
+                opt.width = targetW;
+            }
+            report["auto_size"] = true;
+            report["auto_size_aspect"] = aspect;
+            report["auto_size_width_before"] = before;
+            report["auto_size_width"] = opt.width;
+            report["auto_size_height"] = opt.height;
+        } else {
+            report["auto_size"] = false;
+            report["auto_size_reason"] = "后端未提供有效内容宽高比";
+        }
     }
 
     // --- 4) 渲染 ---
