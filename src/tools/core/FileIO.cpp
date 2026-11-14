@@ -86,12 +86,22 @@ std::string OsErrorText(std::uint32_t code) {
 
 #endif  // _WIN32
 
+#if !defined(_WIN32)
+/// POSIX：把 errno 格式化成「系统文本（错误码 N）」，与 Windows 分支统一。
+/// IoError.cpp 依赖这个「错误码 N」后缀提取错误码，补上权限/空间等中文原因。
+/// code==0 表示调用本身没设置 errno（如读到截断），给一个明确说明。
+std::string PosixErrorText(int code) {
+    if (code == 0) return "读取不完整（文件被截断或被占用）";
+    return std::string(std::strerror(code)) + "（错误码 " + std::to_string(code) + "）";
+}
+#endif
+
 /// 取最近一次系统调用的错误文本（等价 OsErrorText(GetLastError()/errno)）。
 std::string OsErrorText() {
 #if defined(_WIN32)
     return OsErrorText(GetLastError());
 #else
-    return std::strerror(errno);
+    return PosixErrorText(errno);
 #endif
 }
 
@@ -315,8 +325,7 @@ bool ReadFileBytes(const std::string& path, std::vector<std::uint8_t>& out,
     std::fclose(file);
     if (!ok) {
         if (outError) {
-            *outError = saveErrno != 0 ? std::strerror(saveErrno)
-                                       : "读取不完整（文件被截断或被占用）";
+            *outError = PosixErrorText(saveErrno);
         }
         return false;
     }

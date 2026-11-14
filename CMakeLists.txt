@@ -1067,10 +1067,19 @@ add_executable(ppet_config_test
     tools/config_test.cpp
     src/tools/core/Config.cpp
     src/tools/core/FileIO.cpp
+    src/tools/core/Log.cpp
 )
 target_include_directories(ppet_config_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME config_unit
          COMMAND ppet_config_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# IO 错误诊断（Q3）：系统错误码 + 中文原因提示，保证 create_directories /
+# WriteFile 失败时不再只留一句「无法创建目录」。纯头文件、零依赖，三配置均可跑。
+add_executable(ppet_io_error_test tools/io_error_test.cpp)
+target_include_directories(ppet_io_error_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME io_error_unit
+         COMMAND ppet_io_error_test
          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
 # 长期运行稳定性：帧计数饱和 / 无符号差值 / dt 钳制 / 相位精度。

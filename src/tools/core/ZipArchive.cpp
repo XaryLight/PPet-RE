@@ -5,8 +5,10 @@
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <string_view>
 
 #include <src/tools/core/FileIO.hpp>
+#include <src/tools/core/IoError.hpp>
 #include <src/tools/core/Log.hpp>
 #include "zlib/zlib.h"
 
@@ -324,13 +326,17 @@ bool IsSafeRelativePath(const std::string& name) {
 bool ListZipEntries(const std::string& zipPath, std::vector<ZipEntry>& entries) {
     entries.clear();
     std::vector<unsigned char> archive;
-    if (!ReadFileBytes(zipPath, archive)) {
-        PPET_LOG_ERR("无法读取 ZIP 文件：%s\n", zipPath.c_str());
+    std::string sysErr;
+    if (!ReadFileBytes(zipPath, archive, &sysErr)) {
+        const std::string reason =
+            DescribeIoFailure("无法读取 ZIP 文件", zipPath, IoErrorText(sysErr));
+        PPET_LOG_TAG_ERR("ZIP", "%s", reason.c_str());
         return false;
     }
     std::vector<CentralEntry> central;
     if (!ParseCentralDirectory(archive, central)) {
-        PPET_LOG_ERR("ZIP 文件格式非法：%s\n", zipPath.c_str());
+        PPET_LOG_TAG_ERR("ZIP", "ZIP 文件格式非法：%s（中央目录缺失或已损坏）",
+                         zipPath.c_str());
         return false;
     }
     for (const CentralEntry& entry : central) {
@@ -346,7 +352,13 @@ bool ListZipEntries(const std::string& zipPath, std::vector<ZipEntry>& entries) 
 bool ReadZipEntry(const std::string& zipPath, const std::string& name,
                   std::vector<unsigned char>& out) {
     std::vector<unsigned char> archive;
-    if (!ReadFileBytes(zipPath, archive)) return false;
+    std::string sysErr;
+    if (!ReadFileBytes(zipPath, archive, &sysErr)) {
+        const std::string reason =
+            DescribeIoFailure("无法读取 ZIP 文件", zipPath, IoErrorText(sysErr));
+        PPET_LOG_TAG_ERR("ZIP", "%s", reason.c_str());
+        return false;
+    }
     std::vector<CentralEntry> central;
     if (!ParseCentralDirectory(archive, central)) return false;
 
@@ -363,61 +375,71 @@ bool ExtractZipToDirectory(const std::string& zipPath, const std::string& destDi
                             std::string& error) {
     error.clear();
 
-    std::vector<unsigned char> archive;
-    if (!ReadFileBytes(zipPath, archive)) {
-        error = "无法读取 ZIP 文件：" + zipPath;
+    // 统一失败出口：error 回填给上层（会显示在导入失败弹窗里），同时写进
+    // last.log。两处都用同一条「操作 + 路径 + 系统错误码/中文原因」文案，
+    // 不再出现「无法创建目录」这种无法排查的静默失败。
+    auto fail = [&](std::string_view operation, std::string_view path,
+                    std::string_view reason) {
+        error = DescribeIoFailure(operation, path, reason);
+        PPET_LOG_TAG_ERR("ZIP", "%s", error.c_str());
         return false;
+    };
+
+    std::vector<unsigned char> archive;
+    std::string sysErr;
+    if (!ReadFileBytes(zipPath, archive, &sysErr)) {
+        return fail("无法读取 ZIP 文件", zipPath, IoErrorText(sysErr));
     }
     std::vector<CentralEntry> central;
     if (!ParseCentralDirectory(archive, central)) {
-        error = "ZIP 文件格式非法：" + zipPath;
-        return false;
+        return fail("ZIP 文件格式非法", zipPath, "中央目录缺失或已损坏");
     }
 
     std::error_code ec;
     fs::create_directories(ToFsPath(destDir), ec);
     if (ec) {
-        error = "无法创建解压目录：" + destDir;
-        return false;
+        return fail("无法创建解压目录", destDir, IoErrorText(ec));
     }
 
     for (const CentralEntry& entry : central) {
         const std::string name = NormalizeEntryName(DecodeEntryName(entry.name, entry.flags));
         if (name.empty()) continue;
         if (!IsSafeRelativePath(name)) {
-            error = "ZIP 包含非法路径，已拒绝解压：" + entry.name;
-            return false;
+            return fail("ZIP 包含非法路径，已拒绝解压", entry.name,
+                        "路径含 '..'、盘符或绝对路径");
         }
 
         const fs::path target = ToFsPath(destDir) / ToFsPath(name);
         if (IsDirectoryEntry(entry)) {
+            // 早期版本忽略这里的 ec：目录条目创建失败会一路拖到后面才以
+            // 「无法写入文件」的形式暴露，误导排查方向。
+            ec.clear();
             fs::create_directories(target, ec);
+            if (ec) return fail("无法创建目录", FromFsPath(target), IoErrorText(ec));
             continue;
         }
 
         // 创建父目录。
         const fs::path parent = target.parent_path();
         if (!parent.empty()) {
+            ec.clear();
             fs::create_directories(parent, ec);
-            if (ec) {
-                error = "无法创建目录：" + FromFsPath(parent);
-                return false;
-            }
+            if (ec) return fail("无法创建目录", FromFsPath(parent), IoErrorText(ec));
         }
 
         std::vector<unsigned char> data;
         if (!DecodeEntry(archive, entry, data)) {
-            error = "解压条目失败：" + name;
-            return false;
+            return fail("解压条目失败", name,
+                        "条目数据损坏、被加密或使用了不支持的压缩方式");
         }
         if (!CheckSize(entry, data.size())) {
-            error = "条目大小校验失败：" + name;
-            return false;
+            return fail("条目大小校验失败", name,
+                        "解压结果与中央目录声明的大小不一致");
         }
         const std::string targetUtf8 = FromFsPath(target);
-        if (!WriteFileBytes(targetUtf8, data)) {
-            error = "无法写入文件：" + targetUtf8;
-            return false;
+        sysErr.clear();
+        if (!WriteFileBytes(targetUtf8, data, &sysErr)) {
+            return fail("无法写入文件", targetUtf8, IoErrorText(sysErr));
         }
     }
     return true;

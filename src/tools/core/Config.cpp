@@ -4,9 +4,12 @@
 
 #include <cstdlib>
 #include <filesystem>
+#include <string_view>
 #include <vector>
 
 #include <src/tools/core/FileIO.hpp>
+#include <src/tools/core/IoError.hpp>
+#include <src/tools/core/Log.hpp>
 #include <src/tools/core/ModelNaming.hpp>
 #include "nlohmann/json.hpp"
 
@@ -210,6 +213,15 @@ bool ConfigStore::Save(const std::string& path, std::string& error) const {
     j["safeMode"] = config_.safeMode;
     const std::string text = j.dump(4);
 
+    // 每一步失败都往 error 里**追加**一条带系统错误码与中文原因的描述，
+    // 最后统一写 ERR 日志。这样「直写失败 + 暂存拷贝也失败」时两路原因都在，
+    // 不会出现只剩一句「无法写入配置文件」的静默失败。
+    auto appendError = [&](std::string_view operation, std::string_view target,
+                           std::string_view reason) {
+        if (!error.empty()) error += "；";
+        error += DescribeIoFailure(operation, target, reason);
+    };
+
     // 第 1 路：直接写到目标路径（先保证父目录存在）。
     // WriteFileText 内部对软驱 / 重定向卷常见的「未就绪 / 共享冲突」做了重试，
     // 多数情况下这一路就能成功。
@@ -219,14 +231,15 @@ bool ConfigStore::Save(const std::string& path, std::string& error) const {
         if (p.has_parent_path()) {
             fs::create_directories(p.parent_path(), ec);
             if (ec) {
-                error = "无法创建配置目录：" + FromFsPath(p.parent_path()) + "（" + ec.message() + "）";
+                appendError("无法创建配置目录", FromFsPath(p.parent_path()),
+                            IoErrorText(ec));
+                PPET_LOG_TAG_ERR("CFG", "%s", error.c_str());
                 return false;
             }
         }
         std::string sysErr;
         if (WriteFileText(path, text, &sysErr)) return true;
-        error = "无法写入配置文件：" + path;
-        if (!sysErr.empty()) error += "（" + sysErr + "）";
+        appendError("无法写入配置文件", path, IoErrorText(sysErr));
     }
 
     // 第 2 路：直写失败（如 A: 这类「资源管理器能写、程序 CreateFileW 写不进」的盘），
@@ -239,26 +252,38 @@ bool ConfigStore::Save(const std::string& path, std::string& error) const {
         if (!ec) {
             std::string sysErr;
             if (WriteFileText(staged, text, &sysErr)) {
-                std::error_code cec;
-                fs::create_directories(ToFsPath(path).parent_path(), cec);
-                fs::copy_file(ToFsPath(staged), ToFsPath(path),
-                              fs::copy_options::overwrite_existing, cec);
-                if (!cec) {
-                    // 拷过去就成功了，清掉暂存文件。
-                    std::error_code rec;
-                    fs::remove(ToFsPath(staged), rec);
-                    return true;
+                std::error_code mkEc;
+                fs::create_directories(ToFsPath(path).parent_path(), mkEc);
+                if (mkEc) {
+                    // 独立检查：早期把 create_directories 与 copy_file 共用同一个
+                    // error_code，copy_file 成功会把前面的错误清掉，掩盖真实原因。
+                    appendError("无法创建配置目录（暂存拷贝阶段）",
+                                FromFsPath(ToFsPath(path).parent_path()),
+                                IoErrorText(mkEc));
+                } else {
+                    std::error_code cec;
+                    fs::copy_file(ToFsPath(staged), ToFsPath(path),
+                                  fs::copy_options::overwrite_existing, cec);
+                    if (!cec) {
+                        // 拷过去就成功了，清掉暂存文件。
+                        std::error_code rec;
+                        fs::remove(ToFsPath(staged), rec);
+                        return true;
+                    }
+                    appendError("已生成暂存文件，但拷贝到目标失败", path,
+                                IoErrorText(cec));
                 }
-                error = "已生成暂存文件，但拷贝到 " + path + " 失败：" + cec.message();
             } else {
-                error = "无法在程序同目录生成暂存配置：" + staged + "（" + sysErr + "）";
+                appendError("无法在程序同目录生成暂存配置", staged,
+                            IoErrorText(sysErr));
             }
         } else {
-            error = "无法创建暂存目录：" + FromFsPath(ToFsPath(staged).parent_path()) +
-                    "（" + ec.message() + "）";
+            appendError("无法创建暂存目录",
+                        FromFsPath(ToFsPath(staged).parent_path()), IoErrorText(ec));
         }
     }
 
+    PPET_LOG_TAG_ERR("CFG", "%s", error.c_str());
     return false;
 }
 

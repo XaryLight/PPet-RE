@@ -5,11 +5,14 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <unordered_map>
+#include <vector>
 
 #include <src/tools/core/FileIO.hpp>
+#include <src/tools/core/IoError.hpp>
 #include <src/tools/core/Log.hpp>
 #include <src/tools/core/ZipArchive.hpp>
 
@@ -47,6 +50,27 @@ std::string LowerAscii(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return s;
+}
+
+/// 探测目录是否**真的可写**：建一个临时探针文件再删掉。
+///
+/// 有些卷（重定向盘、权限受限的网络盘）create_directories 会返回成功，
+/// 但真正 CreateFile(CREATE_ALWAYS) 写文件却失败 —— 用户看到的「目录建
+/// 不出来、本地 ./ppet 却可以」往往就是这种情况。提前探针一次，能直接
+/// 把系统原因（权限 / 空间 / 设备未就绪）说出来，而不是等解压到一半
+/// 才以「无法写入文件」的形式暴露。
+bool ProbeDirectoryWritable(const std::string& dir, std::string& reason) {
+    reason.clear();
+    const std::string probe = JoinPath(dir, ".ppet_write_probe");
+    const std::vector<std::uint8_t> payload = {'p', 'p', 'e', 't'};
+    std::string sysErr;
+    if (!WriteFileBytes(probe, payload, &sysErr)) {
+        reason = IoErrorText(sysErr);
+        return false;
+    }
+    std::error_code ec;
+    fs::remove(ToFsPath(probe), ec);
+    return true;
 }
 
 /// 是否是 Live2D 的模型配置文件。
@@ -213,8 +237,18 @@ bool ExtractModelPackage(const std::string& zipPath, const std::string& cacheRoo
     std::error_code ec;
     fs::create_directories(ToFsPath(cacheRoot), ec);
     if (ec) {
-        error = "无法创建缓存目录：" + cacheRoot;
+        error = DescribeIoFailure("无法创建缓存目录", cacheRoot, IoErrorText(ec));
         PPET_LOG_TAG_ERR("PKG", "%s", error.c_str());
+        return false;
+    }
+
+    std::string probeReason;
+    if (!ProbeDirectoryWritable(cacheRoot, probeReason)) {
+        error = DescribeIoFailure("模型缓存目录不可写", cacheRoot, probeReason);
+        PPET_LOG_TAG_ERR("PKG", "%s", error.c_str());
+        PPET_LOG_TAG_WARN("PKG",
+                          "建议：检查 %APPDATA% 指向磁盘的权限与剩余空间，"
+                          "或把程序放到有写入权限的目录（如工作目录 ./ppet）后重试");
         return false;
     }
 
@@ -237,7 +271,13 @@ bool ExtractModelPackage(const std::string& zipPath, const std::string& cacheRoo
     const std::string destDir = JoinPath(cacheRoot, dirName);
 
     // 每次导入都重新解压：模型包可能被用户更新过。
+    ec.clear();
     fs::remove_all(ToFsPath(destDir), ec);
+    if (ec) {
+        // 清理失败不致命（覆盖写仍可能成功），但不能静默吞掉系统原因。
+        PPET_LOG_TAG_WARN("PKG", "清理旧解压目录失败：%s（%s）；继续尝试覆盖解压",
+                          destDir.c_str(), IoErrorText(ec).c_str());
+    }
     if (!ExtractZipToDirectory(zipPath, destDir, error)) {
         PPET_LOG_TAG_ERR("PKG", "解压失败：%s -> %s：%s", zipPath.c_str(),
                          destDir.c_str(), error.c_str());
