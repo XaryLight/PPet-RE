@@ -77,19 +77,35 @@ std::string GetEnvVar(const char* name);
 
 /// 读取整个文件为字节序列。
 ///
-/// @param path  文件路径（内部按 UTF-8 解释；Windows 下会自动转 UTF-16）。
-/// @param out   读到的内容（成功时覆盖，失败时保持不变）。
+/// @param path     文件路径（内部按 UTF-8 解释；Windows 下会自动转 UTF-16）。
+/// @param out      读到的内容（成功时覆盖，失败时保持不变）。
+/// @param outError 可选输出：失败时填入操作系统级错误原因
+///                 （Windows 为 GetLastError 文本，POSIX 为 errno 文本）。
 /// @return 成功返回 true；失败返回 false（文件不存在、无权限、被占用等）。
-bool ReadFileBytes(const std::string& path, std::vector<std::uint8_t>& out);
+bool ReadFileBytes(const std::string& path, std::vector<std::uint8_t>& out,
+                   std::string* outError = nullptr);
 
 /// 读取整个文件为文本（不做换行转换，按原始字节返回）。
-bool ReadFileText(const std::string& path, std::string& out);
+bool ReadFileText(const std::string& path, std::string& out,
+                  std::string* outError = nullptr);
 
 /// 写文本到文件（覆盖写）。用于日志与配置落盘。
-bool WriteFileText(const std::string& path, const std::string& text);
+///
+/// @param outError 可选输出：失败时填入操作系统级错误原因，便于排查
+///                 「为什么写不出去」（权限 / 介质只读 / 路径非法 / 被占用等）。
+bool WriteFileText(const std::string& path, const std::string& text,
+                   std::string* outError = nullptr);
 
 /// 写二进制数据到文件（覆盖写）。用于解压归档等场景。
-bool WriteFileBytes(const std::string& path, const std::vector<std::uint8_t>& data);
+bool WriteFileBytes(const std::string& path, const std::vector<std::uint8_t>& data,
+                    std::string* outError = nullptr);
+
+/// 当前可执行文件所在目录（不含尾部分隔符）。
+///
+/// 用于「便携版」配置回退：当系统约定目录（%APPDATA% / ~/.config）不可写时，
+/// 退回到 exe 同目录，保证程序在无写入权限的环境下也能落盘配置。
+/// 取不到时返回空串（调用方应再退回到当前工作目录）。
+std::string ExecutableDir();
 
 /// 文件是否存在。
 bool FileExists(const std::string& path);

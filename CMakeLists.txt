@@ -1061,6 +1061,18 @@ add_test(NAME model_naming_unit
          COMMAND ppet_model_naming_test
          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
+# 配置落盘：默认路径必须是可写目录（回归 %APPDATA% 指向不可写盘导致写不出去）、
+# Save/Load 往返保真、写入失败带系统级错误原因（不再吞掉 GetLastError / errno）。
+add_executable(ppet_config_test
+    tools/config_test.cpp
+    src/tools/core/Config.cpp
+    src/tools/core/FileIO.cpp
+)
+target_include_directories(ppet_config_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME config_unit
+         COMMAND ppet_config_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
 # 长期运行稳定性：帧计数饱和 / 无符号差值 / dt 钳制 / 相位精度。
 add_executable(ppet_stability_test tools/stability_test.cpp)
 add_test(NAME stability_unit

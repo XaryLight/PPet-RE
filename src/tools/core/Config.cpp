@@ -4,6 +4,7 @@
 
 #include <cstdlib>
 #include <filesystem>
+#include <vector>
 
 #include <src/tools/core/FileIO.hpp>
 #include <src/tools/core/ModelNaming.hpp>
@@ -23,31 +24,74 @@ Language LanguageFromString(const std::string& s) {
     return s == "en" ? Language::English : Language::Chinese;
 }
 
+/// 配置目录候选顺序：优先系统约定位置，逐级回退到便携 / 当前目录。
+///
+/// 为什么需要回退：曾经出现 `%APPDATA%` 被指向 `A:\Roaming`（软驱 / 重定向卷 /
+/// 不可写盘）的机器，ConfigStore 直接拿它拼出 `A:\Roaming\PPet\config.json`，
+/// 每次保存都因 INVALID_HANDLE_VALUE 失败，却只报一句含糊的「无法写入配置文件」。
+/// 因此这里只「列候选」，是否可用由 DirIsWritable 实测决定。
+std::vector<std::string> CandidateConfigDirs() {
+    std::vector<std::string> dirs;
+
+#if defined(_WIN32)
+    const std::string appData = GetEnvVar("APPDATA");
+    if (!appData.empty()) dirs.push_back(JoinPath(appData, "PPet"));
+    const std::string localAppData = GetEnvVar("LOCALAPPDATA");
+    if (!localAppData.empty()) dirs.push_back(JoinPath(localAppData, "PPet"));
+#else
+    const std::string xdg = GetEnvVar("XDG_CONFIG_HOME");
+    if (!xdg.empty()) dirs.push_back(JoinPath(xdg, "PPet"));
+    const std::string home = GetEnvVar("HOME");
+#if defined(__APPLE__)
+    if (!home.empty()) {
+        dirs.push_back(JoinPath(JoinPath(home, "Library/Application Support"), "PPet"));
+    }
+#else
+    if (!home.empty()) dirs.push_back(JoinPath(JoinPath(home, ".config"), "PPet"));
+#endif
+#endif
+
+    // 便携 / 兜底：可执行文件所在目录、当前工作目录。
+    const std::string exeDir = ExecutableDir();
+    if (!exeDir.empty()) dirs.push_back(JoinPath(exeDir, "PPet"));
+    dirs.push_back("PPet");  // 相对当前工作目录
+
+    // 去重，避免同一目录被重复实测。
+    std::vector<std::string> unique;
+    for (auto& d : dirs) {
+        bool seen = false;
+        for (auto& u : unique) {
+            if (u == d) {
+                seen = true;
+                break;
+            }
+        }
+        if (!seen) unique.push_back(std::move(d));
+    }
+    return unique;
+}
+
+/// 实测目录是否可写：能建目录 + 能落一个临时文件 + 能删掉。
+/// 任何一个环节失败（权限不足 / 介质只读 / 路径非法）都返回 false。
+bool DirIsWritable(const std::string& dir) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::create_directories(ToFsPath(dir), ec);
+    if (ec) return false;
+    const std::string probe = JoinPath(dir, ".ppet_writetest");
+    if (!WriteFileText(probe, "ok")) return false;
+    fs::remove(ToFsPath(probe), ec);
+    return true;
+}
+
 }  // namespace
 
 std::string ConfigStore::DefaultConfigPath() {
-    namespace fs = std::filesystem;
-
-#if defined(_WIN32)
-    // Windows 配置目录优先使用 %APPDATA%。
-    const std::string appData = GetEnvVar("APPDATA");
-    if (!appData.empty()) {
-        return FromFsPath(ToFsPath(appData) / "PPet" / "config.json");
+    for (const auto& dir : CandidateConfigDirs()) {
+        if (DirIsWritable(dir)) return JoinPath(dir, "config.json");
     }
-#else
-    const std::string home = GetEnvVar("HOME");
-    if (!home.empty()) {
-#if defined(__APPLE__)
-        return FromFsPath(ToFsPath(home) / "Library" / "Application Support" / "PPet" / "config.json");
-#else
-        const std::string xdg = GetEnvVar("XDG_CONFIG_HOME");
-        if (!xdg.empty()) return FromFsPath(ToFsPath(xdg) / "PPet" / "config.json");
-        return FromFsPath(ToFsPath(home) / ".config" / "PPet" / "config.json");
-#endif
-    }
-#endif
-
-    // 兜底：使用当前工作目录。
+    // 极端兜底：任何目录都写不了时退回当前目录散落文件，至少让程序能跑
+    // （用户可手动把配置拷到可写位置）。
     return "ppet-config.json";
 }
 
@@ -62,8 +106,10 @@ bool ConfigStore::Load(const std::string& path, std::string& error) {
 
     // 走跨平台读取接口：Windows 上窄字符路径打不开含中文的路径。
     std::string text;
-    if (!ReadFileText(path, text)) {
+    std::string sysErr;
+    if (!ReadFileText(path, text, &sysErr)) {
         error = "无法打开配置文件：" + path;
+        if (!sysErr.empty()) error += "（" + sysErr + "）";
         return false;
     }
 
@@ -193,8 +239,10 @@ bool ConfigStore::Save(const std::string& path, std::string& error) const {
     j["safeMode"] = config_.safeMode;
 
     // 走跨平台写入接口：Windows 上窄字符路径无法写入含中文的目录。
-    if (!WriteFileText(path, j.dump(4))) {
+    std::string sysErr;
+    if (!WriteFileText(path, j.dump(4), &sysErr)) {
         error = "无法写入配置文件：" + path;
+        if (!sysErr.empty()) error += "（" + sysErr + "）";
         return false;
     }
     return true;

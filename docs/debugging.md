@@ -292,6 +292,7 @@ RivaTuner RTSS / MSI Afterburner / NVIDIA GeForce Experience Overlay / Discord O
 | `last.log` 里两行搅在一起 | 不会发生（已加锁）；若出现请提 issue | — |
 | `GAMEPP-IPC-OVERLAY` + `CreateSemaphore[5]` + 退出码 `0xC0000005` | 第三方 overlay 注入 DLL 拿不到 IPC 句柄后空指针访问 | 看 `last.log` 的 `[CRASH] 判定`；退出注入软件或用 `--safe-mode`，见 [上文](#windows-崩溃与系统级卡顿) |
 | 渲染卡顿时连鼠标 / 其它窗口一起卡 | 透明置顶窗口高频刷新 + overlay 注入占用 DWM 合成 | `--max-fps=30` / `--safe-mode`；本版本已移除 `WH_MOUSE_LL` 钩子，不会再拖慢系统输入链 |
+| 日志报「无法写入配置文件：…（错误码 N）」 | 配置目录不可写：`%APPDATA%` 被指向软驱 / 重定向卷（如 `A:\Roaming`）或磁盘满 / 只读 | 程序已自动回退到可写位置（依次试 `%APPDATA%`→`%LOCALAPPDATA%`→exe 同目录→当前目录 `./PPet`）；括号里的系统错误（如 `5 拒绝访问`、`21 设备未就绪`）直接说明根因，无需再进 FileIO 断点 |
 
 ---
 
