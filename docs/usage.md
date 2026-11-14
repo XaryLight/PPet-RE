@@ -93,6 +93,10 @@ Speaking: 你好，我是桌面宠物
 | `action list` | 列出可播放动作（含 `Idx` 索引列） |
 | `action <name\|idx> do` | 按名字或索引播放动作；索引对应 list 的 `Idx` 列，便于调试 |
 | `action <name\|idx> stop` / `action stop` | 停止动作 |
+| `action random` | **随机播一个待机动作**：Live2D 从待机组随机挑（带冷却）；PMX / VRM 随机播一个内置骨骼动作（点头/摇头/挥手） |
+| `action touch [region]` | **分区触摸**：region 取 `head` / `body` / `leg` / `left` / `right`（缺省 `body`）。Live2D 按命中区匹配互动动作组；PMX / VRM 随机触发一个骨骼动作作反馈 |
+| `plugin list` | 列出已注册插件及其启用状态 |
+| `plugin <enable\|disable> <name>` | 启用 / 禁用某个插件（事件总线按兴趣过滤，禁用后不再收到任何事件） |
 | `expression list` | 列出表情预设，含**表情动作组 + 参数级预设**两类 |
 | `expression <id>` | 切换表情；Live2D 没有表情动作组时自动回退到参数预设 |
 | `speak <txt>` | 显示气泡文字并驱动口型 |
@@ -325,11 +329,22 @@ PMX 与 VRM 模型没有 Live2D 那样的「动作文件」，因此待机表现
 
 追踪器不可用时会自动降级为窗口内跟随，并在日志里记一条 ERROR，不影响启动。
 
-**光标坐标不依赖窗口事件**：`GlobalCursorTracker::QueryCursor()` 直接向系统查询全局光标
-（Windows `GetCursorPos` / macOS `NSEvent.mouseLocation` / Linux `XQueryPointer`），
-因此即使开着「忽略点击」（鼠标事件被穿透）、关闭全屏追踪、或光标根本不在桌宠窗口 / 虚拟桌面上，
-`App::BuildRenderContext()` 仍能拿到全局屏幕坐标供眼睛与头部追踪使用。
-`status` 里的 `osCursor` 就是这条通道的实测值。
+**开关语义（需求 7 修复后）**：`BuildRenderContext()` 由纯函数 `ResolveTrackingSource`
+（`src/tools/core/TrackingPolicy.hpp`）决定每帧的光标来源：
+
+| `fullscreenTracking` | 窗口内光标 | 光标来源 | 行为 |
+| --- | --- | --- | --- |
+| 开启 | 任意 | Global | `GlobalCursorTracker::QueryCursor()` 直接向系统查询全局光标（Windows `GetCursorPos` / macOS `NSEvent.mouseLocation` / Linux `XQueryPointer`），不受点击穿透、窗口边界、其它应用遮挡影响 |
+| 关闭 | 有 | Window | 退化为窗口内跟随：鼠标在桌宠窗口内移动时模型才看向它 |
+| 关闭 | 无 | None | 完全不驱动视线，模型回正 |
+
+> 旧版曾有一个 bug：关闭全屏追踪后仍然走全局光标查询，导致「开关形同虚设、关了还跟」。
+> 现已修复并由此单测（`tracking_policy_unit`）回归保护。
+> `status` 里的 `osCursor` 始终是系统级全局查询的实测值（用于诊断，与追踪开关无关）。
+
+**最大偏转角实时生效**：设置页拖动「最大偏转角度」滑块会立刻回写到模型
+（`IModel::SetMaxTrackingAngle`，Live2D 生效并钳制到 [0,90]；PMX/VRM 无光标追踪、忽略该值），
+换模型后同样自动下发，不会再出现「拖动滑块无反应、模型一直停在默认 30°（偏大）」。
 
 ---
 

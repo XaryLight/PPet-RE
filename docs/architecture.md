@@ -16,11 +16,16 @@ PPet/
 │       ├── main.cpp            # 程序入口（QApplication + App）
 │       ├── app/                # 应用主控制器、托盘菜单、主循环
 │       ├── agent/              # 语言系统：台词库 / 气泡状态机 / 口型（纯逻辑）
-│       ├── core/               # 配置、日志、i18n、文件 IO、ZIP 解析、模型包
+│       ├── core/               # 配置、日志、i18n、文件 IO、ZIP 解析、模型包、追踪策略
+│       │   ├── TrackingPolicy.hpp  # ★ 全屏追踪光标来源判定（Global/Window/None，纯函数）
+│       │   └── ...
 │       ├── model/              # IModel 抽象、SkinnedMesh、表情调度器、程序化待机 / 骨骼动作、PMX / VRM 后端、错误模型
 │       │   ├── IdleAnimator.hpp    # ★ 程序化待机微动（纯头文件，零依赖）
-│       │   └── BoneMotion.*        # ★ 骨骼动作（点头/摇头/挥手 + 随机触发）
+│       │   ├── BoneMotion.*        # ★ 骨骼动作（点头/摇头/挥手 + 随机触发）
+│       │   ├── MotionRecognizer.*  # ★ 动作文件/组名语义识别（待机/触摸/表情 + 区域映射）
+│       │   └── ...
 │       ├── platform/           # 窗口、托盘、开机启动、光标追踪、文件对话框
+│       ├── plugin/             # ★ 插件系统：IPlugin / PluginManager / 事件总线 / 内置示例插件
 │       └── render/             # Renderer / Camera / RenderUtils / FrameCapture
 ├── api/                    # ★ 外部 SDK / 第三方库的引用与适配层
 │   ├── live2d/             # Cubism SDK 集成：model3.json / moc3 / 动作 / 物理 / Live2DModel
@@ -218,7 +223,40 @@ PMX / VRM 不受影响。调度器的正确性由 `motion_director_unit`（状�
 新增单测：`model_naming_unit` / `stability_unit` / `console_queue_unit` /
 `crash_classify_unit`，`bone_motion_unit` 另加 `TestCrossFade()` 与
 `TestArmRotationGeometry()`（用 `Mat4::RotationZ().TransformDirection()` 验证下垂方向），
-CTest 总数 39。
+CTest 总数 45。
+
+## 插件系统（需求 6）
+
+插件通过「事件总线」感知应用行为，不直接耦合 App 内部状态；同一套接口既承载
+「代码内注册的内置插件」，也为将来「扫描目录加载 .so / .dll」预留扩展点。
+
+| 层 | 文件 | 职责 | 依赖 |
+| --- | --- | --- | --- |
+| 接口与事件 | `src/tools/plugin/Plugin.hpp` | `IPlugin`（Name / Interests / OnEnable / OnDisable / OnEvent）、`IPluginHost`（Emit / Config）、`PluginEvent`（kind + source + payload + timestamp） | **纯 STL，零依赖** |
+| 管理器 | `src/tools/plugin/PluginManager.{hpp,cpp}` | 注册去重、启用禁用、兴趣过滤分发（Interests 空 = 全收）、快照遍历 + 嵌套深度限制（插件在回调里注册 / 重入不破坏遍历）、配置快照注入 | `core/Config.hpp` |
+| 内置示例 | `src/tools/plugin/BuiltinPlugins.hpp` | `greeter`（模型加载打招呼 / 互动记录）、`counter`（按事件类型计数，演示兴趣过滤） | `core/Log.hpp` |
+
+事件类型：`AppStart` / `AppShutdown` / `ModelLoaded` / `ModelUnloaded` /
+`MotionPlayed` / `MotionStopped` / `ConfigChanged` / `Interaction` / `FrameTick`（节流约 1s）。
+`App` 在模型加载、动作播放/停止、配置变更、点击互动、每帧心跳处广播；
+控制台 `plugin list` / `plugin <enable|disable> <name>` 管理，单测 `plugin_unit`。
+
+## 动作识别（需求 2 / 4）
+
+| 模块 | 文件 | 职责 |
+| --- | --- | --- |
+| Live2D 动作集分析 | `src/tools/model/MotionRecognizer.{hpp,cpp}` | `AnalyzeMotionFiles`（文件名语义归类，覆盖空名组模型）/ `AnalyzeMotionGroups`（标准 model3.json 分组）→ `MotionSetAnalysis`（idle / touch / expression 计数 + 区域 → 触摸映射 + 摘要） |
+| 统一触发入口 | `IModel::PlayRandomIdle` / `IModel::TriggerTouch` | 基类默认实现 + 各后端覆写；控制台 `action random` / `action touch <region>` 直达 |
+| VRM 能力分析 | `src/tools/model/vrm/VrmMotionProfile.hpp` | `AnalyzeVrmCapabilities`：按骨骼齐全度 / glTF 动画数 / 弹簧骨数推导可用基础动作（nod / shake / wave），摘要写入诊断面板 |
+
+## 追踪策略（需求 7）
+
+`src/tools/core/TrackingPolicy.hpp` 把「本帧用哪个光标源」收敛成两个纯函数，
+`App::BuildRenderContext()` 与设置页行为由它统一裁决，单测 `tracking_policy_unit` 回归：
+
+- `ResolveTrackingSource(fullscreen, hasWindowCursor)` → `Global`（全屏开启）/ `Window`（关闭且鼠标在窗口内）/ `None`（不驱动视线）；
+- `ClampTrackingAngle(deg)` 把最大偏转角钳制到 [0,90]。
+- `IModel::SetMaxTrackingAngle` 由 `ApplyConfig()` 与模型加载后实时下发，Live2D 后端生效。
 
 ## 构建目标层次
 

@@ -47,6 +47,19 @@ inline Vec2 NormalizedFromRegion(const std::string& region) {
     return Vec2(0.5f, 0.5f);
 }
 
+/// 把窗口内归一化点击坐标（nx, ny ∈ [0,1]）映射成分区名。
+/// 与 NormalizedFromRegion 互为反查：对任意合法区域 r，
+/// RegionFromPoint(NormalizedFromRegion(r)) == r。
+/// 供 App 点击事件、插件 Interaction 事件等需要「坐标 → 语义分区」的场景共用，
+/// 避免各处手写阈值分支且口径不一。
+inline std::string RegionFromPoint(float nx, float ny) {
+    if (ny < 0.28f) return "head";
+    if (ny > 0.72f) return "leg";
+    if (nx < 0.33f) return "left";
+    if (nx > 0.67f) return "right";
+    return "body";
+}
+
 
 /// 渲染环境信息，描述当前窗口与全局鼠标状态。
 struct RenderContext {

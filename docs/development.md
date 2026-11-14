@@ -18,10 +18,11 @@ PPet-RE/
 │   │   └── ErrorDialog.*     #   模型加载失败/警告弹窗
 │   └── tools/                # ★ 全部非 GUI 实现
 │       ├── main.cpp          #   程序入口：QApplication → Logger::Init → App
-│       ├── core/             #   Config / I18n / Log / FileIO / ZipArchive / ModelPackage / Math
-│       ├── model/            #   IModel + ModelDebugInfo + ModelError、SkinnedMesh、pmx/ vrm/
+│       ├── core/             #   Config / I18n / Log / FileIO / ZipArchive / ModelPackage / Math / TrackingPolicy
+│       ├── model/            #   IModel + ModelDebugInfo + ModelError、SkinnedMesh、pmx/ vrm/、MotionRecognizer
 │       ├── platform/         #   窗口、托盘、光标追踪、开机启动、文件对话框
 │       ├── render/           #   Renderer / Camera / RenderUtils / FrameCapture
+│       ├── plugin/           #   插件系统：IPlugin / PluginManager / 事件总线 / 内置示例插件
 │       └── app/              #   App 主循环、托盘菜单、运行时状态采集
 ├── api/                      # ★ 外部 SDK / 第三方库引用层
 │   ├── live2d/               #   Cubism SDK 集成（model3.json / moc3 / 动作 / Live2DModel）
@@ -126,6 +127,10 @@ ctest --output-on-failure
 | `stability_unit` | 长期稳定性：饱和递增 / 安全无符号差值 / `dt` 钳制 NaN·Inf·负数·超大值 / 30 年运行相位精度 |
 | `console_queue_unit` | 控制台队列有界：注入 5000 条命令验证上限 4096、丢弃计数、单帧最多 32 条、剩余命令最终消费完 |
 | `crash_classify_unit` | 崩溃模块归类：自身 / 第三方 overlay DLL / 大小写与路径分隔符 / 未知，异常码可读名称 |
+| `tracking_policy_unit` | **追踪策略（需求 7）**：全屏开关 × 窗口光标 → Global / Window / None 三态判定；关闭全屏后绝不回退全局光标；最大偏转角钳制 [0,90] |
+| `plugin_unit` | **插件系统（需求 6）**：注册即启用 / 事件分发 / 兴趣过滤（只收关心类型）/ 启停切换 / 重名替换 / Status 快照 |
+| `motion_recognizer_unit` | **智能动作识别（需求 2）**：文件名归类 idle / touch / expression（含空名组模型场景）、区域 → 触摸映射、按动作组识别、空输入 |
+| `vrm_motion_profile_unit` | **VRM 动作能力（需求 4）**：骨骼齐全度 → nod / shake / wave 可用性推导、待机支持、诊断摘要内容 |
 | `zip_package_test` | 生成测试用 zip（fixture） |
 | `zip_import_test` | 解压中央目录、定位包内模型、幂等重导入、非法输入 |
 | `pmx_package_gen` | 生成 4 种 PMX 包（fixture）：完整 / 缺贴图 / 大小写 / 子目录 |
@@ -136,9 +141,9 @@ ctest --output-on-failure
 | `render_verify_pmx` / `render_verify_vrm` | 用渲染验证 CLI 对仓库素材跑「加载 → 渲染 → 读回像素 → 判定」（xvfb） |
 | `render_verify_clear_contract` | 主循环每帧清屏契约：连续帧读回像素一致、无上一帧残影（xvfb） |
 
-共 **39 项**测试（含 fixture）。调试面板冒烟测试还会校验 7 个页签、骨架/图片/详细错误区与
+共 **45 项**测试（含 fixture）。调试面板冒烟测试还会校验 7 个页签、骨架/图片/详细错误区与
 表情与说话页；气泡冒烟测试校验无边框气泡的显隐、文本与定位。
-本轮实测：Release + 桩 / Release + 真实 SDK / Debug + 无后端 **三配置均 39/39 通过，0 警告**。
+本轮实测：Release + 桩 / Release + 真实 SDK / Debug + 无后端 **三配置均 45/45 通过，0 警告**。
 
 ### 三配置构建矩阵
 

@@ -9,6 +9,7 @@
 //   - 内置骨骼动作（点头/摇头/挥手）只要模型有头/躯干/手臂即可触发，始终可用。
 #pragma once
 
+#include <cstddef>
 #include <string>
 #include <vector>
 

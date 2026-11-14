@@ -5,10 +5,10 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <map>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <map>
 #include <random>
 #include <thread>
 
@@ -108,7 +108,15 @@ std::string ExpressionPresetLabel(const Strings& s, const std::string& id) {
 
 }  // namespace
 
+// ---------------------------------------------------------------------------
+// 构造 / 析构
+// ---------------------------------------------------------------------------
+
 App::~App() { Shutdown(); }
+
+// ---------------------------------------------------------------------------
+// 初始化
+// ---------------------------------------------------------------------------
 
 bool App::Initialize(std::string& error) {
     // --- 配置 ---
@@ -206,13 +214,10 @@ bool App::Initialize(std::string& error) {
                     const float ny = std::clamp(
                         static_cast<float>(dragGrabY_ / size.y), 0.0f, 1.0f);
                     model_->OnInteract(nx, ny);
-                    // 需求 6：广播「用户互动」事件（区域由归一化坐标分区得出）。
-                    std::string region;
-                    if (nx < 0.25f) region = "left";
-                    else if (nx > 0.75f) region = "right";
-                    else if (ny < 0.28f) region = "head";
-                    else if (ny > 0.72f) region = "leg";
-                    else region = "body";
+                    // 需求 6：广播「用户互动」事件。区域判定复用 Model.hpp 的
+                    // RegionFromPoint（与 NormalizedFromRegion 互为反查），
+                    // 保证各处「坐标 → 分区」口径一致。
+                    const std::string region = RegionFromPoint(nx, ny);
                     EmitPluginEvent(plugin::PluginEventKind::Interaction,
                                     std::string(), {{"region", region}});
                     // 点击角色时来一句问候，配合口型让桌宠更有回应感。
@@ -432,6 +437,10 @@ void App::EmitPluginEvent(plugin::PluginEventKind kind, std::string source,
     pluginManager_.Emit(event);
 }
 
+// ---------------------------------------------------------------------------
+// 配置应用与语言
+// ---------------------------------------------------------------------------
+
 void App::ApplyConfig() {
     const auto& cfg = configStore_.config();
     window_.SetAlwaysOnTop(cfg.alwaysOnTop);
@@ -446,7 +455,8 @@ void App::ApplyConfig() {
 
     // 需求 7 修复：把「最大偏转角度」配置实时回写到模型。
     // 此前该值从未落地到模型，拖动滑块毫无反应、且模型永远停在默认 30°（偏大）。
-    if (model_) model_->SetMaxTrackingAngle(cfg.maxTrackingAngle);
+    // 钳制统一走 TrackingPolicy::ClampTrackingAngle（[0,90]），模型内部是第二道防线。
+    if (model_) model_->SetMaxTrackingAngle(ClampTrackingAngle(cfg.maxTrackingAngle));
 
     // 需求 6：广播「配置变更」事件（含本次变化的关键字段），插件可据此响应。
     EmitPluginEvent(plugin::PluginEventKind::ConfigChanged, std::string(),
@@ -464,6 +474,10 @@ void App::RefreshLanguageIfNeeded() {
     debugPanel_.Refresh();
     RebuildTrayMenu();
 }
+
+// ---------------------------------------------------------------------------
+// 语言功能（台词 / 气泡 / 口型）
+// ---------------------------------------------------------------------------
 
 void App::SayState(agent::AgentStateKind kind, int priority) {
     lastSpeechKind_ = kind;
@@ -522,6 +536,10 @@ void App::TickDialogue(float dt) {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// 模型生命周期（加载 / 错误报告 / 切换）
+// ---------------------------------------------------------------------------
 
 std::string App::ModelCacheDirectory() const {
     // 与配置文件同级的 models 目录：Windows 下是 %APPDATA%/PPet/models。
@@ -685,7 +703,7 @@ bool App::LoadModel(const std::string& path, ModelLoadError& out, bool notifyUse
     auto& cfg = configStore_.config();
     model_->SetArmRestDrop(cfg.armRestDropDeg);
     // 需求 7：加载模型后同样把最大偏转角度落到模型，保证「换模型」后偏转设置不丢。
-    model_->SetMaxTrackingAngle(cfg.maxTrackingAngle);
+    model_->SetMaxTrackingAngle(ClampTrackingAngle(cfg.maxTrackingAngle));
 
     // 需求 6：广播「模型加载」事件，插件可据此做初始化 / 打招呼。
     EmitPluginEvent(plugin::PluginEventKind::ModelLoaded, cleanPath);
@@ -741,6 +759,10 @@ bool App::LoadModel(const std::string& path, ModelLoadError& out, bool notifyUse
     }
     return true;
 }
+
+// ---------------------------------------------------------------------------
+// 托盘菜单
+// ---------------------------------------------------------------------------
 
 void App::RebuildTrayMenu() {
     const auto& cfg = configStore_.config();
@@ -1024,6 +1046,10 @@ void App::SwitchModel(int delta) {
     SaveConfig();
 }
 
+// ---------------------------------------------------------------------------
+// 配置保存与窗口位置
+// ---------------------------------------------------------------------------
+
 void App::SaveConfig() {
     auto& cfg = configStore_.config();
     const Vec2 pos = window_.Position();
@@ -1069,6 +1095,10 @@ void App::ResetWindowPosition() {
     PPET_LOG_TAG("WINDOW", "窗口位置已重置到 (%d,%d)（主显示器左上角）",
                  target.x, target.y);
 }
+
+// ---------------------------------------------------------------------------
+// 渲染上下文与帧证据
+// ---------------------------------------------------------------------------
 
 RenderContext App::BuildRenderContext(float deltaTime) const {
     RenderContext ctx;
@@ -1174,6 +1204,10 @@ void App::CollectFrameEvidence(bool wantPreview) {
                          stats.width, stats.height);
     }
 }
+
+// ---------------------------------------------------------------------------
+// 主循环与退出
+// ---------------------------------------------------------------------------
 
 void App::ProcessInput() {
     // 按键处理：保留原项目的快捷键习惯。

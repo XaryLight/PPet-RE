@@ -189,9 +189,6 @@ private:
     std::uint64_t frameCount_ = 0;
     float frameMsSmoothed_ = 0.0f;
 
-    /// 上一次向插件广播「帧心跳」的时刻（需求 6：节流到约 1 秒一次）。
-    std::chrono::steady_clock::time_point lastPluginTick_;
-
     /// 帧缓冲像素证据：判断「是否真的出图」，不靠 draw calls / GL 错误猜。
     bool hasFrameEvidence_ = false;
     FramePixelStats lastFrameStats_;
@@ -220,6 +217,9 @@ private:
 
     /// 应用启动时刻（steady_clock），用于给插件事件打时间戳。
     std::chrono::steady_clock::time_point appStartTime_;
+
+    /// 上一次向插件广播「帧心跳」的时刻（需求 6：节流到约 1 秒一次）。
+    std::chrono::steady_clock::time_point lastPluginTick_;
 
     // 「移动窗口」模式：临时关闭点击穿透，让平时鼠标穿透的窗口也能被拖动。
     // 退出时按「当前配置」恢复穿透，不保存进入时的快照，避免覆盖用户中途的改动。

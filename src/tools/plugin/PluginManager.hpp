@@ -8,7 +8,6 @@
 #include <src/tools/plugin/Plugin.hpp>
 
 #include <map>
-#include <mutex>
 #include <string>
 #include <vector>
 

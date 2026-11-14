@@ -1162,6 +1162,13 @@ add_test(NAME console_motion_idx_unit
          COMMAND ppet_console_motion_idx_test
          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
+# 分区坐标映射：NormalizedFromRegion 与 RegionFromPoint 互为反查。
+# 纯逻辑、零依赖（只含 Model.hpp 头），直接单测。
+add_executable(ppet_model_region_test tools/model_region_test.cpp)
+add_test(NAME region_unit
+         COMMAND ppet_model_region_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
 # 视线追踪策略（需求 7）：全屏追踪开关 -> 光标源判定 / 最大偏转角度钳制。
 # 纯逻辑、零依赖，直接单测。
 add_executable(ppet_tracking_policy_test tools/tracking_policy_test.cpp)

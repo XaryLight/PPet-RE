@@ -73,7 +73,14 @@ void PluginManager::Emit(const PluginEvent& event) {
     // 插件在 OnEvent 里注册新插件时不应破坏当前遍历：先对插件列表做一份快照。
     // 同时限制嵌套深度，避免插件互相触发事件造成无限递归。
     if (dispatchDepth_ >= kMaxDispatchDepth) return;
-    ++dispatchDepth_;
+
+    // RAII 深度守卫：即便插件回调抛异常，深度也会在本函数退出时恢复，
+    // 否则一次异常就会让后续所有事件被误判为「递归过深」而静默丢弃。
+    struct DepthGuard {
+        explicit DepthGuard(int& depth) : depth_(depth) { ++depth_; }
+        ~DepthGuard() { --depth_; }
+        int& depth_;
+    } guard(dispatchDepth_);
 
     // 快照（按值拷贝，避免底层 vector 重分配导致迭代器失效）。
     const std::vector<PluginPtr> snapshot = [&] {
@@ -97,8 +104,6 @@ void PluginManager::Emit(const PluginEvent& event) {
             plugin->OnEvent(event);
         }
     }
-
-    --dispatchDepth_;
 }
 
 const AppConfig& PluginManager::Config() const {

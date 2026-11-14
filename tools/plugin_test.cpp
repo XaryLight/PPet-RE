@@ -65,7 +65,7 @@ int main() {
     check(mgr.List().size() == 1 && mgr.List()[0] == "A", "List 含 A");
 
     // --- 事件分发给已启用插件 ---
-    PluginEvent ev{PluginEventKind::ModelLoaded, "model.vrm"};
+    PluginEvent ev{PluginEventKind::ModelLoaded, "model.vrm", {}};
     mgr.Emit(ev);
     check(a->received_.size() == 1 && a->received_[0] == PluginEventKind::ModelLoaded,
           "A 收到 ModelLoaded");
@@ -86,10 +86,10 @@ int main() {
     auto b = std::make_shared<RecorderPlugin>(
         "B", std::vector<PluginEventKind>{PluginEventKind::MotionPlayed});
     mgr.Register(b);
-    mgr.Emit(PluginEvent{PluginEventKind::ModelLoaded, "x"});
+    mgr.Emit(PluginEvent{PluginEventKind::ModelLoaded, "x", {}});
     // 注意断言顺序：必须在发出 MotionPlayed 之前检查「没收到 ModelLoaded」。
     check(b->received_.empty(), "B 不收 ModelLoaded（兴趣过滤）");
-    mgr.Emit(PluginEvent{PluginEventKind::MotionPlayed, "idle"});
+    mgr.Emit(PluginEvent{PluginEventKind::MotionPlayed, "idle", {}});
     check(b->received_.size() == 1 && b->received_[0] == PluginEventKind::MotionPlayed,
           "B 收 MotionPlayed");
     check(b->lastSource_ == "idle", "B 收到动作 id");

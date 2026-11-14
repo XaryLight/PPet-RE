@@ -431,7 +431,10 @@ std::string App::ExecuteConsoleCommand(const console::Command& cmd) {
     // ---------------------------------------------------------------- action
     if (v == "action" || v == "motion") {
         if (!model_) return "fail: 当前没有模型";
-        if (a.empty()) return "用法: action list | action <name> do|stop | action stop";
+        if (a.empty()) {
+            return "用法: action list | action <name|idx> do|stop | action stop | "
+                   "action random | action touch [head|body|leg|left|right]";
+        }
         std::string first = a[0];
         std::transform(first.begin(), first.end(), first.begin(),
                        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
