@@ -13,6 +13,8 @@
 #include <cstdio>
 #include <string>
 
+#include <src/tools/core/Log.hpp>
+
 // 原生句柄接口（glfwGetWin32Window / glfwGetCocoaWindow / glfwGetX11Window）位于
 // glfw3native.h，必须在 glfw3.h 之后包含，并声明要暴露的窗口后端。
 #if defined(_WIN32)
@@ -237,7 +239,12 @@ bool Window::Create(const WindowOptions& options, std::string& error) {
         glfwWindowHint(GLFW_FOCUS_ON_SHOW, GLFW_FALSE);
         glfwWindowHint(GLFW_AUTO_ICONIFY, GLFW_FALSE);
         glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-
+        // 【Q4】刻意不启用 GLFW_SCALE_TO_MONITOR：那会让 GLFW 在 DPI 变化时
+        // 自动按缩放比改写窗口的**逻辑**尺寸，与用户固定配置（如 840x600）
+        // 打架，跨屏时还会把配置越放越大。PMv2 下我们要的是
+        // 「逻辑尺寸保持 840x600、framebuffer 物理像素随缩放变化」，
+        // 由 App 每帧把 glViewport 统一到物理像素，并用
+        // glfwSetWindowContentScaleCallback 感知缩放变化。
         window_ = glfwCreateWindow(options.width, options.height, options.title.c_str(),
                                    nullptr, nullptr);
         if (window_) break;
@@ -266,6 +273,11 @@ bool Window::Create(const WindowOptions& options, std::string& error) {
     glfwSetScrollCallback(window_, &Window::GlfwScrollCallback);
     glfwSetFramebufferSizeCallback(window_, &Window::GlfwFramebufferSizeCallback);
     glfwSetWindowSizeCallback(window_, &Window::GlfwWindowSizeCallback);
+#if defined(GLFW_SCALE_TO_MONITOR)
+    // GLFW 3.3+：窗口被拖到不同 DPI 的显示器、或系统缩放比例改变时回调。
+    // 此时 framebuffer 物理像素尺寸随之改变，必须让渲染层重新设置 glViewport。
+    glfwSetWindowContentScaleCallback(window_, &Window::GlfwWindowContentScaleCallback);
+#endif
     glfwSetWindowCloseCallback(window_, &Window::GlfwWindowCloseCallback);
 
     // 先定位再显示，避免出现窗口先在 (0,0) 闪一下再跳到目标位置的情况。
@@ -277,6 +289,17 @@ bool Window::Create(const WindowOptions& options, std::string& error) {
     // 把 GL 上下文绑定到当前线程并初始化 GLEW：这是渲染能出图的前提，
     // 缺了这两步，渲染层的所有 GL 调用都会因为「无当前上下文」而失败。
     if (!InitGL(error)) return false;
+
+    // 启动即把「逻辑尺寸 / framebuffer 物理尺寸 / 内容缩放比」写进日志。
+    // 用户排查 x2.13 / x1.06 下渲染图被窗口截断时，这一行能直接说明
+    // 三者是否一致，不必再用 System Informer 抓窗口矩形。
+    const Vec2 fb = FramebufferSize();
+    const Vec2 scale = ContentScale();
+    PPET_LOG_TAG("WINDOW",
+                 "窗口已创建：逻辑 %dx%d / framebuffer %dx%d / 内容缩放 %.2fx%.2f",
+                 options.width, options.height, static_cast<int>(fb.x),
+                 static_cast<int>(fb.y), static_cast<double>(scale.x),
+                 static_cast<double>(scale.y));
 
     ++g_windowCount;
     return true;
@@ -493,6 +516,27 @@ Vec2 Window::Size() const {
     int height = 0;
     glfwGetWindowSize(window_, &width, &height);
     return Vec2(static_cast<float>(width), static_cast<float>(height));
+}
+
+Vec2 Window::FramebufferSize() const {
+    if (!window_) return Vec2();
+    int width = 0;
+    int height = 0;
+    // 物理像素尺寸：HiDPI 下可能是 Size() 的 1.06x / 2.13x。
+    // glViewport 与投影矩阵必须统一用它，否则渲染图会被窗口客户区截断。
+    glfwGetFramebufferSize(window_, &width, &height);
+    return Vec2(static_cast<float>(width), static_cast<float>(height));
+}
+
+Vec2 Window::ContentScale() const {
+    if (!window_) return Vec2(1.0f, 1.0f);
+#if defined(GLFW_SCALE_TO_MONITOR)
+    float x = 1.0f;
+    float y = 1.0f;
+    glfwGetWindowContentScale(window_, &x, &y);
+    if (x > 0.0f && y > 0.0f) return Vec2(x, y);
+#endif
+    return Vec2(1.0f, 1.0f);
 }
 
 void Window::SetPosition(int x, int y) {
@@ -811,6 +855,21 @@ void Window::GlfwFramebufferSizeCallback(GLFWwindow* handle, int width, int heig
     Window* self = static_cast<Window*>(glfwGetWindowUserPointer(handle));
     if (!self) return;
     if (self->onResize) self->onResize(width, height);
+}
+
+void Window::GlfwWindowContentScaleCallback(GLFWwindow* handle, float xScale,
+                                            float yScale) {
+    Window* self = static_cast<Window*>(glfwGetWindowUserPointer(handle));
+    if (!self) return;
+    int fbW = 0;
+    int fbH = 0;
+    glfwGetFramebufferSize(handle, &fbW, &fbH);
+    PPET_LOG_TAG("WINDOW", "DPI 内容缩放变化：%.2fx%.2f，framebuffer -> %dx%d",
+                 static_cast<double>(xScale), static_cast<double>(yScale), fbW, fbH);
+    if (self->onContentScale) self->onContentScale(xScale, yScale);
+    // 兜底：部分驱动在缩放变化时不一定派发 framebuffer size 回调，
+    // 这里显式通知渲染层按新的物理像素尺寸重设 glViewport。
+    if (self->onResize) self->onResize(fbW, fbH);
 }
 
 void Window::GlfwWindowCloseCallback(GLFWwindow* handle) {

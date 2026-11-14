@@ -34,6 +34,12 @@ Vec3 LinearToSrgb(const Vec3& c) {
     return {LinearChannelToSrgb(c.x), LinearChannelToSrgb(c.y), LinearChannelToSrgb(c.z)};
 }
 
+void SetViewport(int width, int height) {
+    // 调用方（App::BuildRenderContext）已通过 ResolveViewportSize 保证 >= 1，
+    // 这里再兜底一次，防止其它调用路径传入 0 触发 GL_INVALID_VALUE。
+    glViewport(0, 0, width > 0 ? width : 1, height > 0 ? height : 1);
+}
+
 void ClearTransparent() {
     // glClear 受 colorMask / depthMask 影响。绘制半透明材质时
     // SkinnedMeshRenderer::ApplyMaterial 会把 glDepthMask 置成 GL_FALSE

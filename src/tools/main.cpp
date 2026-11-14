@@ -44,9 +44,43 @@ void ApplyLogOptions(int argc, char** argv) {
     }
 }
 
+#if defined(_WIN32)
+/// 在 QApplication / GLFW 创建任何窗口之前声明 Per-Monitor V2 DPI 感知（Q4）。
+///
+/// Qt 6 默认已经会设置 PMv2，但显式声明能保证「第一个窗口创建前」就已生效，
+/// 也让 last.log 的窗口尺寸日志有确定的前提。全部用 GetProcAddress 动态解析，
+/// 避免给构建引入 shcore.lib 依赖或抬高最低系统版本；Win8.1 回退到
+/// shcore!SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE = 2)。
+void EnablePerMonitorV2DpiAwareness() {
+    // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 == (DPI_AWARENESS_CONTEXT)-4
+    if (HMODULE user32 = ::LoadLibraryW(L"user32.dll")) {
+        using SetCtxFn = BOOL(WINAPI*)(void*);
+        auto setCtx = reinterpret_cast<SetCtxFn>(reinterpret_cast<void*>(
+            ::GetProcAddress(user32, "SetProcessDpiAwarenessContext")));
+        const BOOL ok =
+            setCtx ? setCtx(reinterpret_cast<void*>(static_cast<INT_PTR>(-4))) : FALSE;
+        ::FreeLibrary(user32);
+        if (ok) return;  // Win10 1703+ 已生效
+    }
+    if (HMODULE shcore = ::LoadLibraryW(L"shcore.dll")) {
+        using SetAwarenessFn = HRESULT(WINAPI*)(int);
+        auto setAwareness = reinterpret_cast<SetAwarenessFn>(reinterpret_cast<void*>(
+            ::GetProcAddress(shcore, "SetProcessDpiAwareness")));
+        if (setAwareness) setAwareness(2);
+        ::FreeLibrary(shcore);
+    }
+}
+#endif
+
 }  // namespace
 
 int main(int argc, char** argv) {
+#if defined(_WIN32)
+    // 必须在 QApplication / GLFW 创建任何窗口之前设置：PMv2 下
+    // framebuffer 物理像素与窗口逻辑尺寸不同，正是 Q4 修复的前提。
+    EnablePerMonitorV2DpiAwareness();
+#endif
+
     // 原 Electron 版在 Win7 上禁用硬件加速；此处保留一个通用的兼容开关位，
     // 具体是否需要由 GLFW/驱动自行判断。
 

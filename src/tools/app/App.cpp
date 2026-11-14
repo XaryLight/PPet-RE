@@ -19,6 +19,7 @@
 #include <QLineEdit>
 #include <QString>
 
+#include <src/tools/core/DpiLayout.hpp>
 #include <src/tools/core/Math.hpp>
 #include <src/tools/core/FileIO.hpp>
 #include <src/tools/core/Log.hpp>
@@ -249,10 +250,25 @@ bool App::Initialize(std::string& error) {
         windowMovedByUser_ = true;
     };
 
-    window_.onResize = [this](int, int) {
-        // 尺寸变化时通知模型重新取景。
+    window_.onResize = [this](int fbWidth, int fbHeight) {
+        // 回调参数就是 framebuffer 物理像素尺寸（见 Window::onResize 契约）。
+        // 模型内部缓存的 viewportWidth_/Height_ 必须与 ctx.viewportWidth/Height
+        // 同源，否则回退取景仍按逻辑尺寸算，HiDPI 下会再次错位。
         const Vec2 size = window_.Size();
-        if (model_) model_->OnResize(static_cast<int>(size.x), static_cast<int>(size.y));
+        const ViewportSize vp =
+            ResolveViewportSize(fbWidth, fbHeight, static_cast<int>(size.x),
+                                static_cast<int>(size.y));
+        if (model_) model_->OnResize(vp.width, vp.height);
+    };
+
+    window_.onContentScale = [this](float xScale, float yScale) {
+        // 窗口被拖到不同 DPI 的显示器 / 系统缩放改变：Window 层已经兜底
+        // 再发一次 onResize(fbW, fbH)，这里只记录便于对照排查的日志。
+        const Vec2 fb = window_.FramebufferSize();
+        PPET_LOG_TAG("WINDOW",
+                     "内容缩放变化：%.2fx%.2f，渲染视口 -> %dx%d（framebuffer 物理像素）",
+                     static_cast<double>(xScale), static_cast<double>(yScale),
+                     static_cast<int>(fb.x), static_cast<int>(fb.y));
     };
 
     window_.onClose = [this]() { running_ = false; };
@@ -745,8 +761,14 @@ bool App::LoadModel(const std::string& path, ModelLoadError& out, bool notifyUse
         }
     }
 
+    // 与 BuildRenderContext 同源：模型缓存的取景尺寸取 framebuffer 物理像素，
+    // 避免 HiDPI 下加载模型瞬间按逻辑尺寸取景、随后每帧又按物理像素渲染。
     const Vec2 size = window_.Size();
-    model_->OnResize(static_cast<int>(size.x), static_cast<int>(size.y));
+    const Vec2 fb = window_.FramebufferSize();
+    const ViewportSize vp =
+        ResolveViewportSize(static_cast<int>(fb.x), static_cast<int>(fb.y),
+                            static_cast<int>(size.x), static_cast<int>(size.y));
+    model_->OnResize(vp.width, vp.height);
 
     // 保存「实际加载的模型文件」路径：zip 导入时这是解压后的模型文件，
     // 这样下次启动能直接加载，而不必再走一次解压。
@@ -1102,9 +1124,20 @@ void App::ResetWindowPosition() {
 
 RenderContext App::BuildRenderContext(float deltaTime) const {
     RenderContext ctx;
+    // 【Q4 / HiDPI】两套坐标必须严格分开：
+    //   - size：窗口**逻辑**尺寸（屏幕坐标），用于配置、位置、鼠标归一化；
+    //   - fb：framebuffer **物理像素**（x1.06 / x2.13 下约为 size 的倍数），
+    //     用于 glViewport 与投影矩阵。
+    // 早期把 viewportWidth/Height 填成逻辑尺寸，而 GL 默认视口是物理像素，
+    // 于是「矩阵按 840x600 算、视口按 1789x1278 画」，模型被放大/偏移，
+    // 超出窗口客户区的像素被直接截断。
     const Vec2 size = window_.Size();
-    ctx.viewportWidth = static_cast<int>(size.x);
-    ctx.viewportHeight = static_cast<int>(size.y);
+    const Vec2 fb = window_.FramebufferSize();
+    const ViewportSize vp =
+        ResolveViewportSize(static_cast<int>(fb.x), static_cast<int>(fb.y),
+                            static_cast<int>(size.x), static_cast<int>(size.y));
+    ctx.viewportWidth = vp.width;
+    ctx.viewportHeight = vp.height;
     ctx.deltaTime = deltaTime;
     // 渲染缩放：模型在窗口中的显示大小（>1 更大）。
     ctx.renderScale = configStore_.config().renderScale;
@@ -1264,6 +1297,12 @@ void App::Run() {
         ProcessInput();
 
         const RenderContext ctx = BuildRenderContext(deltaTime);
+        // 【Q4】每帧显式把 glViewport 设为 framebuffer 物理像素，且与
+        // ctx.viewportWidth/Height 严格一致。GL 默认视口是「上下文创建时」的
+        // framebuffer 尺寸，DPI / 窗口尺寸变化后不会自动跟着更新；早期主循环
+        // 从不设置 glViewport，导致投影矩阵（按逻辑尺寸算）与实际视口不一致。
+        // 必须在 ClearTransparent() 与 IModel::Render() 之前设置。
+        SetViewport(ctx.viewportWidth, ctx.viewportHeight);
         // 每帧必须先清屏（颜色 + 深度），与 IModel::Render 的契约一致。
         // 双缓冲交换后 back buffer 内容按 GL 规范是未定义的，深度缓冲也会
         // 残留上一帧的值；不清屏时下一帧所有片元因深度相等被 GL_LESS 剔除，

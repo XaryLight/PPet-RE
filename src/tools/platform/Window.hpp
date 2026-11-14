@@ -65,11 +65,20 @@ public:
     void SetTransparent(bool transparent);
     void SetTitle(const std::string& title);
 
-    /// 窗口位置与尺寸（虚拟桌面坐标）。
+    /// 窗口位置与尺寸（虚拟桌面坐标 / 屏幕坐标）。
     Vec2 Position() const;
     Vec2 Size() const;
     void SetPosition(int x, int y);
     void SetSize(int width, int height);
+
+    /// OpenGL framebuffer 的**物理像素**尺寸。
+    /// HiDPI 下与 Size() 不同（x2.13 时约为 Size() 的 2.13 倍）；
+    /// glViewport 与投影矩阵必须统一使用这组尺寸，否则渲染图会被窗口截断。
+    Vec2 FramebufferSize() const;
+
+    /// 窗口所在显示器的内容缩放比（GLFW 3.3+）。
+    /// 不支持或取不到时返回 (1,1)。
+    Vec2 ContentScale() const;
 
     /// 每帧调用：处理全屏应用置顶维持等平台逻辑。
     ///
@@ -107,6 +116,9 @@ public:
     /// 参数是**帧缓冲的实际像素尺寸**（HiDPI 下与窗口逻辑尺寸不同），
     /// 渲染层可直接用它设置 glViewport。
     std::function<void(int width, int height)> onResize;
+    /// 内容缩放比变化（窗口被拖到不同 DPI 的显示器、或系统缩放设置改变）。
+    /// 参数通常是 1.0 / 1.25 / 2.13 这类值；此时 framebuffer 尺寸也随之改变。
+    std::function<void(float xScale, float yScale)> onContentScale;
     std::function<void()> onClose;
 
 private:
@@ -134,6 +146,8 @@ private:
     static void GlfwScrollCallback(GLFWwindow* handle, double dx, double dy);
     static void GlfwWindowSizeCallback(GLFWwindow* handle, int width, int height);
     static void GlfwFramebufferSizeCallback(GLFWwindow* handle, int width, int height);
+    static void GlfwWindowContentScaleCallback(GLFWwindow* handle, float xScale,
+                                               float yScale);
     static void GlfwWindowCloseCallback(GLFWwindow* handle);
 
     GLFWwindow* window_ = nullptr;

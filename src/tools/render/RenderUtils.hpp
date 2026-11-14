@@ -21,6 +21,15 @@ Vec3 LinearToSrgb(const Vec3& c);
 /// 桌宠窗口需要真透明，因此不能用黑色清屏。
 void ClearTransparent();
 
+/// 每帧把 glViewport 显式设为 **framebuffer 物理像素**尺寸。
+///
+/// HiDPI（Windows Per-monitor V2、x2.13 等）下 framebuffer 与窗口逻辑尺寸
+/// 不同；早期主循环从不设置 glViewport，GL 默认视口是创建时的 framebuffer
+/// 尺寸，而投影矩阵却按 glfwGetWindowSize 的逻辑尺寸计算，两者不一致会让
+/// 模型被放大/偏移、超出窗口客户区的像素被截断。
+/// 渲染上下文的 viewportWidth/Height 也取同一组物理像素，保持严格一致。
+void SetViewport(int width, int height);
+
 /// 检查 OpenGL 错误队列。
 /// @return 有错误时返回 true（并把错误码与调用位置打印到 stderr）。
 bool CheckGlError(const char* file, int line);

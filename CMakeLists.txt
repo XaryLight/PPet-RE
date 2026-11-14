@@ -800,7 +800,12 @@ endif()
 # ---------------------------------------------------------------------------
 # 平台层冒烟测试
 # ---------------------------------------------------------------------------
-add_executable(ppet_platform_smoke tools/platform_smoke.cpp)
+# Window.cpp 现在会写 [WINDOW] 日志（Q4 的 DPI 尺寸诊断），因此链接
+# ppet_platform 静态库的可执行目标必须同时提供 Log.cpp 的实现。
+add_executable(ppet_platform_smoke
+    tools/platform_smoke.cpp
+    src/tools/core/Log.cpp
+)
 target_link_libraries(ppet_platform_smoke PRIVATE ppet_platform)
 
 # 有 xvfb-run 时用它提供虚拟显示（无人值守环境下也能跑完整的图形路径）；
@@ -1175,6 +1180,14 @@ add_executable(ppet_part_opacity_plan_test tools/part_opacity_plan_test.cpp)
 target_include_directories(ppet_part_opacity_plan_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME part_opacity_plan_unit
          COMMAND ppet_part_opacity_plan_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# 高 DPI 视口解析（Q4）：把 framebuffer 物理像素与窗口逻辑尺寸分离，
+# 修复 x2.13 / x1.06 缩放下渲染图被固定 840x600 客户区截断。纯头文件、零依赖。
+add_executable(ppet_dpi_layout_test tools/dpi_layout_test.cpp)
+target_include_directories(ppet_dpi_layout_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME dpi_layout_unit
+         COMMAND ppet_dpi_layout_test
          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
 # 真实内容帧 / 动态像素比：按模型真实渲染像素推算窗口比例与居中 contain fit，
