@@ -20,6 +20,7 @@
 #include <QString>
 
 #include <src/tools/core/DpiLayout.hpp>
+#include <src/tools/core/WindowFit.hpp>
 #include <src/tools/core/Math.hpp>
 #include <src/tools/core/FileIO.hpp>
 #include <src/tools/core/Log.hpp>
@@ -180,6 +181,10 @@ bool App::Initialize(std::string& error) {
     opts.skipTaskbar = true;
 
     if (!window_.Create(opts, error)) return false;
+
+    // 【Q2】配置里的 windowWidth/Height 是「当前渲染倍率下」的窗口尺寸，
+    // 启动时把它记为基准，避免首次 ApplyConfig() 又按倍率放大一次。
+    appliedRenderScale_ = configStore_.config().renderScale;
 
     // --- 输入回调 ---
     window_.onMouseButton = [this](int button, int action) {
@@ -465,7 +470,7 @@ void App::EmitPluginEvent(plugin::PluginEventKind kind, std::string source,
 // ---------------------------------------------------------------------------
 
 void App::ApplyConfig() {
-    const auto& cfg = configStore_.config();
+    auto& cfg = configStore_.config();
     window_.SetAlwaysOnTop(cfg.alwaysOnTop);
     window_.SetIgnoreMouseEvents(cfg.ignoreMouseEvents);
 
@@ -488,6 +493,53 @@ void App::ApplyConfig() {
     // 此前该值从未落地到模型，拖动滑块毫无反应、且模型永远停在默认 30°（偏大）。
     // 钳制统一走 TrackingPolicy::ClampTrackingAngle（[0,90]），模型内部是第二道防线。
     if (model_) model_->SetMaxTrackingAngle(ClampTrackingAngle(cfg.maxTrackingAngle));
+
+    // 【Q2】渲染倍率 = 整个渲染窗口的缩放倍率。
+    //
+    // 旧实现把 renderScale 直接乘进模型 contain fit：
+    //     k = min(vw/W, vh/H) * margin * renderScale
+    // 于是「模型占窗口比例」恒为 margin * renderScale，与窗口尺寸无关 ——
+    // 倍率只要 > 1.05 模型就必然超出窗口客户区被截断，且 `window : 437x600`
+    // 固定不变。现在改为按倍率等比调整**窗口**，模型取景恒按 1.0 倍，
+    // 任何倍率下都完整不截断，`window` 状态随之变化。
+    const float targetScale = cfg.renderScale;
+    if (std::fabs(targetScale - appliedRenderScale_) > 0.001f) {
+        const float previousScale = appliedRenderScale_;
+        const float ratio = targetScale / std::max(previousScale, 0.01f);
+        const Vec2 before = window_.Size();
+        const IntRect desk = DesktopRect();
+        const int maxW = std::max(160, desk.width - 24);
+        const int maxH = std::max(200, desk.height - 24);
+        const WindowSize target = ScaleWindowSize(
+            static_cast<int>(before.x), static_cast<int>(before.y), ratio,
+            160, 200, maxW, maxH);
+        if (target.width != static_cast<int>(before.x) ||
+            target.height != static_cast<int>(before.y)) {
+            window_.SetSize(target.width, target.height);
+            ClampWindowToDesktop();
+            const Vec2 after = window_.Size();
+            // 被桌面尺寸限制时实际倍率小于目标值：按真实尺寸变化更新基准，
+            // 避免用户反复拖动滑块时窗口尺寸逐步漂移。
+            appliedRenderScale_ = previousScale *
+                EffectiveScaleRatio(static_cast<int>(before.x),
+                                    static_cast<int>(before.y),
+                                    static_cast<int>(after.x),
+                                    static_cast<int>(after.y));
+            // onConfigChanged 先 SaveConfig() 再 ApplyConfig()：这里同步写回
+            // 内存中的配置，保证下次启动沿用调整后的窗口尺寸。
+            cfg.windowWidth = static_cast<int>(after.x);
+            cfg.windowHeight = static_cast<int>(after.y);
+            PPET_LOG_TAG("WINDOW",
+                         "渲染倍率 %.2fx -> %.2fx，窗口 %dx%d -> %dx%d（桌面可用 %dx%d）",
+                         static_cast<double>(previousScale),
+                         static_cast<double>(targetScale),
+                         static_cast<int>(before.x), static_cast<int>(before.y),
+                         static_cast<int>(after.x), static_cast<int>(after.y),
+                         maxW, maxH);
+        } else {
+            appliedRenderScale_ = targetScale;
+        }
+    }
 
     // 需求 6：广播「配置变更」事件（含本次变化的关键字段），插件可据此响应。
     EmitPluginEvent(plugin::PluginEventKind::ConfigChanged, std::string(),
@@ -1154,7 +1206,8 @@ RenderContext App::BuildRenderContext(float deltaTime) const {
     ctx.viewportWidth = vp.width;
     ctx.viewportHeight = vp.height;
     ctx.deltaTime = deltaTime;
-    // 渲染缩放：模型在窗口中的显示大小（>1 更大）。
+    // 渲染缩放（Q2）：整个窗口的倍率，App 已据此调整窗口尺寸；
+    // 模型取景恒按 1.0 倍，此字段保留给运行时诊断与插件读取。
     ctx.renderScale = configStore_.config().renderScale;
 
     const Vec2 pos = window_.Position();

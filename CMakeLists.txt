@@ -1190,6 +1190,14 @@ add_test(NAME dpi_layout_unit
          COMMAND ppet_dpi_layout_test
          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
+# 渲染倍率 / 窗口尺寸（Q2）：倍率变化时窗口等比调整且不被桌面限制压扁，
+# 修复「window 固定 437x600，1.0x -> 2.0x 后渲染图被截断」。纯头文件、零依赖。
+add_executable(ppet_window_fit_test tools/window_fit_test.cpp)
+target_include_directories(ppet_window_fit_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME window_fit_unit
+         COMMAND ppet_window_fit_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
 # 真实内容帧 / 动态像素比：按模型真实渲染像素推算窗口比例与居中 contain fit，
 # 验证横向宽幅内容在方形窗口里不被截断（需求 3）。纯头文件、零依赖。
 add_executable(ppet_live2d_frame_test tools/live2d_frame_test.cpp)

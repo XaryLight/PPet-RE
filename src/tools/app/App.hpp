@@ -212,6 +212,11 @@ private:
     Vec2 windowCursor_{0.0f, 0.0f};
     bool hasWindowCursor_ = false;
 
+    /// 【Q2】当前窗口尺寸所代表的「渲染倍率」基准。配置变化时按
+    /// targetScale / appliedRenderScale_ 的比值增量调整窗口，避免累乘漂移。
+    /// 启动时初始化为 config.renderScale（见 Init 中窗口创建之后）。
+    float appliedRenderScale_ = 1.0f;
+
     /// 插件管理器（需求 6）：注册内置插件、广播应用事件。
     plugin::PluginManager pluginManager_;
 

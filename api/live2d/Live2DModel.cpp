@@ -1673,8 +1673,11 @@ Mat4 Live2DModel::BuildTransform(const RenderContext& ctx) const {
     //   - 旧实现假设顶点以原点为中心（平移=0），偏心导出的模型会偏出画面；
     //   - contain fit 取较小边铺满，任何窗口比例下内容都完整不截断。
     float fitMatrix[16];
+    // 【Q2】渲染倍率由 App 等比调整**窗口尺寸**承担，模型取景恒按 1.0 倍。
+    // 若这里再乘 ctx.renderScale，窗口放大 r 倍后 viewport 也放大 r 倍，
+    // 模型会被双重放大到占窗口 0.95*r 倍（>1 即被客户区截断）。
     if (ppet::live2d::ComputeFitMatrix(impl_->contentFrame, vw, vh,
-                                       ctx.renderScale, 0.95f, fitMatrix)) {
+                                       1.0f, 0.95f, fitMatrix)) {
         Mat4 m;
         for (int i = 0; i < 16; ++i) m.m[i] = fitMatrix[i];
         return m;
@@ -1686,8 +1689,9 @@ Mat4 Live2DModel::BuildTransform(const RenderContext& ctx) const {
     const float ppu = canvas.pixelsPerUnit > 0.0f ? canvas.pixelsPerUnit : 1.0f;
     const float W = canvas.sizeInPixels.x / ppu;
     const float H = canvas.sizeInPixels.y / ppu;
+    // 同样不乘 renderScale（见上方 Q2 说明），倍率由窗口尺寸承担。
     const float k = std::min(vw / (W > 0.0f ? W : 1.0f),
-                              vh / (H > 0.0f ? H : 1.0f)) * 0.95f * ctx.renderScale;
+                              vh / (H > 0.0f ? H : 1.0f)) * 0.95f;
     Mat4 m = Mat4::Identity();
     m.At(0, 0) = k / (vw * 0.5f);
     m.At(1, 1) = k / (vh * 0.5f);

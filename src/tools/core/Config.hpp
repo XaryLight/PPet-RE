@@ -37,7 +37,8 @@ struct AppConfig {
     /// 旧配置没有这个字段时 Load() 会按路径补齐，向后兼容。
     std::vector<std::string> modelNames;
 
-    /// 渲染缩放（1.0 为原始大小）。
+    /// 渲染缩放（1.0 为基准）：整个渲染窗口的缩放倍率，改变时窗口尺寸
+    /// 会等比调整，模型始终完整显示（见 WindowFit.hpp / Q2）。
     float renderScale = 1.0f;
 
     /// 加载模型后按「模型实际帧宽高比」自动调整渲染窗口尺寸。

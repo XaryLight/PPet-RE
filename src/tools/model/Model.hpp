@@ -98,8 +98,10 @@ struct RenderContext {
     /// 后端据此决定是否驱动眼球/头部参数。
     bool HasCursorTarget() const { return hasGlobalCursor || hasWindowCursor; }
 
-    /// 渲染缩放：>1 表示模型在窗口中显示得更大，<1 表示更小。
-    /// 取景时用它调整正交视体的半高（除以该系数即等比放大模型）。
+    /// 渲染缩放（Q2 后语义）：整个**渲染窗口**相对 1.0x 的缩放倍率。
+    /// App 在倍率变化时等比调整窗口尺寸，模型取景恒按 1.0 倍 contain fit，
+    /// 因此任何倍率下模型都完整不截断。保留该字段供运行时诊断/插件读取，
+    /// 三个后端不再把它乘进取景矩阵（否则窗口放大后会被双重放大）。
     float renderScale = 1.0f;
 };
 

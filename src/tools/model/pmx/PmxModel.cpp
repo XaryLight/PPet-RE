@@ -1084,7 +1084,9 @@ void PmxModel::Render(const RenderContext& ctx) {
         UpdateSkinningMatrices();
     }
 
-    const Mat4 viewProj = ComputeViewProjection(width, height, ctx.renderScale);
+    // 【Q2】渲染倍率由 App 等比调整窗口尺寸承担，取景恒按 1.0 倍：
+    // 窗口放大 r 倍后 viewport 也放大 r 倍，这里再除 renderScale 会双重放大并截断。
+    const Mat4 viewProj = ComputeViewProjection(width, height, 1.0f);
     renderer_.Draw(viewProj, skinningMatrices_, kLightDir);
     drawCalls_ += mesh_.subMeshes.size();
     if (hasOutline_) {
