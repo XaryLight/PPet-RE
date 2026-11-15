@@ -105,6 +105,20 @@ inline ModelColor MaskPassColor(float maskSourceOpacity) {
     return {1.0f, 1.0f, 1.0f, 1.0f};
 }
 
+/// 遮罩通道是否应绘制该 drawable（纯逻辑契约，可单测）。
+///
+/// 【Q1 回归】遮罩是「另一块部件的几何形状」，shader 在 u_maskPass 分支
+/// 只输出覆盖度、不采样任何纹理，因此**纹理是否就绪一律不影响绘制**。
+/// 早期 DrawDrawable() 在 maskPass 里也走「纹理 id 为 0 就 return」，而
+/// whiteTexture 只在贴图加载失败时才创建 —— 贴图全部加载成功的模型
+/// whiteTexture==0，于是所有遮罩源一个都没画进 FBO（遮罩纹理 alpha 全 0），
+/// 被裁剪部件（瞳孔 / 虹膜）被整块裁掉，眼睛变成「框内纯白无眼睛」。
+/// textureReady 仅作诊断传入、刻意不参与判定，用于锁定这条回归。
+inline bool MaskPassDrawableValid(bool geometryValid, bool textureReady) {
+    (void)textureReady;
+    return geometryValid;
+}
+
 /// 一个 Drawable 的渲染元数据（由 Cubism Core 适配层每帧填充）。
 struct DrawableDesc {
     int index = -1;

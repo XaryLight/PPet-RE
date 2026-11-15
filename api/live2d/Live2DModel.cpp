@@ -764,9 +764,12 @@ void Live2DModel::LoadTextures() {
         impl_->textures.push_back(texture);
     }
 
-    if (impl_->textures.empty() && !impl_->whiteTexture) {
-        impl_->whiteTexture = CreateWhiteTexture();
-    }
+    // 【Q1 修复】白纹理不只是「贴图加载失败时的占位」：遮罩 pass 还要把它
+    // 绑到 TEXTURE1 作为合法 sampler（规避 framebuffer feedback loop）。
+    // 过去只在 `textures.empty()` 或某张贴图加载失败时才创建，导致「贴图全部
+    // 加载成功」的模型 whiteTexture==0，遮罩 FBO 全空、眼睛被裁成纯白。
+    // 因此只要还没创建就无条件补上（与 manifest 里贴图数量无关）。
+    if (!impl_->whiteTexture) impl_->whiteTexture = CreateWhiteTexture();
 }
 
 void Live2DModel::LoadMotions() {
@@ -1694,6 +1697,10 @@ Mat4 Live2DModel::BuildTransform(const RenderContext& ctx) const {
 void Live2DModel::Render(const RenderContext& ctx) {
     if (!loaded_ || !impl_ || !impl_->model) return;
 
+    // 若 Load() 发生在无 GL 上下文时，LoadTextures() 里的 CreateWhiteTexture()
+    // 会失败；首帧 Render 补一次，保证遮罩 pass 与主 pass 的占位纹理就绪。
+    if (!impl_->whiteTexture) impl_->whiteTexture = CreateWhiteTexture();
+
     // --- 准备着色器 ---
     if (!impl_->program) {
         impl_->program = CompileProgram(kVertexShader, kFragmentShader);
@@ -1967,11 +1974,19 @@ void Live2DModel::DrawDrawable(int index, const Mat4& transform, bool maskPass) 
     // 遮罩通道画的是「形状」：Cubism 里纯裁剪部件常 csmIsVisible=false 或
     // opacity=0，但它的几何仍要进遮罩纹理。早期版本在这里一刀切 return，
     // 会让这类遮罩纹理全空 → 被裁剪部件整块消失 / 出现透明块。
-    if (!maskPass) {
-        if (!drawable.visible) return;
-        if (drawable.opacity <= 0.0f) return;
+    //
+    // 【Q1 修复】maskPass 绝不能再检查「纹理 id 是否有效」：遮罩通道的
+    // shader 只输出几何覆盖度，不采样任何纹理，而 whiteTexture 过去只在
+    // 贴图加载失败时才创建（贴图全部成功的模型 whiteTexture==0），旧代码
+    // 末尾 `if (!texture) return;` 让所有遮罩源一个都没画进 FBO。真实
+    // aierdeliqi_5 dump 的 6 张遮罩 FBO alpha 全为 0，瞳孔被整块裁掉。
+    const bool geometryValid =
+        drawable.positions && drawable.uvs && drawable.indices;
+    if (maskPass) {
+        if (!MaskPassDrawableValid(geometryValid, impl_->whiteTexture != 0)) return;
+    } else {
+        if (!drawable.visible || drawable.opacity <= 0.0f || !geometryValid) return;
     }
-    if (!drawable.positions || !drawable.uvs || !drawable.indices) return;
 
     // transform（模型视图矩阵）在 BuildTransform 中给出，用于把模型放到屏幕位置；
     // 当前顶点已按画布坐标系上传，绘制暂未显式乘入该矩阵，保留参数以便后续接入。
@@ -2043,13 +2058,17 @@ void Live2DModel::DrawDrawable(int index, const Mat4& transform, bool maskPass) 
     // 本函数只负责几何、纹理与 glDrawElements，不再自己决定 GL 状态。
     // 遮罩通道（maskPass）由 RenderMaskTexture() 设置普通混合与白色 baseColor。
 
-    // --- 纹理 ---
-    GLuint texture = impl_->whiteTexture;
-    if (hasOwnTexture && !maskPass) {
-        texture = impl_->textures[static_cast<std::size_t>(textureIndex)];
+    // --- 纹理（仅主 pass 需要）---
+    // 【Q1 修复】maskPass 的 shader 不采样任何纹理，不能在这里要求纹理有效，
+    // 否则 whiteTexture==0 时会跳过所有遮罩源（详见函数开头注释）。
+    if (!maskPass) {
+        GLuint texture = impl_->whiteTexture;
+        if (hasOwnTexture) {
+            texture = impl_->textures[static_cast<std::size_t>(textureIndex)];
+        }
+        if (!texture) return;
+        glBindTexture(GL_TEXTURE_2D, texture);
     }
-    if (!texture) return;
-    glBindTexture(GL_TEXTURE_2D, texture);
 
     glDrawElements(GL_TRIANGLES, drawable.indexCount, GL_UNSIGNED_SHORT, nullptr);
     glBindVertexArray(0);

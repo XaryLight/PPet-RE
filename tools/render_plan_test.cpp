@@ -193,6 +193,22 @@ void TestMaskPassColor() {
           "主 pass 仍按 opacity 缩放（与遮罩通道区分）");
 }
 
+/// Q1 回归：贴图全部加载成功的模型 whiteTexture==0，早期 DrawDrawable 在
+/// mask pass 里也要求纹理有效，导致遮罩 FBO 全空、瞳孔被裁掉（纯白眼睛）。
+void TestMaskPassDrawableValid() {
+    std::printf("-- 遮罩通道绘制不依赖纹理就绪（Q1 回归）--\n");
+    // 核心：白纹理没创建时仍必须画遮罩源。
+    Check(MaskPassDrawableValid(true, false),
+          "几何有效 + 白纹理未创建 -> 必须画（否则遮罩 FBO 全空）");
+    Check(MaskPassDrawableValid(true, true),
+          "几何有效 + 白纹理就绪 -> 必须画");
+    Check(!MaskPassDrawableValid(false, true), "几何无效 -> 跳过");
+    Check(!MaskPassDrawableValid(false, false), "几何无效且无纹理 -> 跳过");
+    // 纹理就绪与否不得改变判定结果（契约里刻意忽略 textureReady）。
+    Check(MaskPassDrawableValid(true, false) == MaskPassDrawableValid(true, true),
+          "判定与纹理就绪状态无关");
+}
+
 }  // namespace
 
 int main() {
@@ -204,6 +220,7 @@ int main() {
     TestOpacityAndBlendInPlan();
     TestMaskSourceRegression();
     TestMaskPassColor();
+    TestMaskPassDrawableValid();
     std::printf("=== %d 项检查，失败 %d ===\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }
