@@ -71,6 +71,17 @@ private:
     ContentFrame frame_;
 };
 
+/// 某个 drawable 是否应计入内容包围盒（纯逻辑契约，可单测）。
+///
+/// 【Q3 回归】内容帧必须只统计「本帧真正画得出来的部件」。含大量
+/// PartOpacity 曲线的模型（如 aierdeliqi_5：144 个部件组、默认隐藏 27 个）
+/// 会把备用姿势 / 全屏特效黑幕一并算进去，包围盒虚大数十倍，contain fit
+/// 于是把角色缩到百分之十几，表现为「1.0x 渲染非常小」。默认姿势应用后
+/// 这些部件的 opacity 变为 0，这里把它们排除；纯几何遮罩（无贴图）同理。
+inline bool FrameIncludeDrawable(bool visible, float opacity, bool hasTexture) {
+    return visible && opacity > 0.0f && hasTexture;
+}
+
 /// 由真实内容宽高比推算「不截断」的窗口宽度（固定窗口高度）。
 /// 这是需求 3 的「动态像素比」：横向模型自动得到更宽的窗口。
 inline int FitWindowWidth(float contentAspect, int windowHeight, int minWidth = 64,

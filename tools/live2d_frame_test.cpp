@@ -124,6 +124,37 @@ void TestAspectDeviation() {
     Check(Near(AspectDeviation(0.0f, 1.0f), 0.0f), "无效输入返回 0");
 }
 
+/// Q3 回归：默认姿势里隐藏的部件（备用身体 / 全屏特效黑幕）绝不能计入
+/// 内容包围盒，否则包围盒虚大数十倍，contain fit 把角色缩到极小。
+void TestFrameIncludeDrawable() {
+    std::printf("-- 内容帧部件筛选（Q3 回归）--\n");
+    Check(FrameIncludeDrawable(true, 1.0f, true), "可见+不透明+有贴图 -> 计入");
+    Check(!FrameIncludeDrawable(true, 0.0f, true),
+          "默认姿势隐藏（opacity=0）-> 排除：特效黑幕不撑大取景框");
+    Check(!FrameIncludeDrawable(true, -0.1f, true), "负 opacity -> 排除");
+    Check(!FrameIncludeDrawable(false, 1.0f, true), "不可见 -> 排除");
+    Check(!FrameIncludeDrawable(true, 1.0f, false), "纯几何遮罩无贴图 -> 排除");
+    Check(FrameIncludeDrawable(true, 0.01f, true), "极淡但仍可见 -> 计入");
+
+    // 端到端量化：一个 97x78 的隐藏特效方块 + 13x13 的角色本体，
+    // 若错误地把特效计入，包围盒面积会虚大 ~45 倍（真实模型实测值）。
+    const float character[] = {-6.5f, -6.4f, 6.5f, -6.4f, 6.5f, 6.4f, -6.5f, 6.4f};
+    const float overlay[] = {-47.8f, -38.2f, 49.3f, -38.2f,
+                             49.3f, 40.0f, -47.8f, 40.0f};
+    ContentFrameBuilder wrong;
+    wrong.AddDrawable(character, 4, true);
+    wrong.AddDrawable(overlay, 4, true);  // 旧实现：默认参数下 opacity=1 误计入
+    ContentFrameBuilder right;
+    right.AddDrawable(character, 4, FrameIncludeDrawable(true, 1.0f, true));
+    right.AddDrawable(overlay, 4, FrameIncludeDrawable(true, 0.0f, true));
+    const float wa = wrong.Frame().Width() * wrong.Frame().Height();
+    const float ra = right.Frame().Width() * right.Frame().Height();
+    Check(ra > 0.0f && wa / ra > 40.0f,
+          "排除隐藏特效后包围盒面积缩小 40 倍以上（对应 aierdeliqi_5 实测 45.6x）");
+    Check(Near(right.Frame().Aspect(), 13.0f / 12.8f, 0.01f),
+          "修复后宽高比回归角色本体（约 1.0）");
+}
+
 }  // namespace
 
 int main() {
@@ -132,6 +163,7 @@ int main() {
     TestFitWindowSize();
     TestFitMatrixNoClipping();
     TestAspectDeviation();
+    TestFrameIncludeDrawable();
     std::printf("=== %d 项检查，失败 %d ===\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

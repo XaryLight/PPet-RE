@@ -602,8 +602,33 @@ void Live2DModel::ComputeContentFrame() {
     impl_->contentFrame = ppet::live2d::ContentFrame{};
     if (!impl_ || !impl_->model) return;
 
-    // 让 Core 以默认参数重算一次顶点（Load 阶段可能还没跑过 UpdateModel）。
+    // 【Q3 修复】内容帧必须反映「静止时真正画得出来的部件」。
+    //
+    // 旧实现只做 ResetParametersToDefault + UpdateModel，此时所有 part opacity
+    // 都停在 1.0（Core 不会自动套用 motion3.json 的 PartOpacity 曲线），于是
+    // 遍历时把**默认姿势里本应隐藏**的备用身体 / 全屏特效层一并算进包围盒。
+    // 含大量部件曲线的模型尤其严重：aierdeliqi_5 有 144 个部件组、默认隐藏
+    // 27 个，其中 square_black5/6 是覆盖整张画板的黑幕方块（97x78 模型单位），
+    // 而角色本体只有 13x13 —— 包围盒虚大 45.6 倍，contain fit 就把角色缩到
+    // 线性 14.8%，正是用户说的「1.0x 渲染非常小」。
+    //
+    // 与 Update() 完全同序地应用一次「默认姿势」part opacity 计划，再求包围盒，
+    // 隐藏部件的 drawable opacity 会变成 0，被下面的 include 条件自然排除。
     cubism::ResetParametersToDefault(impl_->model);
+    if (impl_->hasPartOpacityCurves) {
+        cubism::ResetPartOpacities(impl_->model);
+        const PartOpacityMap plan = BuildPartOpacityPlan(impl_->defaultPartOpacity, {});
+        for (const auto& [id, value] : plan) {
+            auto it = impl_->partIndexByName.find(id);
+            int index = (it != impl_->partIndexByName.end()) ? it->second : -1;
+            if (index < 0) {
+                index = cubism::FindPart(impl_->model, id);
+                if (index < 0) continue;
+                impl_->partIndexByName[id] = index;
+            }
+            cubism::SetPartOpacity(impl_->model, index, value);
+        }
+    }
     cubism::UpdateModel(impl_->model);
 
     const int count = cubism::DrawableCount(impl_->model);
@@ -616,9 +641,9 @@ void Live2DModel::ComputeContentFrame() {
         cubism::Drawable d;
         if (!cubism::GetDrawable(impl_->model, i, d)) continue;
         const bool hasTexture = d.textureIndex >= 0 && d.textureIndex < textureCount;
-        // 只统计「可见 + 有贴图」的部件：纯几何遮罩（无贴图）与隐藏部件
-        // 不该撑大取景框，否则又回到「画布过大 → 角色缩小」的老问题。
-        const bool include = d.visible && d.opacity > 0.0f && hasTexture;
+        // 只统计「可见 + 有贴图」的部件：纯几何遮罩（无贴图）与默认姿势里
+        // 隐藏的备用身体 / 特效层不该撑大取景框（见 FrameIncludeDrawable）。
+        const bool include = FrameIncludeDrawable(d.visible, d.opacity, hasTexture);
         builder.AddDrawable(d.positions, d.vertexCount, include);
     }
     impl_->contentFrame = builder.Frame();
