@@ -86,7 +86,8 @@ public:
                        const char* tag, const char* fmt, va_list args);
 
     /// 当前日志文件路径（初始化后可用于错误提示）。
-    static const std::string& Path();
+    /// 返回日志文件路径的副本（不暴露内部引用，避免无锁数据竞争）。
+    static std::string Path();
 
     /// 仅格式化成**一行**（不落盘、不打印），内部换行/制表符一律转义。
     /// 供单元测试与调试面板使用；与运行时开关无关，便于稳定断言。

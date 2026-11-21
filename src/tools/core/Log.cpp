@@ -375,7 +375,10 @@ bool Logger::MultiLine() {
     std::lock_guard<std::mutex> lock(g_mutex);
     return g_multiLine;
 }
-const std::string& Logger::Path() { return g_path; }
+std::string Logger::Path() {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    return g_path;  // 返回副本，调用方不接触内部字符串，消除无锁引用（缺陷 2.1.9）。
+}
 
 std::string Logger::Format(LogLevel level, const std::source_location& loc,
                            const char* tag, std::string_view message) {

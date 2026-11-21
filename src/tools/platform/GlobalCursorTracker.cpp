@@ -61,6 +61,20 @@ namespace {
 
 #if defined(__APPLE__)
 
+/// 把 [NSEvent mouseLocation] 的全局 Cocoa 坐标（左下原点、y 向上、覆盖所有屏幕）
+/// 转换为与 Windows/X11 一致的「虚拟桌面左上原点、y 向下」坐标（缺陷 2.2.3）。
+/// mouseLocation 本身已是全局坐标，不能再减主屏 origin（那是重复换算，
+/// 光标位于副屏/负坐标屏时会算错）。这里只做一次 y 翻转，基准取所有屏幕的最大 Y。
+void CocoaGlobalPointToScreen(const NSPoint& p, float& outX, float& outY) {
+    CGFloat topY = 0;
+    for (NSScreen* s in [NSScreen screens]) {
+        const NSRect f = [s frame];
+        topY = std::max(topY, NSMaxY(f));
+    }
+    outX = static_cast<float>(p.x);
+    outY = static_cast<float>(topY - p.y);
+}
+
 /// macOS 全局事件监听器持有者。
 @interface PPetGlobalMouseMonitor : NSObject
 @property(nonatomic, assign) void* owner;
@@ -70,14 +84,12 @@ namespace {
 @implementation PPetGlobalMouseMonitor
 - (void)onMouseMoved:(NSEvent*)event {
     if (!self.owner) return;
-    // global monitor 的事件坐标位于当前屏幕坐标系，转换为全局坐标需要加上原点偏移。
-    NSScreen* screen = [NSScreen mainScreen];
-    if (!screen) return;
-    const NSRect frame = [screen frame];
-    const NSPoint p = [NSEvent mouseLocation];
+    const NSPoint p = [NSEvent mouseLocation];  // 已是全局坐标，不再减主屏 origin
+    float x = 0.0f;
+    float y = 0.0f;
+    CocoaGlobalPointToScreen(p, x, y);
     auto* tracker = static_cast<GlobalCursorTracker::Impl*>(self.owner);
-    tracker->OnGlobalCursorMoved(static_cast<float>(p.x - frame.origin.x),
-                                 static_cast<float>(frame.origin.y - p.y));
+    tracker->OnGlobalCursorMoved(x, y);
 }
 @end
 
@@ -238,12 +250,11 @@ bool GlobalCursorTracker::QueryCursor(Vec2& out) {
     out = Vec2(static_cast<float>(pt.x), static_cast<float>(pt.y));
     return true;
 #elif defined(__APPLE__)
-    NSScreen* screen = [NSScreen mainScreen];
-    if (!screen) return false;
-    const NSRect frame = [screen frame];
-    const NSPoint p = [NSEvent mouseLocation];
-    out = Vec2(static_cast<float>(p.x - frame.origin.x),
-               static_cast<float>(frame.origin.y - p.y));
+    const NSPoint p = [NSEvent mouseLocation];  // 全局坐标，不再减主屏 origin（缺陷 2.2.3）
+    float x = 0.0f;
+    float y = 0.0f;
+    CocoaGlobalPointToScreen(p, x, y);
+    out = Vec2(x, y);
     return true;
 #else
     // X11：进程级缓存一个 Display，避免每帧 XOpenDisplay 的握手开销。
@@ -295,13 +306,18 @@ void UpdateDesktopImpl(GlobalCursorTracker& tracker) {
     desk.width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
     desk.height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
 #elif defined(__APPLE__)
+    // 用显式 first 标志识别首块屏幕：VirtualDesktop 默认 width=1920，
+    // 不能用 desk.width==0 判断，否则会把虚构的 (0,0)-(1920,1080) 也并进来，
+    // 导致多屏/负坐标范围算错（缺陷 2.2.3）。
+    BOOL firstScreen = YES;
     for (NSScreen* s in [NSScreen screens]) {
         const NSRect f = [s frame];
         const int minX = static_cast<int>(f.origin.x);
         const int minY = static_cast<int>(f.origin.y);
         const int maxX = static_cast<int>(f.origin.x + f.size.width);
         const int maxY = static_cast<int>(f.origin.y + f.size.height);
-        if (desk.width == 0) {
+        if (firstScreen) {
+            firstScreen = NO;
             desk.x = minX;
             desk.y = minY;
             desk.width = maxX - minX;

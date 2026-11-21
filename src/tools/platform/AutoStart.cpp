@@ -108,20 +108,28 @@ bool FileExists(const std::string& path) {
 }
 
 /// 从 plist 中提取 ProgramArguments 数组里的第一个字符串。
+/// 注意：plist 里第一个 <string> 是 Label（com.ppet.ppet），exePath 在
+/// <key>ProgramArguments</key> 之后的数组里（缺陷 2.2.2）。因此必须先定位到
+/// ProgramArguments 段，再取其后第一个 <string>，否则「已启用」会被误判为「未启用」。
 std::string ParseLaunchAgentProgram(const std::string& path) {
     std::ifstream file(path);
     if (!file) return std::string();
-    std::string line;
-    while (std::getline(file, line)) {
-        // 形如：  <string>/path/to/PPet</string>
-        const std::size_t open = line.find("<string>");
-        if (open == std::string::npos) continue;
-        const std::size_t valueStart = open + 8;
-        const std::size_t close = line.find("</string>", valueStart);
-        if (close == std::string::npos) continue;
-        return line.substr(valueStart, close - valueStart);
-    }
-    return std::string();
+    std::string content((std::istreambuf_iterator<char>(file)),
+                        std::istreambuf_iterator<char>());
+
+    const std::size_t keyPos = content.find("<key>ProgramArguments</key>");
+    if (keyPos == std::string::npos) return std::string();
+    const std::size_t arrayPos = content.find("<array>", keyPos);
+    if (arrayPos == std::string::npos) return std::string();
+    const std::size_t arrayEnd = content.find("</array>", arrayPos);
+    if (arrayEnd == std::string::npos) return std::string();
+
+    const std::size_t open = content.find("<string>", arrayPos);
+    if (open == std::string::npos || open >= arrayEnd) return std::string();
+    const std::size_t valueStart = open + 8;
+    const std::size_t close = content.find("</string>", valueStart);
+    if (close == std::string::npos || close > arrayEnd) return std::string();
+    return content.substr(valueStart, close - valueStart);
 }
 
 /// 逐级创建目录（等价于 mkdir -p）。
@@ -356,10 +364,12 @@ bool SetAutoStart(bool enabled, std::string& error) {
         error = "无法写入自启动文件";
         return false;
     }
+    // Exec 路径必须加引号：路径含空格时（如 /home/My User/PPet）不加引号会被
+    // 解析成「程序 + 参数」而启动失败（缺陷 2.2.2）。ParseDesktopExec 已支持去引号。
     file << "[Desktop Entry]\n"
          << "Type=Application\n"
          << "Name=" << kAutoStartName << "\n"
-         << "Exec=" << exePath << "\n"
+         << "Exec=\"" << exePath << "\"\n"
          << "Terminal=false\n"
          << "X-GNOME-Autostart-enabled=true\n";
     file.close();

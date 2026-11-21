@@ -10,6 +10,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <limits>
+#include <new>
 #include <string>
 
 #if defined(_WIN32)
@@ -288,8 +290,25 @@ bool ReadFileBytes(const std::string& path, std::vector<std::uint8_t>& out,
         if (outError) *outError = "文件大小非法";
         return false;
     }
+    // 内存上限 + 32 位可表示性检查（缺陷 2.1.8）：
+    // 按文件大小直接 vector 分配，恶意的超大文件（或 32 位平台QuadPart截断）会 OOM。
+    constexpr std::int64_t kMaxReadBytes = 2LL * 1024 * 1024 * 1024;  // 2 GB
+    if (size.QuadPart > kMaxReadBytes ||
+        static_cast<std::uint64_t>(size.QuadPart) >
+            static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
+        CloseHandle(handle);
+        if (outError) *outError = "文件过大（超过 2 GB 或超出地址空间），已拒绝读取";
+        return false;
+    }
 
-    std::vector<std::uint8_t> buffer(static_cast<std::size_t>(size.QuadPart));
+    std::vector<std::uint8_t> buffer;
+    try {
+        buffer.resize(static_cast<std::size_t>(size.QuadPart));
+    } catch (const std::bad_alloc&) {
+        CloseHandle(handle);
+        if (outError) *outError = "内存不足，无法分配读取缓冲区";
+        return false;
+    }
     std::size_t total = 0;
     while (total < buffer.size()) {
         const DWORD chunk = static_cast<DWORD>(
@@ -381,10 +400,20 @@ bool WriteFileText(const std::string& path, const std::string& text,
         if (outError) *outError = OsErrorText();
         return false;
     }
-    const std::size_t written =
-        text.empty() ? 0 : std::fwrite(text.data(), 1, text.size(), file);
-    const bool ok = written == text.size();
-    const int saveErrno = errno;
+    // 循环写：单次 fwrite 可能只写部分字节（磁盘满/信号中断），
+    // 与 Windows 分支的循环行为保持一致（缺陷 2.6.4）。
+    std::size_t total = 0;
+    bool ok = true;
+    while (total < text.size()) {
+        const std::size_t written =
+            std::fwrite(text.data() + total, 1, text.size() - total, file);
+        if (written == 0) {
+            ok = false;
+            break;
+        }
+        total += written;
+    }
+    const int saveErrno = ok ? 0 : errno;
     std::fclose(file);
     if (!ok) {
         if (outError) {
@@ -393,7 +422,7 @@ bool WriteFileText(const std::string& path, const std::string& text,
         }
         return false;
     }
-    return ok;
+    return true;
 #endif
 }
 

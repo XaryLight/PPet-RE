@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <random>
 #include <sstream>
 
@@ -1243,10 +1244,15 @@ void VrmModel::BuildExpressions() {
                         }
                         const int base = morphBaseOfNode_[static_cast<std::size_t>(node)];
                         if (base < 0 || index < 0) continue;
-                        const int morph = base + index;
-                        if (morph < 0 || static_cast<std::size_t>(morph) >= mesh_.morphs.size()) {
+                        // 提升到 int64 再相加：index 经 JsonInt 可为 INT_MAX，
+                        // 与 base 相加会在 int 上溢出为负值并绕过后面的 <0 检查（缺陷 2.1.7）。
+                        const std::int64_t morph64 =
+                            static_cast<std::int64_t>(base) + static_cast<std::int64_t>(index);
+                        if (morph64 < 0 ||
+                            static_cast<std::uint64_t>(morph64) >= mesh_.morphs.size()) {
                             continue;
                         }
+                        const int morph = static_cast<int>(morph64);
                         expr.bindings.emplace_back(morph, weight);
                     }
                 }
@@ -1276,10 +1282,15 @@ void VrmModel::BuildExpressions() {
                         }
                         const int base = morphBaseOfNode_[static_cast<std::size_t>(node)];
                         if (base < 0 || index < 0) continue;
-                        const int morph = base + index;
-                        if (morph < 0 || static_cast<std::size_t>(morph) >= mesh_.morphs.size()) {
+                        // 提升到 int64 再相加：index 经 JsonInt 可为 INT_MAX，
+                        // 与 base 相加会在 int 上溢出为负值并绕过后面的 <0 检查（缺陷 2.1.7）。
+                        const std::int64_t morph64 =
+                            static_cast<std::int64_t>(base) + static_cast<std::int64_t>(index);
+                        if (morph64 < 0 ||
+                            static_cast<std::uint64_t>(morph64) >= mesh_.morphs.size()) {
                             continue;
                         }
+                        const int morph = static_cast<int>(morph64);
                         expr.bindings.emplace_back(morph, weight);
                     }
                 }
@@ -1338,10 +1349,14 @@ void VrmModel::BuildExpressions() {
                     // 同一个 mesh 可能被多个节点引用，每个节点都有独立的 morph 段，
                     // 表情要同时驱动这些段，否则会出现「只有一份网格变形」的问题。
                     for (const int base : morphBasesOfMesh_[static_cast<std::size_t>(meshIndex)]) {
-                        const int morph = base + index;
-                        if (morph < 0 || static_cast<std::size_t>(morph) >= mesh_.morphs.size()) {
+                        // int64 中间量避免有符号溢出（缺陷 2.1.7）。
+                        const std::int64_t morph64 =
+                            static_cast<std::int64_t>(base) + static_cast<std::int64_t>(index);
+                        if (morph64 < 0 ||
+                            static_cast<std::uint64_t>(morph64) >= mesh_.morphs.size()) {
                             continue;
                         }
+                        const int morph = static_cast<int>(morph64);
                         expr.bindings.emplace_back(morph, Clamp(weight, 0.0f, 1.0f));
                     }
                 }

@@ -383,8 +383,12 @@ void Window::SetIgnoreMouseEvents(bool ignore) {
         } else {
             exStyle &= ~static_cast<LONG_PTR>(WS_EX_TRANSPARENT);
         }
-        // 始终保持 LAYERED（逐像素透明）、TOOLWINDOW（不进任务栏）、NOACTIVATE（不抢焦点）。
-        exStyle |= WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
+        // 保持 TOOLWINDOW（不进任务栏）、NOACTIVATE（不抢焦点）。
+        // 关键：绝不能加 WS_EX_LAYERED —— 分层窗口由 GDI 合成，会丢弃 OpenGL
+        // 帧缓冲的 alpha，透明窗口会变成全白（缺陷 2.2.1，与创建窗口及
+        // SetTransparent 中的约定保持一致）。透明逐像素由 DWM blur + 透明帧缓冲实现。
+        exStyle &= ~static_cast<LONG_PTR>(WS_EX_LAYERED);
+        exStyle |= WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
         SetWindowLongPtrW(hwnd, GWL_EXSTYLE, exStyle);
         // 修改扩展样式后必须让窗口重算非客户区，否则穿透不会立即生效。
         SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
