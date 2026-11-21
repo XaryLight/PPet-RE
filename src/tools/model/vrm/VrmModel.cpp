@@ -59,6 +59,12 @@ constexpr int kMaxNodeDepth = 256;
 constexpr std::size_t kMaxSpringChain = 64;
 /// 单个弹簧骨链的最大深度。
 constexpr int kMaxSpringDepth = 32;
+/// 缺陷 2.5.10：morph 目标按 vertexCount×(position+normal) 分配，
+/// targetCount 与 vertexCount 都可被恶意文件放大到极大值，这里设总预算上限，
+/// 超出后停止追加 morph，避免 OOM。256 MiB 足够容纳现实中任何模型的 morph。
+constexpr std::size_t kMaxMorphBytes = 256ull * 1024ull * 1024ull;
+/// 单个 morph 目标的字节数（Vec3 position + Vec3 normal = 24 字节/顶点）。
+constexpr std::size_t kBytesPerMorphVertex = 2 * 3 * sizeof(float);
 
 // ---------------------------------------------------------------------------
 // 小工具
@@ -1049,6 +1055,10 @@ void VrmModel::BuildMorphs() {
 
     const std::size_t vertexCount = mesh_.vertices.size();
 
+    // 缺陷 2.5.10：累计 morph 分配预算，超出后停止追加，防止恶意模型 OOM。
+    std::size_t morphBytesUsed = 0;
+    bool morphBudgetExhausted = false;
+
     // 按网格节点分组（meshRanges_ 已经按场景遍历顺序排列）。
     std::vector<int> nodeOrder;
     for (const MeshPrimitiveRange& range : meshRanges_) {
@@ -1080,6 +1090,12 @@ void VrmModel::BuildMorphs() {
 
         const int base = static_cast<int>(mesh_.morphs.size());
         for (std::size_t t = 0; t < targetCount; ++t) {
+            // 缺陷 2.5.10：加法/乘法前先做预算检查，溢出安全。
+            if (vertexCount > (kMaxMorphBytes - morphBytesUsed) / kBytesPerMorphVertex) {
+                morphBudgetExhausted = true;
+                break;
+            }
+            morphBytesUsed += vertexCount * kBytesPerMorphVertex;
             SkinnedMesh::MorphTarget target;
             if (t < srcMesh.targetNames.size()) {
                 target.name = srcMesh.targetNames[t];
@@ -1091,6 +1107,10 @@ void VrmModel::BuildMorphs() {
             target.positions.assign(vertexCount, Vec3(0.0f, 0.0f, 0.0f));
             target.normals.assign(vertexCount, Vec3(0.0f, 0.0f, 0.0f));
             mesh_.morphs.push_back(std::move(target));
+        }
+        if (morphBudgetExhausted) {
+            std::fprintf(stderr, "[VRM] morph 目标达到内存预算上限，后续 morph 已跳过\n");
+            break;
         }
         morphBaseOfNode_[static_cast<std::size_t>(nodeIndex)] = base;
         // 记录「glTF mesh -> morph 段」的映射，供 VRM 0.x 的 blendShapeGroups 使用。
@@ -1150,7 +1170,9 @@ void VrmModel::BuildMorphs() {
         NodeMorphRange nodeRange;
         nodeRange.node = nodeIndex;
         nodeRange.base = base;
-        nodeRange.count = static_cast<int>(targetCount);
+        // 缺陷 2.5.10：预算耗尽时实际 push 的 target 少于 targetCount，
+        // 记录真实数量，避免下游按虚高 count 引用不存在的 morph。
+        nodeRange.count = static_cast<int>(mesh_.morphs.size() - static_cast<std::size_t>(base));
         nodeMorphRanges_.push_back(nodeRange);
     }
 }
@@ -1415,9 +1437,16 @@ void VrmModel::BuildExpressions() {
     if (blendShapes == nullptr) return;
 
     const std::size_t vertexCount = mesh_.vertices.size();
+    // 缺陷 2.5.10：VRM 0.x blendShapes 同样按 vertexCount 分配 morph，设总预算。
+    std::size_t blendMorphBytes = 0;
     for (const auto& shape : *blendShapes) {
         const std::string name = JsonString(shape, "name");
         if (name.empty()) continue;
+        if (vertexCount > (kMaxMorphBytes - blendMorphBytes) / kBytesPerMorphVertex) {
+            std::fprintf(stderr, "[VRM] blendShapes morph 达到内存预算上限，后续表情已跳过\n");
+            break;
+        }
+        blendMorphBytes += vertexCount * kBytesPerMorphVertex;
 
         // 找到该表情对应的 morph 目标（VRM 0.x 用 targetNames 引用）。
         int targetMorph = -1;

@@ -996,6 +996,42 @@ void SkinnedMeshRenderer::DrawInternal(const Mat4& vp, const std::vector<Mat4>& 
         }
     }
 
+    // 缺陷 2.5.1：描边 pass 会 glDisable(GL_BLEND)/glDepthMask(GL_TRUE)，
+    // 旧实现只恢复 FrontFace/CullFace/POLYGON_OFFSET，依赖「下一帧每子网格必然重设」
+    // 的脆弱假设。这里用 RAII 在入口保存全部相关 GL 状态、退出时统一恢复，
+    // 保证绘制不泄漏状态到下一帧或后续其它渲染阶段。
+    struct GlStateGuard {
+        GLboolean depthTest = GL_FALSE, blend = GL_FALSE, cullFace = GL_FALSE,
+                  polyOffset = GL_FALSE;
+        GLint blendSrcRgb = GL_ONE, blendDstRgb = GL_ZERO;
+        GLint blendSrcAlpha = GL_ONE, blendDstAlpha = GL_ZERO;
+        GLint depthMask = GL_TRUE;
+        GLint frontFace = GL_CCW, cullFaceMode = GL_BACK;
+        GlStateGuard() {
+            depthTest = glIsEnabled(GL_DEPTH_TEST);
+            blend = glIsEnabled(GL_BLEND);
+            cullFace = glIsEnabled(GL_CULL_FACE);
+            polyOffset = glIsEnabled(GL_POLYGON_OFFSET_FILL);
+            glGetIntegerv(GL_BLEND_SRC_RGB, &blendSrcRgb);
+            glGetIntegerv(GL_BLEND_DST_RGB, &blendDstRgb);
+            glGetIntegerv(GL_BLEND_SRC_ALPHA, &blendSrcAlpha);
+            glGetIntegerv(GL_BLEND_DST_ALPHA, &blendDstAlpha);
+            glGetIntegerv(GL_DEPTH_WRITEMASK, &depthMask);
+            glGetIntegerv(GL_FRONT_FACE, &frontFace);
+            glGetIntegerv(GL_CULL_FACE_MODE, &cullFaceMode);
+        }
+        ~GlStateGuard() {
+            if (depthTest) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
+            if (blend) glEnable(GL_BLEND); else glDisable(GL_BLEND);
+            if (cullFace) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
+            if (polyOffset) glEnable(GL_POLYGON_OFFSET_FILL); else glDisable(GL_POLYGON_OFFSET_FILL);
+            glBlendFuncSeparate(blendSrcRgb, blendDstRgb, blendSrcAlpha, blendDstAlpha);
+            glDepthMask(static_cast<GLboolean>(depthMask));
+            glFrontFace(frontFace);
+            glCullFace(cullFaceMode);
+        }
+    } guard;
+
     Shader* program = outlinePass ? outlineShader_.get() : shader_.get();
     if (program == nullptr) return;
 
@@ -1082,11 +1118,7 @@ void SkinnedMeshRenderer::DrawInternal(const Mat4& vp, const std::vector<Mat4>& 
     }
 
     glBindVertexArray(0);
-
-    // 恢复状态：主 pass 的默认剔除方式是背面剔除。
-    glFrontFace(GL_CW);
-    glCullFace(GL_BACK);
-    glDisable(GL_POLYGON_OFFSET_FILL);
+    // GL 状态恢复由入口的 GlStateGuard 负责（缺陷 2.5.1），不再手工硬编码默认值。
 }
 
 void SkinnedMeshRenderer::ApplyMaterial(const Material& material) {
