@@ -198,6 +198,26 @@ void TestLargeDtIsClamped() {
     Check(std::fabs(pa.headYaw - pb.headYaw) < 1e-4f, "超大 dt 应被钳制到 0.1 秒");
 }
 
+void TestHotReloadFrequencyNoJump() {
+    // 缺陷 2.5.9：热改 breathSpeed 不应让呼吸姿态瞬移。
+    const float dt = 1.0f / 60.0f;
+    ppet::model::IdleAnimator anim(99u);
+    // 先跑 3 秒，让 breathPhase 积累到一个非零值。
+    for (int i = 0; i < 180; ++i) anim.Tick(dt);
+    const auto before = anim.Tick(dt);  // 改频率前的最后一帧
+
+    // 热改呼吸频率（幅度等其他参数不变）。
+    auto cfg = anim.GetConfig();
+    cfg.breathSpeed *= 3.0f;
+    anim.SetConfig(cfg);
+    const auto after = anim.Tick(dt);   // 改频率后的一帧
+
+    // 一帧 16ms 内呼吸通道的合理变化量很小（幅度 ~0.012），
+    // 旧实现 phase=time*speed 会因 speed*3 瞬间跳变几个 0.01。
+    const float jump = std::fabs(after.spinePitch - before.spinePitch);
+    Check(jump < 0.01f, "热改呼吸频率后单帧姿态无瞬移（相位连续）");
+}
+
 } // namespace
 
 int main() {
@@ -208,6 +228,7 @@ int main() {
     TestRandomGestureTriggers();
     TestReproducible();
     TestLargeDtIsClamped();
+    TestHotReloadFrequencyNoJump();
 
     if (g_failures == 0) {
         std::printf("[OK] IdleAnimator 全部用例通过\n");

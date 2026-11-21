@@ -4,6 +4,7 @@
 // 纯逻辑、零依赖，三种 CMake 配置均可编译运行。
 #include <src/tools/plugin/PluginManager.hpp>
 #include <src/tools/plugin/Plugin.hpp>
+#include <src/tools/core/Config.hpp>
 
 #include <cassert>
 #include <cstdio>
@@ -45,6 +46,28 @@ public:
 private:
     std::string name_;
     std::vector<PluginEventKind> interests_;
+};
+
+/// 缺陷 2.6.3：在 OnEvent 里递归 Emit 同一事件的插件，用于验证深度上限。
+class RecursiveEmitterPlugin : public IPlugin {
+public:
+    explicit RecursiveEmitterPlugin(IPluginHost& host, int maxRecurse)
+        : host_(host), maxRecurse_(maxRecurse) {}
+    std::string Name() const override { return "Rec"; }
+    std::vector<PluginEventKind> Interests() const override { return {}; }  // 空=全收
+    void OnEvent(const PluginEvent& e) override {
+        ++calls_;
+        if (recurseDepth_ < maxRecurse_) {
+            ++recurseDepth_;
+            host_.Emit(e);       // 重入：验证 recursive_mutex + 深度上限
+            --recurseDepth_;
+        }
+    }
+    int calls_ = 0;
+private:
+    IPluginHost& host_;
+    int maxRecurse_;
+    int recurseDepth_ = 0;
 };
 
 }  // namespace
@@ -126,6 +149,26 @@ int main() {
     // --- Status 快照 ---
     auto status = mgr.Status();
     check(status["A"] == true && status["B"] == true, "Status 反映启用状态");
+
+    // --- 缺陷 2.6.3：嵌套 Emit 深度上限，不会无限递归 ---
+    {
+        PluginManager nested;
+        auto rec = std::make_shared<RecursiveEmitterPlugin>(nested, 100);
+        nested.Register(rec);
+        // 请求递归 100 层，但管理器深度上限 8，应被截断，调用次数有限。
+        nested.Emit(PluginEvent{PluginEventKind::AppStart, "root", {}});
+        check(rec->calls_ >= 1 && rec->calls_ <= 9,
+              "嵌套 Emit 被深度上限截断（不会无限递归）");
+    }
+
+    // --- 缺陷 2.6.3：Config() 注入可读 ---
+    {
+        PluginManager withCfg;
+        ppet::AppConfig cfg;
+        cfg.maxFps = 45;
+        withCfg.SetConfigSource(&cfg);
+        check(withCfg.Config().maxFps == 45, "Config() 返回注入的配置快照");
+    }
 
     if (failures == 0) {
         std::printf("plugin_unit: PASS (all assertions)\n");

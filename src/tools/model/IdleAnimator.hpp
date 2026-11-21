@@ -124,6 +124,11 @@ public:
     /// 复位到初始状态（时间归零、姿态清零）。
     void Reset() {
         time_ = 0.0;
+        // 缺陷 2.5.9：相位改为累积式（见 Tick），热改频率时不跳变；复位时清零。
+        breathPhase_ = 0.0;
+        swayPhase_ = 0.0;
+        headPhase_ = 0.0;
+        armPhase_ = 0.0;
         gestureTimer_ = NextInterval();
         gesture_ = Gesture::None;
         gestureTime_ = 0.0f;
@@ -156,18 +161,26 @@ public:
         }
 
         // --- 基础待机 ---
-        // 【长期运行】相位用 double 计算：time_ 是 double，跑到 1e9 秒（约 31 年）
-        // 时相位仍有 1e-6 弧度级分辨率；若用 float 累加，几天后就会退化成跳帧。
-        // 这里刻意**不**对相位取模：sin(headPhase * 1.7) 这类派生项依赖相位的绝对值，
-        // 单独把基础相位 fmod 回 [0,2π) 会让派生项在每个周期边界突变。
+        // 【长期运行 + 缺陷 2.5.9】相位用 double **累积**：phase += speed*dt*2π。
+        // 旧写法 phase = time_*speed 在 SetConfig 热改 speed 的瞬间会跳变（姿态瞬移）；
+        // 累积式只让新频率影响后续增量，相位连续。time_ 仍保留供小动作调度参考。
+        // 这里刻意**不**对相位取模：派生项 sin(headPhase*1.7) 依赖相位绝对值，
+        // 单独把基础相位 fmod 回 [0,2π) 会让派生项在周期边界突变。
         const float master = std::max(0.0f, config_.masterAmount);
         constexpr double kTwoPi = 6.28318530717958647692;
-        const double breathPhase = time_ * static_cast<double>(config_.breathSpeed) * kTwoPi;
-        const double swayPhase = time_ * static_cast<double>(config_.swaySpeed) * kTwoPi;
-        const double headPhase = time_ * static_cast<double>(config_.headSpeed) * kTwoPi;
-        const double armPhase = time_ * static_cast<double>(config_.armSpeed) * kTwoPi;
+        const double dtD = static_cast<double>(dt);
+        breathPhase_ += dtD * static_cast<double>(config_.breathSpeed) * kTwoPi;
+        swayPhase_ += dtD * static_cast<double>(config_.swaySpeed) * kTwoPi;
+        headPhase_ += dtD * static_cast<double>(config_.headSpeed) * kTwoPi;
+        armPhase_ += dtD * static_cast<double>(config_.armSpeed) * kTwoPi;
+        const double breathPhase = breathPhase_;
+        const double swayPhase = swayPhase_;
+        const double headPhase = headPhase_;
+        const double armPhase = armPhase_;
 
-        // 呼吸：正弦驱动，但用 sin 的绝对值形状更接近「吸-呼-停」的真实节奏。
+        // 呼吸：正弦驱动（吸-呼对称）。注：早期注释称「用 sin 绝对值，
+        // 更接近吸-呼-停」，但实现一直是普通 sin；为保证文档-实现一致（缺陷 2.6.4），
+        // 这里按实际实现如实描述，不擅自改变已验证的呼吸观感。
         const float breath = static_cast<float>(std::sin(breathPhase));
         const float breathAmp = config_.breathAmount * master;
 
@@ -312,6 +325,11 @@ private:
     std::mt19937 rng_;
     /// 累计时间（秒）。必须是 double：见 Tick() 里的长期运行说明。
     double time_ = 0.0;
+    /// 各通道累积相位（弧度）。累积式让 SetConfig 热改频率时相位连续（缺陷 2.5.9）。
+    double breathPhase_ = 0.0;
+    double swayPhase_ = 0.0;
+    double headPhase_ = 0.0;
+    double armPhase_ = 0.0;
     float gestureTimer_ = 0.0f;
     float gestureTime_ = 0.0f;
     float gestureDuration_ = 1.0f;

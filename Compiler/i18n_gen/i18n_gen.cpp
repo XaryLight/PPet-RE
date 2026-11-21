@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <fstream>
 #include <regex>
+#include <set>
 #include <sstream>
 
 #include "nlohmann/json.hpp"
@@ -152,11 +153,30 @@ bool LoadTable(const std::string& path, std::map<std::string, std::string>& out,
     const std::string ext = ExtensionOf(path);
 
     if (ext == "json") {
+        // 缺陷 2.6.2/2.6.3：nlohmann 默认静默覆盖重复键，这里用 parse callback
+        // 检测顶层对象的重复 key，避免拼错/复制粘贴导致某条文案被悄悄吞掉。
+        std::set<std::string> seenKeys;
+        bool duplicateKey = false;
+        std::string duplicateName;
+        auto detectDuplicate = [&](int depth, json::parse_event_t event, json& parsed) {
+            if (depth == 1 && event == json::parse_event_t::key) {
+                const std::string k = parsed.get<std::string>();
+                if (!seenKeys.insert(k).second) {
+                    duplicateKey = true;
+                    duplicateName = k;
+                }
+            }
+            return true;  // 继续解析
+        };
         json j;
         try {
-            j = json::parse(text);
+            j = json::parse(text, detectDuplicate);
         } catch (const std::exception& e) {
             error = "JSON 解析失败（" + path + "）：" + e.what();
+            return false;
+        }
+        if (duplicateKey) {
+            error = "JSON 存在重复键：" + duplicateName + "（" + path + "）";
             return false;
         }
         if (!j.is_object()) {
@@ -221,7 +241,33 @@ bool ParseStructMembers(const std::string& headerPath, std::vector<std::string>&
         error = "无法定位 struct Strings 的定义范围：" + headerPath;
         return false;
     }
-    const std::string body = text.substr(bodyStart + 1, bodyEnd - bodyStart - 1);
+    std::string body = text.substr(bodyStart + 1, bodyEnd - bodyStart - 1);
+
+    // 缺陷 2.6.3：先剥离注释再匹配，避免注释里的 `std::string fake;`
+    // 或含 `};` 的说明文字被当成成员/提前截断定义范围。
+    // 逐行去掉 `//` 之后的内容；再去掉 /* ... */ 块注释（含跨行）。
+    std::string noLineComments;
+    {
+        std::istringstream in(body);
+        std::string line;
+        while (std::getline(in, line)) {
+            const std::size_t slash = line.find("//");
+            if (slash != std::string::npos) line.resize(slash);
+            noLineComments += line;
+            noLineComments += '\n';
+        }
+    }
+    for (;;) {
+        const std::size_t bs = noLineComments.find("/*");
+        if (bs == std::string::npos) break;
+        const std::size_t be = noLineComments.find("*/", bs + 2);
+        if (be == std::string::npos) {
+            noLineComments.resize(bs);
+            break;
+        }
+        noLineComments.erase(bs, be + 2 - bs);
+    }
+    body.swap(noLineComments);
 
     // 成员形如：std::string name;  或  std::string name = "默认值";
     static const std::regex kMember(R"(std::string\s+([A-Za-z_][A-Za-z0-9_]*)\s*(=|;))");

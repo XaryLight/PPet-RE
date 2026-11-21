@@ -83,12 +83,28 @@ int main() {
         Check(table.size() == 1 && table["quit"] == "退出", "JSON 字段解析正确");
     }
 
+    // --- 缺陷 2.6.2/2.6.3：JSON 重复键必须报错，不能被静默覆盖 ---
+    {
+        const std::string js =
+            "{\n"
+            "  \"quit\": \"退出\",\n"
+            "  \"quit\": \"退出（重复）\"\n"
+            "}\n";
+        const std::string path = WriteTemp(tmp, "dup.json", js);
+        std::map<std::string, std::string> table;
+        std::string error;
+        const bool ok = LoadTable(path, table, error);
+        Check(!ok, "JSON 重复键被拒绝");
+        Check(error.find("重复键") != std::string::npos, "重复键错误信息可读");
+    }
+
     // --- 3. 结构体成员解析 ---
     {
         const std::string hdr =
             "#pragma once\n"
             "struct Strings {\n"
-            "    // 注释行\n"
+            "    // 注释行：std::string fake;\n"
+            "    /* 块注释里也有 std::string ghost; */\n"
             "    std::string alwaysOnTop;\n"
             "    std::string quit = \"退出\";\n"
             "};\n";
@@ -97,7 +113,7 @@ int main() {
         std::string error;
         const bool ok = ParseStructMembers(path, members, error);
         Check(ok, "结构体成员解析成功");
-        Check(members.size() == 2, "解析出 2 个成员");
+        Check(members.size() == 2, "解析出 2 个成员（注释里的伪成员被忽略）");
         Check(members.size() == 2 && members[0] == "alwaysOnTop" && members[1] == "quit",
               "成员名与顺序正确");
     }

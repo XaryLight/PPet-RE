@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <string>
 
 namespace ppet {
@@ -50,15 +51,26 @@ struct IntRect {
 inline IntRect ClampRectInside(const IntRect& window, const IntRect& desktop) {
     if (desktop.width <= 0 || desktop.height <= 0) return window;
 
-    const int maxX = desktop.x + (desktop.width > window.width
-                                      ? desktop.width - window.width
-                                      : 0);
-    const int maxY = desktop.y + (desktop.height > window.height
-                                      ? desktop.height - window.height
-                                      : 0);
+    // 缺陷 2.5.5：多显示器极端坐标下 desktop.x + width 等 int 加法会溢出（UB）。
+    // 中间量提升到 int64_t 计算，最后再安全钳制回 int。
+    const std::int64_t dx = desktop.x;
+    const std::int64_t dy = desktop.y;
+    const std::int64_t spanX = static_cast<std::int64_t>(desktop.width) -
+                               static_cast<std::int64_t>(window.width);
+    const std::int64_t spanY = static_cast<std::int64_t>(desktop.height) -
+                               static_cast<std::int64_t>(window.height);
+    const std::int64_t maxX = dx + (spanX > 0 ? spanX : 0);
+    const std::int64_t maxY = dy + (spanY > 0 ? spanY : 0);
+    const std::int64_t loX = dx;
+    const std::int64_t hiX = std::max(dx, maxX);
+    const std::int64_t loY = dy;
+    const std::int64_t hiY = std::max(dy, maxY);
+    const auto clampI64 = [](std::int64_t v, std::int64_t lo, std::int64_t hi) {
+        return static_cast<int>(std::max(lo, std::min(v, hi)));
+    };
     IntRect out = window;
-    out.x = std::clamp(window.x, desktop.x, std::max(desktop.x, maxX));
-    out.y = std::clamp(window.y, desktop.y, std::max(desktop.y, maxY));
+    out.x = clampI64(window.x, loX, hiX);
+    out.y = clampI64(window.y, loY, hiY);
     return out;
 }
 
@@ -87,12 +99,27 @@ inline Vec3 Cross(const Vec3& a, const Vec3& b) {
     return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
 }
 
-inline float Length(const Vec3& v) { return std::sqrt(Dot(v, v)); }
+/// 缺陷 2.5.5：先平方和再 sqrt 会让大分量溢出成 inf。
+/// 用「先按最大绝对分量缩放」的稳健算法：max*sqrt((x/max)²+...) 不会溢出，
+/// 对极小向量也不下溢（缩放到 [0,1] 再乘回）。
+inline float Length(const Vec3& v) {
+    const float ax = std::fabs(v.x), ay = std::fabs(v.y), az = std::fabs(v.z);
+    const float mx = std::max({ax, ay, az});
+    if (mx == 0.0f) return 0.0f;
+    if (!std::isfinite(mx)) return std::numeric_limits<float>::infinity();
+    const float sx = v.x / mx, sy = v.y / mx, sz = v.z / mx;
+    return mx * std::sqrt(sx * sx + sy * sy + sz * sz);
+}
 
 inline Vec3 Normalize(const Vec3& v) {
-    const float len = Length(v);
-    if (len < kEpsilon) return {0.0f, 0.0f, 0.0f};
-    return v / len;
+    const float ax = std::fabs(v.x), ay = std::fabs(v.y), az = std::fabs(v.z);
+    const float mx = std::max({ax, ay, az});
+    // 缺陷 2.5.5：绝对阈值 kEpsilon 会把合法的小向量（如 1e-7 的模型单位）误判为零。
+    // 按最大分量缩放后判断：只要存在非零有限分量就能安全归一化。
+    if (mx == 0.0f || !std::isfinite(mx)) return {0.0f, 0.0f, 0.0f};
+    const float sx = v.x / mx, sy = v.y / mx, sz = v.z / mx;
+    const float len = std::sqrt(sx * sx + sy * sy + sz * sz);
+    return {sx / len, sy / len, sz / len};
 }
 
 inline Vec3 Lerp(const Vec3& a, const Vec3& b, float t) { return a + (b - a) * t; }
@@ -191,19 +218,36 @@ struct Mat4 {
         return r;
     }
 
-    /// 逆矩阵（通用 4x4 高斯消元）。矩阵不可逆时返回单位阵。
-    Mat4 Inverse() const {
+    /// 逆矩阵（通用 4x4 高斯消元）。返回是否成功；失败时 out 置为单位阵。
+    ///
+    /// 缺陷 2.5.5：旧实现的绝对主元阈值 1e-12 对「大平移量 + 小旋转」矩阵会
+    /// 误判不可逆（主元本身很小但相对矩阵尺度有效）。改用相对于矩阵最大元素的
+    /// 阈值；同时新接口返回 bool，让调用方能感知失败，而不是静默拿到单位阵。
+    bool TryInverse(Mat4& out) const {
         double a[4][8];
+        double maxAbs = 0.0;
         for (int r = 0; r < 4; ++r) {
-            for (int c = 0; c < 4; ++c) a[r][c] = At(r, c);
+            for (int c = 0; c < 4; ++c) {
+                a[r][c] = At(r, c);
+                maxAbs = std::max(maxAbs, std::fabs(a[r][c]));
+            }
             for (int c = 0; c < 4; ++c) a[r][4 + c] = (r == c) ? 1.0 : 0.0;
         }
+        if (!std::isfinite(maxAbs) || maxAbs == 0.0) {
+            out = Mat4::Identity();
+            return false;
+        }
+        // 相对阈值：矩阵最大元素的 1e-12，并保底 1e-15，兼顾大/小尺度矩阵。
+        const double tol = std::max(maxAbs * 1e-12, 1e-15);
         for (int i = 0; i < 4; ++i) {
             int pivot = i;
             for (int r = i + 1; r < 4; ++r) {
                 if (std::fabs(a[r][i]) > std::fabs(a[pivot][i])) pivot = r;
             }
-            if (std::fabs(a[pivot][i]) < 1e-12) return Mat4::Identity();
+            if (std::fabs(a[pivot][i]) < tol) {
+                out = Mat4::Identity();
+                return false;
+            }
             if (pivot != i) {
                 for (int c = 0; c < 8; ++c) std::swap(a[i][c], a[pivot][c]);
             }
@@ -216,16 +260,31 @@ struct Mat4 {
                 for (int c = 0; c < 8; ++c) a[r][c] -= f * a[i][c];
             }
         }
-        Mat4 out;
         for (int r = 0; r < 4; ++r) {
-            for (int c = 0; c < 4; ++c) out.At(r, c) = static_cast<float>(a[r][4 + c]);
+            for (int c = 0; c < 4; ++c) {
+                out.At(r, c) = static_cast<float>(a[r][4 + c]);
+            }
         }
+        return true;
+    }
+
+    /// 兼容旧接口：失败时返回单位阵。需要感知失败请用 TryInverse。
+    Mat4 Inverse() const {
+        Mat4 out;
+        TryInverse(out);
         return out;
     }
 };
 
 /// 透视投影矩阵（右手系，深度范围 -1..1）。
+/// 缺陷 2.5.5：aspect==0、near==far、fov 非法时会产生除零/NaN，
+/// 这里显式校验并退回单位阵，避免坏参数污染整条渲染管线。
 inline Mat4 Perspective(float fovYRad, float aspect, float nearZ, float farZ) {
+    if (!(fovYRad > 0.0f) || fovYRad >= kPi || aspect == 0.0f ||
+        !std::isfinite(aspect) || nearZ <= 0.0f || farZ <= 0.0f ||
+        nearZ == farZ) {
+        return Mat4::Identity();
+    }
     Mat4 r;
     for (float& v : r.m) v = 0.0f;
     const float f = 1.0f / std::tan(fovYRad * 0.5f);
@@ -237,8 +296,13 @@ inline Mat4 Perspective(float fovYRad, float aspect, float nearZ, float farZ) {
     return r;
 }
 
-/// 正交投影矩阵。
+/// 正交投影矩阵。缺陷 2.5.5：r_==l / t==b / f==n 时除零，显式校验。
 inline Mat4 Ortho(float l, float r_, float b, float t, float n, float f) {
+    if (r_ == l || t == b || f == n || !std::isfinite(l) || !std::isfinite(r_) ||
+        !std::isfinite(b) || !std::isfinite(t) || !std::isfinite(n) ||
+        !std::isfinite(f)) {
+        return Mat4::Identity();
+    }
     Mat4 r;
     r.At(0, 0) = 2.0f / (r_ - l);
     r.At(1, 1) = 2.0f / (t - b);

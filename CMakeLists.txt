@@ -1159,6 +1159,13 @@ add_test(NAME stability_unit
          COMMAND ppet_stability_test
          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
+# 矩阵/数值稳定性（报告 2.5.5）：极端坐标钳制 / 向量溢出 / 可逆性 / 投影除零。
+add_executable(ppet_math_stability_test tools/math_stability_test.cpp)
+target_include_directories(ppet_math_stability_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME math_stability_unit
+         COMMAND ppet_math_stability_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
 # 控制台命令队列：有界队列、丢弃计数、每帧消费上限。
 add_executable(ppet_console_queue_test
     tools/console_queue_test.cpp
