@@ -130,6 +130,7 @@ cmake --build build -j
 | [docs/debugging.md](docs/debugging.md) | 模型诊断面板、失败弹窗、结构化日志（含多行续行）格式与级别、**`0xC0000005` 崩溃与第三方 overlay 注入排查**、常见问题 |
 | [docs/development.md](docs/development.md) | 架构分层、测试清单、**三配置构建矩阵 + CMake Presets**、文案翻译器、C++23 使用点 |
 | [docs/experience-improvements.md](docs/experience-improvements.md) | **第四部分体验改进落地清单**：`--doctor` 自检 / `--lang` 与系统语言 / 自适应帧率 / CI / ADR 的状态与取舍 |
+| [docs/defect-resolution-status.md](docs/defect-resolution-status.md) | **第二部分 48 项缺陷处置总表**：逐条标注已修复 / 保守版 / 有意延后及原因 |
 | [docs/adr/](docs/adr/) | 架构决策记录：纯逻辑分层 / SDK 单点隔离 / 三配置矩阵「为什么这么设计」 |
 | [api/README.md](api/README.md) | Live2D SDK 集成层与第三方库引用头说明 |
 | [Compiler/README.md](Compiler/README.md) | 文案翻译器（JSON/CSV → C++ 内嵌表）的用法 |
