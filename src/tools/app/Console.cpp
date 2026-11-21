@@ -18,8 +18,23 @@
 #endif
 
 namespace ppet {
+namespace {
+// 缺陷 2.4.4：后台读线程的 prompt 与主线程 Print 都写 stdout，
+// 无锁会交错成乱码。用进程级互斥串行化所有控制台输出。
+std::mutex& OutputMutex() {
+    static std::mutex m;
+    return m;
+}
+/// 不带换行的原始输出（prompt 用），同样受 OutputMutex 保护。
+void WriteRaw(const char* text) {
+    std::lock_guard<std::mutex> lock(OutputMutex());
+    std::fputs(text, stdout);
+    std::fflush(stdout);
+}
+}  // namespace
 
 void Console::Print(const std::string& text) {
+    std::lock_guard<std::mutex> lock(OutputMutex());
     std::fputs(text.c_str(), stdout);
     std::fputc('\n', stdout);
     std::fflush(stdout);
@@ -49,8 +64,7 @@ bool Console::Start(bool force) {
         for (;;) {
             if (state->stop.load()) break;
             if (!prompt.empty()) {
-                std::fputs(prompt.c_str(), stdout);
-                std::fflush(stdout);
+                WriteRaw(prompt.c_str());  // 受 OutputMutex 保护，避免与 Print 交错
             }
             if (!std::getline(std::cin, line)) break;  // EOF / stdin 被关闭
             if (state->stop.load()) break;

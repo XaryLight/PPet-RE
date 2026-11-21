@@ -16,6 +16,7 @@ bool PluginManager::InterestedIn(const IPlugin& plugin, PluginEventKind kind) {
 
 void PluginManager::Register(PluginPtr plugin) {
     if (!plugin) return;
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     // 按名字去重：同名插件用新实例替换旧实例。
     for (auto& e : plugins_) {
         if (e.plugin && e.plugin->Name() == plugin->Name()) {
@@ -33,6 +34,7 @@ void PluginManager::Register(PluginPtr plugin) {
 }
 
 bool PluginManager::SetEnabled(const std::string& name, bool enabled) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     for (auto& e : plugins_) {
         if (e.plugin && e.plugin->Name() == name) {
             if (e.enabled != enabled) {
@@ -47,6 +49,7 @@ bool PluginManager::SetEnabled(const std::string& name, bool enabled) {
 }
 
 bool PluginManager::IsEnabled(const std::string& name) const {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     for (const auto& e : plugins_) {
         if (e.plugin && e.plugin->Name() == name) return e.enabled;
     }
@@ -54,6 +57,7 @@ bool PluginManager::IsEnabled(const std::string& name) const {
 }
 
 std::vector<std::string> PluginManager::List() const {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     std::vector<std::string> out;
     out.reserve(plugins_.size());
     for (const auto& e : plugins_) {
@@ -63,6 +67,7 @@ std::vector<std::string> PluginManager::List() const {
 }
 
 std::map<std::string, bool> PluginManager::Status() const {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     std::map<std::string, bool> out;
     for (const auto& e : plugins_) {
         if (e.plugin) out[e.plugin->Name()] = e.enabled;
@@ -71,6 +76,7 @@ std::map<std::string, bool> PluginManager::Status() const {
 }
 
 void PluginManager::Emit(const PluginEvent& event) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     // 插件在 OnEvent 里注册新插件时不应破坏当前遍历：先对插件列表做一份快照。
     // 同时限制嵌套深度，避免插件互相触发事件造成无限递归。
     if (dispatchDepth_ >= kMaxDispatchDepth) return;
@@ -108,6 +114,7 @@ void PluginManager::Emit(const PluginEvent& event) {
 }
 
 const AppConfig& PluginManager::Config() const {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     // 未注入配置时返回一个静态默认配置，保证 Config() 永不返回空引用
     // （即便插件在配置加载前被启用，也不会崩溃）。
     static const AppConfig kDefault;

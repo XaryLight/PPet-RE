@@ -8,6 +8,7 @@
 #include <src/tools/plugin/Plugin.hpp>
 
 #include <map>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -58,6 +59,12 @@ private:
     /// 分发嵌套深度（防止插件在回调里 Emit 造成无限递归）。
     int dispatchDepth_ = 0;
     static constexpr int kMaxDispatchDepth = 8;
+
+    /// 缺陷 2.4.3：IPluginHost::Emit 是公开 API，插件可能在工作线程回调，
+    /// 需要保护 plugins_ / config_ / dispatchDepth_ 的读写。
+    /// 用 recursive_mutex：插件在 OnEvent 里回调 host 的 Register/SetEnabled/Emit
+    /// 是合法用法，同线程重入不能自锁。实际调用点仍多在 UI 主线程，锁开销可忽略。
+    mutable std::recursive_mutex mutex_;
 };
 
 }  // namespace ppet::plugin

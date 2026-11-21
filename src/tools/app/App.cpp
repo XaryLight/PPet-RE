@@ -411,12 +411,11 @@ bool App::Initialize(std::string& error) {
     // --- 台词气泡窗口（独立 Qt 窗口，默认不置顶）---
     // 跟随桌宠窗口上方显示当前台词；托盘「台词气泡」可开关。
     std::string bubbleError;
-    bubble_ = new BubbleWidget();
+    bubble_ = std::make_unique<BubbleWidget>();
     if (!bubble_->Initialize(bubbleError)) {
         // 气泡不可用不应阻止启动（无气泡只是看不到台词文字）。
         PPET_LOG_WARN("%s: %s\n", strings_.bubble.c_str(), bubbleError.c_str());
-        delete bubble_;
-        bubble_ = nullptr;
+        bubble_.reset();
     }
 
     // 语言系统：台词库已默认构造；把指针交给 SpeechController，
@@ -1506,7 +1505,10 @@ void App::Run() {
             }
             debugPanel_.Update(info, stats);
         }
-        debugPanel_.PumpEvents();
+        // 缺陷 2.4.6：SettingsPanel::PumpEvents() 已在本帧早些时候驱动全局 Qt
+        // 事件队列（QApplication::processEvents 是全局泵，不分面板）。这里再调
+        // DebugPanel::PumpEvents() 是同一队列的第二次泵，基本空转；保留单一
+        // 泵点即可，面板的 queued 信号顺延到下一帧处理，无可见影响。
 
         window_.SwapBuffers();
 
@@ -1534,8 +1536,7 @@ void App::Shutdown() {
     settingsPanel_.Shutdown();
     if (bubble_) {
         bubble_->Shutdown();
-        delete bubble_;
-        bubble_ = nullptr;
+        bubble_.reset();
     }
     tray_.Destroy();
     window_.Destroy();

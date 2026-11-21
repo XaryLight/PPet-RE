@@ -43,18 +43,32 @@ std::string_view BaseName(std::string_view path) {
 
 // 异常过滤器运行在进程堆可能已经损坏的上下文里：不能用 std::string、
 // 不能走 Logger（会分配内存），全部用栈缓冲 + Win32 原生 WriteFile 追加。
+//
+// 缺陷 2.4.2：早期这里用 std::fputs(text, stderr) —— fputs 需要获取 stderr 的
+// CRT FILE 锁，若崩溃恰好发生在 Logger 写 stderr 的过程中必然死锁（崩溃处理器
+// 自己卡死，用户只看到程序挂起）。改用 GetStdHandle(STD_ERROR_HANDLE) +
+// WriteFile 直接写字节，绕开 CRT 锁，与文件写入走同一套 signal-safe 的原语。
 void AppendCrashLine(const char* text) {
+    const DWORD length = static_cast<DWORD>(std::strlen(text));
+    const char* data = text;
+
     HANDLE file = CreateFileW(L"last.log", FILE_APPEND_DATA,
                               FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS,
                               FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file != INVALID_HANDLE_VALUE) {
         SetFilePointer(file, 0, nullptr, FILE_END);
         DWORD written = 0;
-        WriteFile(file, text, static_cast<DWORD>(std::strlen(text)), &written, nullptr);
+        WriteFile(file, data, length, &written, nullptr);
         CloseHandle(file);
     }
-    // 同时输出到 stderr，让从终端（--console）启动的用户立刻看到。
-    std::fputs(text, stderr);
+
+    // 同时输出到 stderr（用原生句柄，不碰 CRT FILE 锁），让从终端（--console）
+    // 启动的用户立刻看到。写失败（句柄无效/被重定向关闭）则静默跳过。
+    HANDLE stderrHandle = GetStdHandle(STD_ERROR_HANDLE);
+    if (stderrHandle != INVALID_HANDLE_VALUE && stderrHandle != nullptr) {
+        DWORD written = 0;
+        WriteFile(stderrHandle, data, length, &written, nullptr);
+    }
 }
 
 LONG WINAPI TopLevelFilter(EXCEPTION_POINTERS* ep) {

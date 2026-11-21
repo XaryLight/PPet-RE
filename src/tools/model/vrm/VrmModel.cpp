@@ -331,6 +331,7 @@ VrmModel::~VrmModel() = default;
 bool VrmModel::Load(const std::string& path, std::string& error) {
     loaded_ = false;
     gpuReady_ = false;
+    gpuInitFailed_ = false;
     error.clear();
 
     // 注册 VRM-VPet 风格的内置骨骼动作到随机待机池（点头 / 摇头 / 挥手）。
@@ -2306,6 +2307,7 @@ bool VrmModel::TriggerTouch(const std::string&) {
 
 void VrmModel::ReloadRenderer() {
     gpuReady_ = false;
+    gpuInitFailed_ = false;  // 允许重建 GPU 资源时重新尝试
 }
 
 float VrmModel::PreferredFrameAspect() const {
@@ -2326,26 +2328,39 @@ void VrmModel::SetArmRestDrop(float degrees) {
 }
 
 void VrmModel::EnsureGpuResources() {
-    if (gpuReady_) return;
-    gpuReady_ = true;
+    if (gpuReady_ || gpuInitFailed_) return;
 
-    renderer_.Upload(mesh_);
+    // 缺陷 2.3.5：上传/解码/纹理创建可能抛 bad_alloc，早期异常直接穿透到渲染线程
+    // （Load 的 try/catch 不覆盖 Render 路径）。这里统一捕获并只尝试一次，
+    // 失败时降级为「无 GPU 资源」，由 DebugInfo 显示原因，不再每帧重抛。
+    try {
+        renderer_.Upload(mesh_);
 
-    textures_.clear();
-    textures_.reserve(textureBytes_.size());
-    for (const std::vector<unsigned char>& bytes : textureBytes_) {
-        Texture texture;
-        if (!bytes.empty()) {
-            DecodedImage image;
-            if (DecodeImage(bytes.data(), bytes.size(), image)) {
-                texture.Create(image.pixels.data(), image.width, image.height, image.channels,
-                               true, true);
+        textures_.clear();
+        textures_.reserve(textureBytes_.size());
+        for (const std::vector<unsigned char>& bytes : textureBytes_) {
+            Texture texture;
+            if (!bytes.empty()) {
+                DecodedImage image;
+                if (DecodeImage(bytes.data(), bytes.size(), image)) {
+                    texture.Create(image.pixels.data(), image.width, image.height,
+                                   image.channels, true, true);
+                }
             }
+            // 解码失败时保留无效纹理，渲染层会回退到纯色。
+            textures_.push_back(std::move(texture));
         }
-        // 解码失败时保留无效纹理，渲染层会回退到纯色。
-        textures_.push_back(std::move(texture));
+        renderer_.SetTextures(std::move(textures_));
+        gpuReady_ = true;
+    } catch (const std::exception& e) {
+        gpuInitFailed_ = true;
+        gpuReady_ = false;
+        // 用 stderr 而非 Log：本 TU 被多个测试目标单独链接，引入 Log 依赖会破坏其链接。
+        std::fprintf(stderr, "[VRM] GPU 资源建立失败，已降级无贴图渲染：%s\n", e.what());
+    } catch (...) {
+        gpuInitFailed_ = true;
+        gpuReady_ = false;
     }
-    renderer_.SetTextures(std::move(textures_));
 }
 
 Mat4 VrmModel::ComputeViewProjection(int viewportWidth, int viewportHeight,

@@ -410,6 +410,8 @@ private:
 
     bool loaded_ = false;
     bool gpuReady_ = false;
+    /// GPU 资源建立是否失败过（缺陷 2.3.5）：失败后只尝试一次，避免每帧重试/异常穿透。
+    bool gpuInitFailed_ = false;
     /// 是否有材质开启了描边。
     bool hasOutline_ = false;
     /// morph 权重是否发生变化（需要重新上传顶点）。
