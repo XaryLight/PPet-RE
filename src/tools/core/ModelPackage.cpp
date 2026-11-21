@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
+#include <limits>
 #include <unordered_map>
 #include <vector>
 
@@ -155,8 +156,11 @@ std::string MakeCacheDirName(const std::string& zipPath) {
         hash ^= static_cast<unsigned char>(c);
         hash *= 1099511628211ull;
     }
+    // 缺陷 2.6.4：旧版只取哈希低 32 位，不同路径包碰撞会覆盖同一缓存目录。
+    // 改用完整 64 位（16 个十六进制位），碰撞概率降到可忽略。
     char suffix[32];
-    std::snprintf(suffix, sizeof(suffix), "%08x", static_cast<unsigned>(hash & 0xFFFFFFFFull));
+    std::snprintf(suffix, sizeof(suffix), "%016llx",
+                  static_cast<unsigned long long>(hash));
     return safe + "_" + suffix;
 }
 
@@ -259,7 +263,12 @@ bool ExtractModelPackage(const std::string& zipPath, const std::string& cacheRoo
         out.entryCount = entries.size();
         out.totalBytes = 0;
         for (const ZipEntry& entry : entries) {
-            out.totalBytes += entry.size;
+            // 缺陷 2.6.4：饱和加法防 size_t 回绕（恶意 zip 可声明超大 entry.size）。
+            if (entry.size > std::numeric_limits<std::size_t>::max() - out.totalBytes) {
+                out.totalBytes = std::numeric_limits<std::size_t>::max();
+            } else {
+                out.totalBytes += entry.size;
+            }
             if (IsModelTextureFile(entry.name)) ++out.textureCount;
         }
     } else {
