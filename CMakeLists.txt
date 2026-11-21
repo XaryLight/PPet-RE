@@ -154,7 +154,18 @@ elseif(NOT PPET_WITH_CUBISM AND _ppet_cubism_explicit)
 endif()
 
 # 统一开启严格警告，尽早暴露问题。
-add_compile_options(-Wall -Wextra)
+#
+# 【按编译器区分】（报告 4.2.1）
+#   - GCC/Clang：-Wall -Wextra，本项目日常开发的主力告警配置；
+#   - MSVC：不认识 -Wall/-Wextra（会当作未知开关 D9002 忽略，甚至刷警告），
+#     改用等价的 /W3。刻意不用 /W4：nlohmann/stb/Cubism 等 header-only 第三方
+#     头会在每个包含它们的 TU 里产生海量告警，反而淹没真实问题（zlib 这类
+#     独立目标已在下方单独 /w 关闭）。想临时提级可用 -D CMAKE_CXX_FLAGS=/W4。
+if(MSVC)
+    add_compile_options(/W3)
+else()
+    add_compile_options(-Wall -Wextra)
+endif()
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/third_party)

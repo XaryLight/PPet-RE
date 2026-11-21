@@ -1,0 +1,143 @@
+{
+  "version": 2,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 20,
+    "patch": 0
+  },
+
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build_${presetName}",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "stub",
+      "displayName": "Release + Cubism 桩（默认）",
+      "description": "无需 Cubism SDK，用仓库内置 Core 桩验证 UI 与构建链路。日常开发首选。",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "PPET_WITH_CUBISM": "OFF",
+        "PPET_WITH_CUBISM_STUB": "ON",
+        "PPET_CUBISM_AUTODETECT": "OFF"
+      }
+    },
+    {
+      "name": "cubism",
+      "displayName": "Release + 真实 Cubism SDK",
+      "description": "需先把 Cubism Core 解压到 api/live2d/csdk/，否则 configure 阶段会给出友好提示并失败。",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "PPET_WITH_CUBISM": "ON",
+        "PPET_WITH_CUBISM_STUB": "OFF",
+        "PPET_CUBISM_AUTODETECT": "ON"
+      }
+    },
+    {
+      "name": "nocubism",
+      "displayName": "Debug + 完全无 Cubism 后端",
+      "description": "验证 Live2D 后端是真正可选的：不启用桩也不启用真实 SDK。",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "PPET_WITH_CUBISM": "OFF",
+        "PPET_WITH_CUBISM_STUB": "OFF",
+        "PPET_CUBISM_AUTODETECT": "OFF"
+      }
+    },
+    {
+      "name": "asan",
+      "displayName": "Debug + ASAN/UBSAN（桩后端）",
+      "description": "AddressSanitizer + UndefinedBehaviorSanitizer，仅用于健壮性回归，不产出交付程序。仅 GCC/Clang 可用。",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer",
+        "PPET_WITH_CUBISM": "OFF",
+        "PPET_WITH_CUBISM_STUB": "ON",
+        "PPET_CUBISM_AUTODETECT": "OFF"
+      }
+    }
+  ],
+
+  "buildPresets": [
+    {
+      "name": "stub",
+      "displayName": "构建 stub",
+      "configurePreset": "stub",
+      "configuration": "Release",
+      "jobs": 4
+    },
+    {
+      "name": "cubism",
+      "displayName": "构建 cubism",
+      "configurePreset": "cubism",
+      "configuration": "Release",
+      "jobs": 4
+    },
+    {
+      "name": "nocubism",
+      "displayName": "构建 nocubism",
+      "configurePreset": "nocubism",
+      "configuration": "Debug",
+      "jobs": 4
+    },
+    {
+      "name": "asan",
+      "displayName": "构建 asan",
+      "configurePreset": "asan",
+      "configuration": "Debug",
+      "jobs": 4
+    }
+  ],
+
+  "testPresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error",
+        "stopOnFailure": false
+      }
+    },
+    {
+      "name": "stub",
+      "displayName": "测试 stub",
+      "inherits": "base",
+      "configurePreset": "stub",
+      "configuration": "Release"
+    },
+    {
+      "name": "cubism",
+      "displayName": "测试 cubism",
+      "inherits": "base",
+      "configurePreset": "cubism",
+      "configuration": "Release"
+    },
+    {
+      "name": "nocubism",
+      "displayName": "测试 nocubism",
+      "inherits": "base",
+      "configurePreset": "nocubism",
+      "configuration": "Debug"
+    },
+    {
+      "name": "asan",
+      "displayName": "测试 asan",
+      "description": "preset v2 不支持用例过滤；CI 中通过 ctest -E 排除两个已知的 Qt GUI 内存泄漏用例。",
+      "inherits": "base",
+      "configurePreset": "asan",
+      "configuration": "Debug"
+    }
+  ]
+}
