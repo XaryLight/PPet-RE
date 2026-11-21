@@ -140,10 +140,13 @@ ctest --output-on-failure
 | `error_dialog_smoke` | 失败弹窗：分类/摘要/逐条明细/建议/日志、复制按钮、警告型标题（offscreen） |
 | `render_verify_pmx` / `render_verify_vrm` | 用渲染验证 CLI 对仓库素材跑「加载 → 渲染 → 读回像素 → 判定」（xvfb） |
 | `render_verify_clear_contract` | 主循环每帧清屏契约：连续帧读回像素一致、无上一帧残影（xvfb） |
+| `doctor_unit` | `--doctor` 自检：后端标签 / 配置解析·越界 / 模型路径 / 日志目录可写，报告统计与格式化 |
+| `language_detect_unit` | 语言检测：`--lang` 值解析 / locale 标签推断 / 系统语言探测合法性 |
+| `adaptive_fps_unit` | 分场景帧率：开关关闭时与既有逻辑一致 / 隐藏降心跳 / 安全模式封顶 |
 
-共 **45 项**测试（含 fixture）。调试面板冒烟测试还会校验 7 个页签、骨架/图片/详细错误区与
+共 **57 项**测试（含 fixture）。调试面板冒烟测试还会校验 7 个页签、骨架/图片/详细错误区与
 表情与说话页；气泡冒烟测试校验无边框气泡的显隐、文本与定位。
-本轮实测：Release + 桩 / Release + 真实 SDK / Debug + 无后端 **三配置均 45/45 通过，0 警告**。
+本轮实测：Release + 桩 / Release + 真实 SDK / Debug + 无后端 **三配置均 57/57 通过，0 警告**。
 
 ### 三配置构建矩阵
 
@@ -161,6 +164,20 @@ for d in build build_cubism build_nocubism; do
     (cd "$d" && ctest --output-on-failure)
 done
 ```
+
+> **一条命令复现（CMake Presets）**：根目录的 `CMakePresets.json` 把四个配置封装成
+> preset，新人无需记一长串 `-D`：
+>
+> ```bash
+> cmake --list-presets                  # 列出 stub / cubism / nocubism / asan
+> cmake --preset stub                   # 配置（等价上面的 Release + 桩）
+> cmake --build --preset stub --parallel # 构建
+> ctest --preset stub --output-on-failure# 测试
+> ```
+>
+> `asan` preset 额外带 `-fsanitize=address,undefined`；因 preset v2 不支持用例过滤，
+> ASAN 下两个已知 Qt GUI 泄漏用例（`error_dialog_smoke` / `debug_panel_smoke`）需在 CI
+> 里用 `ctest -E` 排除。CI 矩阵见 `.github/workflows/ci.yml`。
 
 > **纯逻辑优先**：待机动画、骨骼动作、Live2D 物理、动作分组这几块的实现
 > 都刻意做成「不碰 GL / Qt / 文件 IO」的纯逻辑模块，因此上面三种配置都能编译并运行

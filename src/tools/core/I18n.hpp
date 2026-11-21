@@ -58,6 +58,7 @@ struct Strings {
     std::string modelTypeVrm;
     std::string noModel;
     std::string trackingHint;
+    std::string modelNamePrefix;  ///< 空路径模型的默认名前缀（"模型 " / "Model "）
 
     // 模型调试/诊断面板（DebugPanel）
     std::string debugPanel;

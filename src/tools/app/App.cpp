@@ -19,10 +19,12 @@
 #include <QLineEdit>
 #include <QString>
 
+#include <src/tools/core/AdaptiveFps.hpp>
 #include <src/tools/core/DpiLayout.hpp>
 #include <src/tools/core/WindowFit.hpp>
 #include <src/tools/core/Math.hpp>
 #include <src/tools/core/FileIO.hpp>
+#include <src/tools/core/LanguageDetect.hpp>
 #include <src/tools/core/Log.hpp>
 #include <src/tools/core/ModelPackage.hpp>
 #include <src/tools/core/ModelNaming.hpp>
@@ -131,8 +133,22 @@ bool App::Initialize(std::string& error) {
         PPET_LOG_ERR("%s\n", error.c_str());
         error.clear();
     }
-    strings_ = GetStrings(configStore_.config().language);
-    currentLanguage_ = configStore_.config().language;
+    // 界面语言决策（报告 4.1.5）：
+    //   优先级 --lang 覆盖 > 配置文件显式语言 > 首次启动系统语言自动检测 > 默认中文。
+    // 仅「首次启动」才自动检测，后续尊重用户在托盘里切换后写入配置的选择。
+    {
+        Language chosen = configStore_.config().language;
+        if (autoDetectLanguage_ && firstLaunch && !hasLanguageOverride_) {
+            chosen = DetectSystemLanguage();
+            configStore_.config().language = chosen;  // 让托盘勾选状态与之一致
+        }
+        if (hasLanguageOverride_) {
+            chosen = languageOverride_;
+            configStore_.config().language = chosen;
+        }
+        strings_ = GetStrings(chosen);
+        currentLanguage_ = chosen;
+    }
     showTool_ = configStore_.config().showTool;
 
     // 运行时兼容选项：命令行 --safe-mode / --max-fps= 优先于配置文件，
@@ -340,7 +356,8 @@ bool App::Initialize(std::string& error) {
                 QString::fromUtf8("给新模型起个名字（留空则使用默认名）："),
                 QLineEdit::Normal, defaultName, &accepted);
             if (accepted && !chosen.isEmpty()) {
-                cfg.modelNames = model_naming::ResolveNames(cfg.modelList, cfg.modelNames);
+                cfg.modelNames = model_naming::ResolveNames(
+                    cfg.modelList, cfg.modelNames, strings_.modelNamePrefix);
                 for (std::size_t i = 0; i < cfg.modelList.size(); ++i) {
                     if (cfg.modelList[i] != cfg.modelPath) continue;
                     std::vector<std::string> others;
@@ -1515,8 +1532,15 @@ void App::Run() {
         // 软限帧：glfwSwapInterval(1) 在部分驱动 / overlay 注入下会失效
         // （实测 xvfb 下 200+ FPS）。高频刷新透明分层窗口会持续占用 DWM
         // 合成与 GPU，一旦渲染异常就可能拖慢整个桌面，故按配置压到 60 FPS。
-        const int effectiveFps =
-            stability::EffectiveMaxFps(configuredMaxFps_, safeMode_);
+        // 分场景自适应帧率（报告 4.1.3）：窗口隐藏/最小化时降到心跳帧率，
+        // 其余场景与既有逻辑一致。判断用 GLFW_VISIBLE，跨平台语义可靠。
+        const adaptive_fps::Scene scene =
+            (window_.Handle() != nullptr &&
+             glfwGetWindowAttrib(window_.Handle(), GLFW_VISIBLE) == GLFW_FALSE)
+                ? adaptive_fps::Scene::Hidden
+                : adaptive_fps::Scene::Active;
+        const int effectiveFps = adaptive_fps::EffectiveAdaptiveFps(
+            configuredMaxFps_, safeMode_, scene, adaptiveFpsEnabled_);
         const double budget = stability::FrameBudgetSeconds(effectiveFps);
         if (budget > 0.0) {
             const double spent =

@@ -729,6 +729,7 @@ set(PPET_CORE_SOURCES
     src/tools/core/Config.cpp
     src/tools/core/Doctor.cpp
     src/tools/core/I18n.cpp
+    src/tools/core/LanguageDetect.cpp
     src/tools/core/Log.cpp
     src/tools/core/ModelPackage.cpp
     src/tools/core/ZipArchive.cpp
@@ -1111,6 +1112,23 @@ add_executable(ppet_doctor_test
 target_include_directories(ppet_doctor_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME doctor_unit
          COMMAND ppet_doctor_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# 语言检测（--lang 覆盖 + 系统语言自动检测），纯逻辑单测。
+add_executable(ppet_language_detect_test
+    tools/language_detect_test.cpp
+    src/tools/core/LanguageDetect.cpp
+)
+target_include_directories(ppet_language_detect_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME language_detect_unit
+         COMMAND ppet_language_detect_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# 分场景自适应帧率（纯逻辑，header-only）。
+add_executable(ppet_adaptive_fps_test tools/adaptive_fps_test.cpp)
+target_include_directories(ppet_adaptive_fps_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME adaptive_fps_unit
+         COMMAND ppet_adaptive_fps_test
          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
 # P0 安全边界回归：ZIP 炸弹/EOCD 回绕/CRC 篡改/非法配置不崩溃。

@@ -85,20 +85,30 @@ inline std::string UniqueName(const std::string& base,
     return base + " (overflow)";
 }
 
+/// 空路径时的默认名前缀。默认中文「模型 」；GUI 层可按当前语言注入其它文案
+/// （报告 4.1.5：消除面向用户的硬编码）。传入的前缀会直接拼接序号。
+inline std::string DefaultFallbackPrefix() { return "模型 "; }
+
 /// 把「路径列表 + 已保存的名字列表」对齐成一份可直接显示的名单。
 /// 规则：
 ///   - 保存的名字非空则沿用；
 ///   - 否则取文件名（去后缀）；
-///   - 文件名为空时用「模型 N」兜底；
+///   - 文件名为空时用「<前缀>N」兜底；
 ///   - 最终逐个做重名去重，即使旧配置里已经重名也能修正。
-inline std::vector<std::string> ResolveNames(const std::vector<std::string>& paths,
-                                             const std::vector<std::string>& stored) {
+///
+/// fallbackPrefix 留空表示使用默认「模型 」，保持所有既有调用/单测不变。
+inline std::vector<std::string> ResolveNames(
+    const std::vector<std::string>& paths,
+    const std::vector<std::string>& stored,
+    const std::string& fallbackPrefix = {}) {
+    const std::string prefix =
+        fallbackPrefix.empty() ? DefaultFallbackPrefix() : fallbackPrefix;
     std::vector<std::string> out;
     out.reserve(paths.size());
     for (std::size_t i = 0; i < paths.size(); ++i) {
         std::string base = (i < stored.size()) ? stored[i] : std::string();
         if (base.empty()) base = FileStem(paths[i]);
-        if (base.empty()) base = "模型 " + std::to_string(i + 1);
+        if (base.empty()) base = prefix + std::to_string(i + 1);
         out.push_back(UniqueName(base, out));
     }
     return out;
@@ -106,13 +116,16 @@ inline std::vector<std::string> ResolveNames(const std::vector<std::string>& pat
 
 /// 安全取第 i 个显示名（越界/空列表回退到路径文件名）。
 inline std::string NameAt(const std::vector<std::string>& paths,
-                          const std::vector<std::string>& stored, std::size_t index) {
+                          const std::vector<std::string>& stored, std::size_t index,
+                          const std::string& fallbackPrefix = {}) {
     if (index < stored.size() && !stored[index].empty()) return stored[index];
     if (index < paths.size()) {
         const std::string stem = FileStem(paths[index]);
         if (!stem.empty()) return stem;
     }
-    return "模型 " + std::to_string(index + 1);
+    const std::string prefix =
+        fallbackPrefix.empty() ? DefaultFallbackPrefix() : fallbackPrefix;
+    return prefix + std::to_string(index + 1);
 }
 
 }  // namespace ppet::model_naming

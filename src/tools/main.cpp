@@ -20,6 +20,7 @@
 
 #include <src/tools/app/App.hpp>
 #include <src/tools/core/Doctor.hpp>
+#include <src/tools/core/LanguageDetect.hpp>
 #include <src/tools/core/Log.hpp>
 #include <src/tools/platform/CrashHandler.hpp>
 
@@ -166,6 +167,19 @@ int main(int argc, char** argv) {
             if (ec == std::errc{} && ptr == text.data() + text.size() && parsed >= 0) {
                 maxFpsArg = parsed;
             }
+        } else if (arg.starts_with("--lang=")) {
+            constexpr std::string_view kLang = "--lang=";
+            if (auto lang = ppet::ParseLanguageOption(arg.substr(kLang.size()))) {
+                app.SetLanguageOverride(*lang);
+            } else {
+                std::fprintf(stderr, "忽略无法识别的 --lang 值：%.*s（可用 zh / en）\n",
+                             static_cast<int>(arg.substr(kLang.size()).size()),
+                             arg.substr(kLang.size()).data());
+            }
+        } else if (arg == "--no-auto-lang") {
+            app.SetAutoDetectLanguage(false);
+        } else if (arg == "--no-adaptive-fps") {
+            app.SetAdaptiveFps(false);
         }
     }
     if (safeModeFlag) app.SetSafeMode(true);

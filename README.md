@@ -128,7 +128,9 @@ cmake --build build -j
 | [docs/live2d-stage.md](docs/live2d-stage.md) | **Live2D 分层运行时：参数栈 / 姿态总线 / 三通道视线 / 待机 / 热区 / 口型 / 物理 / 动作分组 / 纯 C++ 渲染设计（参考项目）** |
 | [docs/usage.md](docs/usage.md) | 运行、托盘菜单、**交互式控制台指令手册**、**PMX / VRM 待机动画与骨骼动作**、设置面板、全屏追踪、配置字段 |
 | [docs/debugging.md](docs/debugging.md) | 模型诊断面板、失败弹窗、结构化日志（含多行续行）格式与级别、**`0xC0000005` 崩溃与第三方 overlay 注入排查**、常见问题 |
-| [docs/development.md](docs/development.md) | 架构分层、测试清单、**三配置构建矩阵**、文案翻译器、C++23 使用点 |
+| [docs/development.md](docs/development.md) | 架构分层、测试清单、**三配置构建矩阵 + CMake Presets**、文案翻译器、C++23 使用点 |
+| [docs/experience-improvements.md](docs/experience-improvements.md) | **第四部分体验改进落地清单**：`--doctor` 自检 / `--lang` 与系统语言 / 自适应帧率 / CI / ADR 的状态与取舍 |
+| [docs/adr/](docs/adr/) | 架构决策记录：纯逻辑分层 / SDK 单点隔离 / 三配置矩阵「为什么这么设计」 |
 | [api/README.md](api/README.md) | Live2D SDK 集成层与第三方库引用头说明 |
 | [Compiler/README.md](Compiler/README.md) | 文案翻译器（JSON/CSV → C++ 内嵌表）的用法 |
 
@@ -171,7 +173,7 @@ cd build
 ctest --output-on-failure
 ```
 
-覆盖 PMX/VRM 解析、ZIP 模型包（含 PMX 贴图容错）、中文路径、渲染冒烟、Qt 界面、结构化日志（含多行）、文案翻译器、表情调度、语言系统、Live2D 分层运行时、**官方动作队列 / 渲染计划 / 控制台指令解析**、**模型命名 / 长期稳定性 / 控制台队列 / 崩溃模块归类**、**追踪策略 / 插件系统 / 智能动作识别 / VRM 动作能力**等，共 **45 项**（三配置构建矩阵下全部通过）。完整清单见 [开发文档 · 测试](docs/development.md#测试)。
+覆盖 PMX/VRM 解析、ZIP 模型包（含 PMX 贴图容错）、中文路径、渲染冒烟、Qt 界面、结构化日志（含多行）、文案翻译器、表情调度、语言系统、Live2D 分层运行时、**官方动作队列 / 渲染计划 / 控制台指令解析**、**模型命名 / 长期稳定性 / 控制台队列 / 崩溃模块归类**、**追踪策略 / 插件系统 / 智能动作识别 / VRM 动作能力 / 自检 / 语言检测 / 自适应帧率**等，共 **57 项**（三配置构建矩阵下全部通过）。完整清单见 [开发文档 · 测试](docs/development.md#测试)。
 
 ---
 

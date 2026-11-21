@@ -43,6 +43,7 @@
   "modelTypeVrm": "VRM",
   "noModel": "尚未加载模型",
   "trackingHint": "开启后，模型的眼睛与朝向会跟随整个屏幕范围内的鼠标位置",
+  "modelNamePrefix": "模型 ",
   "debugPanel": "模型诊断",
   "debugTitle": "PPet 模型诊断",
   "debugTabOverview": "概览与渲染",

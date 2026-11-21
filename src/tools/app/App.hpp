@@ -56,6 +56,18 @@ public:
         hasMaxFpsOverride_ = true;
     }
 
+    /// 界面语言覆盖（报告 4.1.5）：由 main 解析 --lang= 后调用，须在 Initialize 之前。
+    /// 优先级：--lang 覆盖 > 配置文件显式语言 > 系统语言自动检测（可选）。
+    void SetLanguageOverride(Language lang) {
+        languageOverride_ = lang;
+        hasLanguageOverride_ = true;
+    }
+    /// 是否允许在配置未显式设置语言时按系统语言自动选择（默认开启）。
+    void SetAutoDetectLanguage(bool on) { autoDetectLanguage_ = on; }
+
+    /// 分场景自适应帧率（报告 4.1.3）：默认开启，仅在窗口隐藏/最小化时降心跳帧率。
+    void SetAdaptiveFps(bool on) { adaptiveFpsEnabled_ = on; }
+
 private:
     /// 加载指定路径的模型（精简版，只取字符串错误，不弹窗）。
     bool LoadModel(const std::string& path, std::string& error);
@@ -178,6 +190,10 @@ private:
     bool hasSafeModeOverride_ = false;
     int maxFpsOverride_ = 0;
     bool hasMaxFpsOverride_ = false;
+    Language languageOverride_ = Language::Chinese;
+    bool hasLanguageOverride_ = false;
+    bool autoDetectLanguage_ = true;
+    bool adaptiveFpsEnabled_ = true;
 
     /// 最近一次导入的模型包信息（单文件导入时为空），供诊断面板显示「来源」。
     ModelPackage lastPackage_;
