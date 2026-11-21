@@ -55,7 +55,8 @@ bool CaptureRenderFrame(const std::string& pngPath, int& outWidth, int& outHeigh
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, raw.data());
     // 清掉抓帧本身可能产生的 GL 错误，避免下一帧被误判为渲染异常。
-    while (glGetError() != GL_NO_ERROR) {
+    // 有界清空错误队列（缺陷 2.5.2）：避免驱动异常时无界循环卡死。
+    for (int guard = 0; guard < 32 && glGetError() != GL_NO_ERROR; ++guard) {
     }
 
     // 读回一次，统计与写图共用这份数据：面板可见时顺带得到像素证据，

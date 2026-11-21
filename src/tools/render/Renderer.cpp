@@ -823,6 +823,9 @@ bool SkinnedMeshRenderer::Upload(const SkinnedMesh& mesh) {
     // 着色器里 uBones 数组的长度是编译期常量，UBO 的实际容量必须与之相同，
     // 否则 uniform block 会读到缓冲区之外的数据（未定义行为）。
     // 容量取驱动允许的上限（GL_MAX_UNIFORM_BLOCK_SIZE），一次分配够用。
+    // 新模型/新容量：允许着色器重新编译（缺陷 2.5.4 的失败标志随之复位）。
+    shaderCompileFailed_ = false;
+    outlineCompileFailed_ = false;
     boneCapacity_ = static_cast<std::size_t>(QueryMaxBoneCount());
     if (boneCount_ > boneCapacity_) {
         std::fprintf(stderr,
@@ -972,20 +975,23 @@ void SkinnedMeshRenderer::DrawInternal(const Mat4& vp, const std::vector<Mat4>& 
     // 着色器里的 uBones 数组长度是编译期常量，必须与 UBO 实际分配的容量一致，
     // 否则 uniform block 读到的数据会超出缓冲区范围。
     const int boneCapacity = static_cast<int>(boneCapacity_);
-    if (!shader_) {
+    // 缺陷 2.5.4：编译失败只报告一次并降级，不再每帧 make_shared+编译刷 stderr。
+    if (!shader_ && !shaderCompileFailed_) {
         shader_ = std::make_shared<Shader>();
         if (!shader_->Compile(BuildToonVertexShader(boneCapacity), kToonFragmentShader, error)) {
             std::fprintf(stderr, "[渲染层] toon 着色器创建失败：\n%s\n", error.c_str());
             shader_.reset();
+            shaderCompileFailed_ = true;
             return;
         }
     }
-    if (outlinePass && !outlineShader_) {
+    if (outlinePass && !outlineShader_ && !outlineCompileFailed_) {
         outlineShader_ = std::make_shared<Shader>();
         if (!outlineShader_->Compile(BuildOutlineVertexShader(boneCapacity), kOutlineFragmentShader,
                                     error)) {
             std::fprintf(stderr, "[渲染层] 描边着色器创建失败：\n%s\n", error.c_str());
             outlineShader_.reset();
+            outlineCompileFailed_ = true;
             return;
         }
     }

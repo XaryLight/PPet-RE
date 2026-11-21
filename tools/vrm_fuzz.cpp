@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <random>
 #include <string>
 #include <vector>
@@ -121,7 +122,8 @@ int main(int argc, char** argv) {
     }
 
     std::mt19937 rng(20240607u);
-    const std::string tmpPath = "/tmp/vrm_fuzz_case.vrm";
+    const std::string tmpPath =
+        (std::filesystem::temp_directory_path() / "vrm_fuzz_case.vrm").string();
 
     int parsed = 0;
     int rejected = 0;

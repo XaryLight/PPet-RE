@@ -34,6 +34,31 @@
 
 namespace ppet::live2d {
 
+namespace detail {
+/// 缺陷 2.5.8：动作/组名关键字匹配必须有词边界，否则 "staple" 会被当成 tap、
+/// "export" 当成 exp、"facebook" 当成 face。这里把非字母数字视为分隔符，
+/// 关键字前后必须是分隔符或字符串边界才算命中。输入应为已转小写的字符串。
+inline bool ContainsKeyword(const std::string& lower, const char* keyword) {
+    const std::size_t len = std::strlen(keyword);
+    if (len == 0 || lower.size() < len) return false;
+    // 只有「字母」才算粘连：idle1 / head2 这类数字后缀是合法命名，
+    // 应视为边界（数字相邻不算误命中）；而 staple/export/facebook 是字母粘连。
+    const auto isSep = [](unsigned char c) {
+        return !(c >= 'a' && c <= 'z');
+    };
+    std::size_t pos = 0;
+    while ((pos = lower.find(keyword, pos)) != std::string::npos) {
+        const bool leftOk = (pos == 0) || isSep(static_cast<unsigned char>(lower[pos - 1]));
+        const std::size_t right = pos + len;
+        const bool rightOk = (right == lower.size()) ||
+                             isSep(static_cast<unsigned char>(lower[right]));
+        if (leftOk && rightOk) return true;
+        pos += 1;
+    }
+    return false;
+}
+}  // namespace detail
+
 /// 动作用途分类。
 enum class MotionGroupKind {
     Idle,         ///< 待机组（如 "Idle"），随机循环播放
@@ -123,23 +148,24 @@ inline MotionGroupKind ClassifyMotionFile(const std::string& fileName) {
     for (unsigned char c : base) lower.push_back(static_cast<char>(std::tolower(c)));
 
     // 互动类型优先于 idle：例如 "tap_idle" 应当算互动而不是待机。
-    if (lower.find("touch") != std::string::npos ||
-        lower.find("tap") != std::string::npos) {
+    // 用带词边界的匹配（缺陷 2.5.8）："export"/"facebook"/"staple" 不再误命中。
+    if (detail::ContainsKeyword(lower, "touch") ||
+        detail::ContainsKeyword(lower, "tap")) {
         return MotionGroupKind::Tap;
     }
-    if (lower.find("pinch") != std::string::npos) return MotionGroupKind::Pinch;
-    if (lower.find("shake") != std::string::npos) return MotionGroupKind::Shake;
-    if (lower.find("flick") != std::string::npos) return MotionGroupKind::Flick;
-    if (lower.find("exp") != std::string::npos ||
-        lower.find("emotion") != std::string::npos ||
-        lower.find("face") != std::string::npos) {
+    if (detail::ContainsKeyword(lower, "pinch")) return MotionGroupKind::Pinch;
+    if (detail::ContainsKeyword(lower, "shake")) return MotionGroupKind::Shake;
+    if (detail::ContainsKeyword(lower, "flick")) return MotionGroupKind::Flick;
+    if (detail::ContainsKeyword(lower, "exp") ||
+        detail::ContainsKeyword(lower, "emotion") ||
+        detail::ContainsKeyword(lower, "face")) {
         return MotionGroupKind::Expression;
     }
-    if (lower.find("idle") != std::string::npos ||
-        lower.find("stand") != std::string::npos ||
-        lower.find("wait") != std::string::npos ||
-        lower.find("breathe") != std::string::npos ||
-        lower.find("breath") != std::string::npos) {
+    if (detail::ContainsKeyword(lower, "idle") ||
+        detail::ContainsKeyword(lower, "stand") ||
+        detail::ContainsKeyword(lower, "wait") ||
+        detail::ContainsKeyword(lower, "breathe") ||
+        detail::ContainsKeyword(lower, "breath")) {
         return MotionGroupKind::Idle;
     }
     return MotionGroupKind::Other;
@@ -178,7 +204,12 @@ inline std::string HitAreaFromMotionFile(const std::string& fileName) {
                                 rest.front() == ' ')) {
             rest.erase(rest.begin());
         }
-        // 去掉尾部可能残留的编号（下划线/连字符分隔的数字），如 "head2" -> "head2"。
+        // 缺陷 2.5.8：早期注释称"去掉尾部编号"却直接 return rest，导致
+        // "touch_head2" 得到 "head2"，无法匹配 HitAreas 里的 "Head"。
+        // 这里真正去掉尾部连着的数字（head2 -> head；head12 -> head）。
+        while (!rest.empty() && rest.back() >= '0' && rest.back() <= '9') {
+            rest.pop_back();
+        }
         return rest;
     }
     return std::string();

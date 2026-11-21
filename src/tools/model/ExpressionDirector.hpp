@@ -77,23 +77,29 @@ inline constexpr AliasEntry kAliases[] = {
 inline const char* const* AliasCandidates(const std::string& logical) {
     for (const AliasEntry& e : kAliases) {
         if (logical == e.logical) {
+            // 缺陷 2.5.7：早期每 push_back 一个 string 到 pool 就取 back().c_str()，
+            // pool 扩容重分配后之前存进 cache 的指针全部悬垂。改为先把所有候选
+            // 写进 pool（此时不取指针），pool 稳定后再统一取 c_str()，末尾加
+            // nullptr 哨兵，避免调用方越界。
+            static thread_local std::vector<std::string> pool;
             static thread_local std::vector<const char*> cache;
             static thread_local std::string cachedKey;
             if (cachedKey != logical) {
                 cachedKey = logical;
+                pool.clear();
                 cache.clear();
-                std::string s(e.candidates);
+                const std::string s(e.candidates);
                 std::size_t start = 0;
                 while (start <= s.size()) {
                     const std::size_t pos = s.find('|', start);
-                    const std::string part = s.substr(start, pos == std::string::npos ? std::string::npos : pos - start);
-                    // 每个候选串常驻静态存储，这里用 string 池保存，避免返回悬垂指针。
-                    static thread_local std::vector<std::string> pool;
-                    pool.push_back(part);
-                    cache.push_back(pool.back().c_str());
+                    pool.push_back(s.substr(
+                        start, pos == std::string::npos ? std::string::npos : pos - start));
                     if (pos == std::string::npos) break;
                     start = pos + 1;
                 }
+                cache.reserve(pool.size() + 1);
+                for (const std::string& part : pool) cache.push_back(part.c_str());
+                cache.push_back(nullptr);
             }
             return cache.data();
         }

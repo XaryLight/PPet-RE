@@ -61,8 +61,9 @@ bool CheckGlError(const char* file, int line) {
     if (err == GL_NO_ERROR) return false;
     std::fprintf(stderr, "[OpenGL 错误] %s:%d -> 0x%04X\n", file ? file : "?", line,
                  static_cast<unsigned>(err));
-    // 把错误队列里残留的错误一次性取干净，避免后续排查时被旧错误干扰。
-    while (glGetError() != GL_NO_ERROR) {
+    // 把错误队列里残留的错误取干净，但必须有上限（缺陷 2.5.2）：
+    // 驱动异常持续报错时无界 while 会死循环卡死主线程。复用 32 次上限。
+    for (int guard = 0; guard < 32 && glGetError() != GL_NO_ERROR; ++guard) {
     }
     return true;
 }
@@ -72,7 +73,7 @@ void PrintGlError(const char* context) {
     if (err == GL_NO_ERROR) return;
     std::fprintf(stderr, "[OpenGL 错误] %s -> 0x%04X\n", context ? context : "?",
                  static_cast<unsigned>(err));
-    while (glGetError() != GL_NO_ERROR) {
+    for (int guard = 0; guard < 32 && glGetError() != GL_NO_ERROR; ++guard) {
     }
 }
 

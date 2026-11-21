@@ -137,6 +137,10 @@ private:
     std::shared_ptr<Shader> shader_;
     /// 描边用的独立着色器（顶点外扩 + 纯色输出）。
     std::shared_ptr<Shader> outlineShader_;
+    /// 缺陷 2.5.4：着色器编译失败后不每帧重试（避免 CPU/日志洪水），
+    /// 只在几何/容量变化时由 Upload() 复位。
+    bool shaderCompileFailed_ = false;
+    bool outlineCompileFailed_ = false;
     /// 网格的材质与子网格信息。契约里 Draw() 不接收 mesh，
     /// 所以必须在 Upload() 时缓存一份。
     std::vector<Material> materials_;

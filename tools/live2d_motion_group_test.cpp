@@ -84,6 +84,15 @@ void TestClassifyMotionFile() {
           "mail.motion3.json -> Other");
     Check(ClassifyMotionFile("main_1.motion3.json") == MotionGroupKind::Other,
           "main_1.motion3.json -> Other");
+
+    // 缺陷 2.5.8：子串误命中——staple 含 tap、export 含 exp、facebook 含 face，
+    // 带词边界匹配后应归入 Other 而不是被误判。
+    Check(ClassifyMotionFile("staple.motion3.json") == MotionGroupKind::Other,
+          "staple.motion3.json 不因含 'tap' 被误判为 Tap");
+    Check(ClassifyMotionFile("export.motion3.json") == MotionGroupKind::Other,
+          "export.motion3.json 不因含 'exp' 被误判为 Expression");
+    Check(ClassifyMotionFile("facebook.motion3.json") == MotionGroupKind::Other,
+          "facebook.motion3.json 不因含 'face' 被误判为 Expression");
 }
 
 // ---------------------------------------------------------------------------
@@ -98,6 +107,9 @@ void TestHitAreaFromMotionFile() {
           "motions/touch_body -> body");
     Check(HitAreaFromMotionFile("tap_hand.motion3.json") == "hand",
           "tap_hand -> hand");
+    // 缺陷 2.5.8：尾部编号应被去掉，才能匹配 HitAreas 里的无编号名称。
+    Check(HitAreaFromMotionFile("touch_head2.motion3.json") == "head",
+          "touch_head2 -> head（去掉尾部编号）");
     Check(HitAreaFromMotionFile("idle.motion3.json").empty(),
           "idle -> 空（没有命中区）");
 }

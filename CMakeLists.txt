@@ -1026,6 +1026,15 @@ target_link_libraries(ppet_vrm_test PRIVATE ppet_model)
 add_executable(ppet_vrm_fuzz tools/vrm_fuzz.cpp)
 target_link_libraries(ppet_vrm_fuzz PRIVATE ppet_model)
 
+# 缺陷 2.6.1：把两个模糊测试接入 CTest（此前只 add_executable 未 add_test，
+# CI 根本不跑）。用合法样本 + 少量迭代做快速回归，深度 fuzz 仍可手动加大次数。
+add_test(NAME pmx_fuzz_unit
+         COMMAND ppet_pmx_fuzz ${CMAKE_CURRENT_SOURCE_DIR}/tools/testdata/test.pmx 200
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME vrm_fuzz_unit
+         COMMAND ppet_vrm_fuzz ${CMAKE_CURRENT_SOURCE_DIR}/tools/testdata/test.vrm 200
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
 add_executable(ppet_vrm_dump tools/vrm_dump.cpp)
 target_link_libraries(ppet_vrm_dump PRIVATE ppet_model)
 

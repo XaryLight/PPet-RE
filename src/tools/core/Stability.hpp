@@ -39,7 +39,11 @@ inline float ClampDelta(float dt, float maxDt = 0.1f) {
 inline float PhaseOf(double elapsedSeconds, double frequencyHz, double offset = 0.0) {
     constexpr double kTwoPi = 6.28318530717958647692;
     const double phase = elapsedSeconds * frequencyHz * kTwoPi + offset;
-    return static_cast<float>(std::fmod(phase, kTwoPi));
+    double wrapped = std::fmod(phase, kTwoPi);
+    // 缺陷 2.5.3：fmod 对负相位返回负值，契约要求 [0,2π)。负时间/负 offset
+    // （热改频率、倒放、表达式截断）会让下游 sin 与索引计算异常，这里加一圈修正。
+    if (wrapped < 0.0) wrapped += kTwoPi;
+    return static_cast<float>(wrapped);
 }
 
 /// 计算本帧允许的最大帧率：安全模式强制 30；0 表示不额外限帧（只依赖 VSync）；

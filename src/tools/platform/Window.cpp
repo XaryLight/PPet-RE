@@ -696,7 +696,8 @@ bool Window::InitGL(std::string& error) {
     }
     // glewInit 之后常会留下一个 GL_INVALID_ENUM 之类的历史错误，清掉以免后续
     // GL 错误检查（PPET_GL_CHECK）误报。
-    while (glGetError() != GL_NO_ERROR) {
+    // 有界清空错误队列（缺陷 2.5.2）：避免驱动异常时无界循环卡死。
+    for (int guard = 0; guard < 32 && glGetError() != GL_NO_ERROR; ++guard) {
     }
 
     glReady_ = true;

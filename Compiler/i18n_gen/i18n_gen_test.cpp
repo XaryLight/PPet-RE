@@ -129,6 +129,12 @@ int main() {
         Check(EscapeCppLiteral("a\\b") == "a\\\\b", "反斜杠被转义");
         Check(EscapeCppLiteral("a\nb") == "a\\nb", "换行被转义");
         Check(EscapeCppLiteral("中文") == "中文", "非 ASCII 字符原样保留");
+        // 缺陷 2.6.2：补全控制字符转义，且用定长八进制避免 \x 贪婪吞字符。
+        Check(EscapeCppLiteral(std::string("\x01", 1)) == "\\001",
+              "控制字符 0x01 用八进制转义");
+        Check(EscapeCppLiteral(std::string("a\x01""b", 3)) == "a\\001b",
+              "八进制转义不与后续字符粘连");
+        Check(EscapeCppLiteral("\b\f\v") == "\\b\\f\\v", "\\b\\f\\v 被转义");
     }
 
     // --- 6. .inl 生成 ---

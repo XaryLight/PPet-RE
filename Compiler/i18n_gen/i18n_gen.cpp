@@ -280,14 +280,30 @@ bool Validate(const std::vector<std::string>& members,
 std::string EscapeCppLiteral(const std::string& text) {
     std::string out;
     out.reserve(text.size() + 8);
-    for (const char c : text) {
+    for (const unsigned char uc : text) {
+        const char c = static_cast<char>(uc);
         switch (c) {
             case '\\': out += "\\\\"; break;
             case '"':  out += "\\\""; break;
             case '\n': out += "\\n";  break;
             case '\r': out += "\\r";  break;
             case '\t': out += "\\t";  break;
-            default:   out.push_back(c); break;
+            case '\b': out += "\\b";  break;  // 缺陷 2.6.2：补全控制字符转义
+            case '\f': out += "\\f";  break;
+            case '\v': out += "\\v";  break;
+            case '\0': out += "\\0";  break;
+            default:
+                // 其余控制字符（0x01~0x1F、0x7F）用固定 3 位八进制转义：
+                // \xHH 会贪婪吞掉后面的十六进制字符导致字面量被污染，\OOO 定长更安全。
+                if (uc < 0x20 || uc == 0x7F) {
+                    out += '\\';
+                    out.push_back(static_cast<char>('0' + ((uc >> 6) & 0x7)));
+                    out.push_back(static_cast<char>('0' + ((uc >> 3) & 0x7)));
+                    out.push_back(static_cast<char>('0' + (uc & 0x7)));
+                } else {
+                    out.push_back(c);
+                }
+                break;
         }
     }
     return out;

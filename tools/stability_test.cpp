@@ -46,6 +46,13 @@ int main() {
     const float p1 = PhaseOf(period, freq);
     Check(std::fabs(p0 - p1) < 1e-4f, "相位：整周期后回到起点");
 
+    // 缺陷 2.5.3：负时间 / 负 offset 的相位必须仍落在 [0,2π)。
+    constexpr float kTwoPiF = 6.2831853f;
+    const float pNeg = PhaseOf(-0.1, freq);
+    const float pNegOffset = PhaseOf(0.0, freq, -0.5);
+    Check(pNeg >= 0.0f && pNeg < kTwoPiF, "相位：负时间归约到 [0,2π)");
+    Check(pNegOffset >= 0.0f && pNegOffset < kTwoPiF, "相位：负 offset 归约到 [0,2π)");
+
     const double thirtyYears = 30.0 * 365.25 * 24.0 * 3600.0;
     const float far = PhaseOf(thirtyYears + 0.37 * period, freq);
     const float near = PhaseOf(0.37 * period, freq);
