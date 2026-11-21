@@ -154,7 +154,10 @@ public:
                            ? EasingSine((entry.fadeOutStart + entry.fadeOutSeconds - clock_) /
                                         entry.fadeOutSeconds)
                            : 0.0f;
-            } else if (entry.fadeOut > 0.0f && entry.duration > 0.0f) {
+            } else if (!entry.loop && entry.fadeOut > 0.0f && entry.duration > 0.0f) {
+                // 缺陷 2.2.5：循环动作每轮 fmod 回绕后，若仍按 (duration-time)/fadeOut
+                // 计算淡出，会在每轮末尾淡到 0 再淡入，表现为「动一下停一下」。
+                // 循环动作只有被新动作打断（fadingOut）时才淡出，自然回绕不淡出。
                 fout = EasingSine((entry.duration - entry.time) / entry.fadeOut);
             }
             const float weight = std::min(1.0f, std::max(0.0f, fin * fout));

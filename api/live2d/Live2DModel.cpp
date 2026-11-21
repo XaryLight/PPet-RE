@@ -498,6 +498,9 @@ struct Live2DModel::Impl {
 
     /// 物理输入/输出用到的参数缓存（每帧从 Cubism 读入、算完写回）。
     std::map<std::string, float> physicsParams;
+
+    /// 仅「输出」参数名 -> Cubism 索引（Stabilize 后需要把静止姿势刷进 Cubism）。
+    std::map<std::string, int> physicsOutputIndex;
 };
 
 // ---------------------------------------------------------------------------
@@ -670,6 +673,7 @@ void Live2DModel::LoadPhysics() {
     impl_->physics.Reset();
     impl_->physicsParamIndex.clear();
     impl_->physicsParams.clear();
+    impl_->physicsOutputIndex.clear();
 
     const std::string& physicsPath = impl_->manifest.physicsPath;
     if (physicsPath.empty()) return;
@@ -700,6 +704,7 @@ void Live2DModel::LoadPhysics() {
             const int index = cubism::FindParameter(impl_->model, output.parameter);
             if (index < 0) continue;
             impl_->physicsParamIndex[output.parameter] = index;
+            impl_->physicsOutputIndex[output.parameter] = index;
             impl_->physicsParams[output.parameter] = 0.0f;
             float minValue = -1.0f;
             float maxValue = 1.0f;
@@ -710,7 +715,26 @@ void Live2DModel::LoadPhysics() {
     }
 
     // 安定化：让摆锤从「静止下垂」开始，避免第一帧猛然落下。
+    // 缺陷 2.2.4：先用 Cubism 当前值填充缓存（Stabilize 的 ComputeInputs 需要），
+    // 再把 Stabilize 算出的输出静止姿势刷回 Cubism —— 否则下一帧 ApplyPhysics
+    // 从 Cubism 重读会覆盖掉安定化结果，「从静止下垂开始」语义失效。
+    for (auto& kv : impl_->physicsParams) {
+        const auto it = impl_->physicsParamIndex.find(kv.first);
+        if (it != impl_->physicsParamIndex.end()) {
+            kv.second = cubism::ParameterValue(impl_->model, it->second);
+        }
+    }
     impl_->physics.Stabilize(impl_->physicsParams);
+    for (const auto& kv : impl_->physicsParams) {
+        const auto outIt = impl_->physicsOutputIndex.find(kv.first);
+        if (outIt == impl_->physicsOutputIndex.end()) continue;
+        const int index = outIt->second;
+        float minValue = -1.0f;
+        float maxValue = 1.0f;
+        const bool hasRange = cubism::ParameterRange(impl_->model, index, minValue, maxValue);
+        float value = hasRange ? Clamp(kv.second, minValue, maxValue) : kv.second;
+        cubism::SetParameterValue(impl_->model, index, value);
+    }
 }
 
 void Live2DModel::ApplyPhysics(float deltaTime) {
@@ -730,9 +754,13 @@ void Live2DModel::ApplyPhysics(float deltaTime) {
 
     // 3) 写回 Cubism。
     //
-    // 这里**叠加**而不是覆盖：官方 Cubism 的物理是覆盖输出参数，
-    // 但那会抹掉动作已经写入的同名字段（例如模型自带的头发动画）。
-    // 叠加后「动作姿势」与「物理惯性」可以共存，头发摇曳更自然。
+    // 缺陷 2.2.4：Evaluate 已按 weight 把物理结果混入 params 的当前值
+    // （它->second = cur*(1-w) + scaled*w，见 Live2DPhysics.cpp），即 kv.second
+    // 已经是「物理混合后的最终值」。早期这里又把它加到 Cubism 当前值上，
+    // 得到 cur*(2-w)+scaled*w，头部/头发姿态被物理二次污染。
+    // 正确做法：直接把混合后的值写回一次（覆盖），不再叠加。
+    // 因为第 1 步读进来的 cur 就含动作/视线写好的值，weight<1 时它仍按
+    // (1-w) 比例保留，「动作姿势」与「物理惯性」依旧共存。
     for (const auto& kv : impl_->physicsParams) {
         const auto it = impl_->physicsParamIndex.find(kv.first);
         if (it == impl_->physicsParamIndex.end()) continue;
@@ -740,7 +768,7 @@ void Live2DModel::ApplyPhysics(float deltaTime) {
         float minValue = -1.0f;
         float maxValue = 1.0f;
         const bool hasRange = cubism::ParameterRange(impl_->model, index, minValue, maxValue);
-        float value = cubism::ParameterValue(impl_->model, index) + kv.second;
+        float value = kv.second;  // Evaluate 产出的最终混合值，直接覆盖，不再叠加
         if (hasRange) {
             value = Clamp(value, minValue, maxValue);
         }

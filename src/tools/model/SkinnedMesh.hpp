@@ -82,11 +82,22 @@ struct Bone {
     Mat4 parentWorld;
 };
 
+/// 纹理引用：Material 里的 baseColorTex / toonRampTex / sphereTex / normalTex
+/// 都是本数组的索引（-1 表示无）。缺陷 2.2.12：早期 Material 注释称指向
+/// SkinnedMesh::textures，但结构体里没有该成员，索引无处解析。
+struct TextureRef {
+    std::string name;       ///< 模型内记录的名字 / 相对路径
+    std::string path;       ///< 磁盘绝对路径（PMX）；内嵌贴图为空
+    bool embedded = false;  ///< 是否内嵌于模型文件（VRM .vrm / GLB）
+};
+
 /// 骨骼蒙皮网格。
 struct SkinnedMesh {
     std::vector<Vertex> vertices;
     std::vector<std::uint32_t> indices;
     std::vector<Material> materials;
+    /// Material 的 *Tex 索引指向本数组；由各后端在 BuildMesh 时填充。
+    std::vector<TextureRef> textures;
     std::vector<Bone> bones;
 
     /// 子网格：索引区间 + 材质索引。

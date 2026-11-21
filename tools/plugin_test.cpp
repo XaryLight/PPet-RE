@@ -107,6 +107,19 @@ int main() {
     check(mgr.List().size() == 2, "重名替换后仍是 2 个插件");
     check(mgr.IsEnabled("A"), "新 A 默认启用");
 
+    // --- 缺陷 2.2.10：禁用态插件被同名替换后，新实例应默认启用 ---
+    mgr.SetEnabled("B", false);
+    check(!mgr.IsEnabled("B"), "B 已禁用");
+    auto b2 = std::make_shared<RecorderPlugin>("B");
+    mgr.Register(b2);
+    check(mgr.IsEnabled("B"), "禁用态插件被同名替换后新实例默认启用（缺陷 2.2.10）");
+    check(b2->enabledCalls_ == 1, "新实例收到 OnEnable 回调");
+    // 新实例应真的能收到事件（不再是「永久失活」）。B 只订阅 MotionPlayed。
+    mgr.Emit(PluginEvent{PluginEventKind::MotionPlayed, "idle2", {}});
+    check(!b2->received_.empty() &&
+              b2->received_.back() == PluginEventKind::MotionPlayed,
+          "替换后的新插件正常接收事件");
+
     // --- 找不到的插件 SetEnabled 返回 false ---
     check(!mgr.SetEnabled("Nope", true), "未知插件返回 false");
 

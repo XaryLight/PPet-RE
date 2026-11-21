@@ -378,6 +378,15 @@ void PmxModel::BuildMesh() {
     if (mesh_.modelHeight <= kEpsilon) mesh_.modelHeight = 1.0f;
     modelHeight_ = mesh_.modelHeight;
 
+    // --- 纹理表 -----------------------------------------------------------
+    // 缺陷 2.2.12：Material 的 *Tex 索引指向 doc_.textures，同步到 mesh_.textures
+    // 让索引有处解析（name 与排列顺序一一对应）。
+    mesh_.textures.resize(doc_.textures.size());
+    for (std::size_t i = 0; i < doc_.textures.size(); ++i) {
+        mesh_.textures[i].name = doc_.textures[i];
+        mesh_.textures[i].embedded = false;  // PMX 贴图是外部文件
+    }
+
     // --- 材质 -------------------------------------------------------------
     mesh_.materials.resize(materialCount);
     for (std::size_t i = 0; i < materialCount; ++i) {

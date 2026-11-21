@@ -151,7 +151,8 @@ inline PhraseBook DefaultPhraseBook() {
 ///
 /// 设计要点（对齐 FULASKA 的 bubble.js）：
 ///   · 有优先级：互动/状态切换的台词优先级高于待机碎碎念；
-///   · 有冷却：一句话说完前不会立刻被另一句覆盖（除非更高优先级）；
+///   · 有冷却：一句话说完前不会立刻被另一句覆盖（除非同等或更高优先级，
+///     见 Say：priority >= 当前即打断，让连续互动及时更新台词）；
 ///   · 有字数上限：超长台词自动截断（避免气泡溢出）。
 class SpeechController {
 public:

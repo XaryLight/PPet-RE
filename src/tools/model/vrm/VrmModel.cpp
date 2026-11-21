@@ -579,16 +579,53 @@ void VrmModel::CollectBoneNodes() {
         }
     }
 
-    // 4. 按节点深度排序，保证「父在前、子在后」
+    // 4. 骨骼排序：必须保证「父骨骼在前、子骨骼在后」
     //    （ComputeSkinningMatrices 依赖这个顺序逐级累积世界矩阵）。
+    //    缺陷 2.2.8：仅按 nodeDepth 做 stable_sort 时，同深度节点保持文件序，
+    //    若真实父骨骼恰好排在子骨骼后面（深度计算边界情况），第 5 步的
+    //    `mapped < i` 守卫会把父子关系断成 -1，蒙皮丢失父变换。
+    //    这里按「深度优先、父优先」做真正的拓扑序：先按深度排，再做一遍
+    //    稳定插入修正，确保任一骨骼的父骨骼节点一定排在它前面。
     std::vector<int> boneNodes;
     boneNodes.reserve(nodeCount);
     for (std::size_t i = 0; i < nodeCount; ++i) {
         if (isBone[i]) boneNodes.push_back(static_cast<int>(i));
     }
     std::stable_sort(boneNodes.begin(), boneNodes.end(), [this](int a, int b) {
-        return nodeDepth_[static_cast<std::size_t>(a)] < nodeDepth_[static_cast<std::size_t>(b)];
+        const int da = nodeDepth_[static_cast<std::size_t>(a)];
+        const int db = nodeDepth_[static_cast<std::size_t>(b)];
+        if (da != db) return da < db;
+        // 同深度时按父节点索引排（父节点索引通常更小），进一步降低断链概率。
+        const int pa = nodeParent_[static_cast<std::size_t>(a)];
+        const int pb = nodeParent_[static_cast<std::size_t>(b)];
+        return pa < pb;
     });
+    // 稳定修正：把「父骨骼排在后面」的节点前移到父之前，直到不再变化。
+    // 此处 boneOfNode_ 尚未填充，直接用 nodeParent_ / isBone 判断父子关系。
+    // 最多 boneNodes.size() 轮，正常数据一轮即收敛。
+    for (std::size_t pass = 0; pass < boneNodes.size(); ++pass) {
+        bool changed = false;
+        std::vector<int> pos(nodeCount, -1);
+        for (std::size_t i = 0; i < boneNodes.size(); ++i) {
+            pos[static_cast<std::size_t>(boneNodes[i])] = static_cast<int>(i);
+        }
+        for (std::size_t i = 0; i < boneNodes.size(); ++i) {
+            const int node = boneNodes[i];
+            const int parent = nodeParent_[static_cast<std::size_t>(node)];
+            if (parent < 0 || static_cast<std::size_t>(parent) >= isBone.size()) continue;
+            if (!isBone[static_cast<std::size_t>(parent)]) continue;  // 父节点本身不是骨骼
+            const int parentPos = pos[static_cast<std::size_t>(parent)];
+            if (parentPos > static_cast<int>(i)) {
+                // 父排在子后面：把父节点从 parentPos 移到 i 之前。
+                const int moved = boneNodes[static_cast<std::size_t>(parentPos)];
+                boneNodes.erase(boneNodes.begin() + parentPos);
+                boneNodes.insert(boneNodes.begin() + static_cast<int>(i), moved);
+                changed = true;
+                break;
+            }
+        }
+        if (!changed) break;
+    }
 
     // 5. 建立骨骼。
     //
@@ -899,6 +936,7 @@ void VrmModel::BuildMaterials() {
     // 贴图列表：所有被材质引用到的 glTF 纹理。
     std::vector<int> textureMap(doc_->Textures().size(), -1);
     textureBytes_.clear();
+    mesh_.textures.clear();  // 缺陷 2.2.12：Material 的 *Tex 索引指向本数组
     auto textureIndexOf = [&](int gltfTexture) -> int {
         if (gltfTexture < 0 || static_cast<std::size_t>(gltfTexture) >= textureMap.size()) {
             return -1;
@@ -914,6 +952,10 @@ void VrmModel::BuildMaterials() {
             std::string error;
             if (!doc_->GetImageBytes(texture.source, bytes, mime, error)) bytes.clear();
         }
+        TextureRef ref;
+        ref.name = "texture_" + std::to_string(index);
+        ref.embedded = true;  // VRM 贴图来自内嵌 bufferView / data URI
+        mesh_.textures.push_back(std::move(ref));
         textureBytes_.push_back(std::move(bytes));
         return slot;
     };
@@ -2447,7 +2489,14 @@ void VrmModel::BuildAnimations() {
                 anim.components = 3;
             } else if (channel.path == "weights") {
                 anim.path = 3;
-                anim.components = static_cast<int>(values.size() / times.size());
+                // 缺陷 2.2.9：components 必须是真实 morph 目标数。
+                // values.size()/times.size() 在 CUBICSPLINE 下已含每帧 3 组值
+                // （入切线/值/出切线），若不再除以 3，后面的 stride=comps*3
+                // 会得到 9 倍步长，values.size() < times*stride 恒成立 → 整条
+                // morph 动画被误丢弃，表情/形变静默失效。
+                int rawComponents = static_cast<int>(values.size() / times.size());
+                if (anim.interpolation == 2 && rawComponents > 0) rawComponents /= 3;
+                anim.components = rawComponents;
                 if (anim.components <= 0) continue;
             } else {
                 continue;  // 未知的通道类型直接忽略

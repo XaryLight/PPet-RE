@@ -19,11 +19,12 @@ void PluginManager::Register(PluginPtr plugin) {
     // 按名字去重：同名插件用新实例替换旧实例。
     for (auto& e : plugins_) {
         if (e.plugin && e.plugin->Name() == plugin->Name()) {
-            if (e.enabled) {
-                e.plugin->OnDisable();
-                plugin->OnEnable(*this);
-            }
+            // 缺陷 2.2.10：旧插件若为禁用态，早期代码既不置 enabled=true 也不
+            // 调 OnEnable，新插件永久失活。语义应与首次注册一致——新实例默认启用。
+            if (e.enabled) e.plugin->OnDisable();
             e.plugin = plugin;
+            e.enabled = true;
+            plugin->OnEnable(*this);
             return;
         }
     }
