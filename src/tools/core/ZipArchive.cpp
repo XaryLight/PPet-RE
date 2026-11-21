@@ -44,6 +44,13 @@ std::uint32_t ReadU32(const unsigned char* p) {
            (static_cast<std::uint32_t>(p[3]) << 24);
 }
 
+/// 解压安全的全局预算（防止 ZIP 炸弹）。
+/// 单条目解压后字节硬上限 512 MB；压缩比异常阈值 200:1。
+/// 模型包（贴图 + 模型）不会超过这些量级，超过即视为恶意/损坏而拒绝。
+constexpr std::uint64_t kMaxDecompressedBytes = 512ull * 1024ull * 1024ull;
+constexpr std::uint64_t kMaxTotalDecompressedBytes = 1024ull * 1024ull * 1024ull;
+constexpr std::uint64_t kMaxCompressionRatio = 200;
+
 /// ZIP 条目在中央目录中的原始信息。
 struct CentralEntry {
     std::string name;
@@ -79,7 +86,12 @@ bool ParseCentralDirectory(const std::vector<unsigned char>& data,
     const std::uint32_t dirSize = ReadU32(&data[eocd + 12]);
     const std::uint32_t dirOffset = ReadU32(&data[eocd + 16]);
 
-    if (dirOffset > data.size() || dirOffset + dirSize > data.size()) return false;
+    // 提升到 uint64_t 后再相加：两个 uint32_t 之和可在 32 位回绕成小值，
+    // 从而绕过边界检查并让后续基于伪造偏移的读取越界（缺陷 2.1.2）。
+    const std::uint64_t dirEnd = static_cast<std::uint64_t>(dirOffset) +
+                                 static_cast<std::uint64_t>(dirSize);
+    if (static_cast<std::uint64_t>(dirOffset) > data.size() ||
+        dirEnd > static_cast<std::uint64_t>(data.size())) return false;
 
     std::size_t pos = dirOffset;
     for (std::uint16_t i = 0; i < count; ++i) {
@@ -117,10 +129,24 @@ bool ParseCentralDirectory(const std::vector<unsigned char>& data,
 }
 
 /// 用 raw inflate 解压数据（ZIP 的 deflate 不带 zlib 头尾）。
+///
+/// 安全约束（缺陷 2.1.1）：中央目录声明的 uncompressedSize 是攻击者可控的，
+/// 不能作为可信的 reserve 值，更不能只在解压「完成后」才比对。这里在 inflate
+/// 循环内实时累计输出，一旦命中以下任一预算立即中止：
+///   - 单条目输出超过 kMaxDecompressedBytes（512 MB）；
+///   - 累计输出超过调用方传入的 totalBudget（整包硬上限）；
+///   - 压缩比超过 kMaxCompressionRatio（200:1）—— 声明很小却解压出海量数据；
+///   - 输出超过声明大小 expectedSize 一定余量（声明即契约，超出即炸弹）。
 bool RawInflate(const unsigned char* src, std::size_t srcSize,
-                std::vector<unsigned char>& out, std::size_t expectedSize) {
+                std::vector<unsigned char>& out, std::size_t expectedSize,
+                std::uint64_t& writtenTotal) {
     out.clear();
-    if (expectedSize > 0) out.reserve(expectedSize);
+    // reserve 只按「声明大小」与「硬上限」的较小值，且加上合理余量；
+    // 不用攻击者给的值全额 reserve，避免一个标注 4 GB 的包瞬间吃满内存。
+    const std::uint64_t reserveCap =
+        std::min<std::uint64_t>(static_cast<std::uint64_t>(expectedSize),
+                                kMaxDecompressedBytes);
+    if (reserveCap > 0 && reserveCap <= (1u << 26)) out.reserve(static_cast<std::size_t>(reserveCap));
 
     z_stream stream{};
     // -MAX_WBITS 表示「裸 deflate」，正好对应 ZIP 里的压缩方式 8。
@@ -129,6 +155,12 @@ bool RawInflate(const unsigned char* src, std::size_t srcSize,
     stream.next_in = const_cast<Bytef*>(reinterpret_cast<const Bytef*>(src));
     stream.avail_in = static_cast<uInt>(srcSize);
 
+    const std::uint64_t declaredCap =
+        std::min<std::uint64_t>(static_cast<std::uint64_t>(expectedSize),
+                                kMaxDecompressedBytes);
+    const std::uint64_t ratioCap =
+        static_cast<std::uint64_t>(srcSize) * kMaxCompressionRatio;
+    std::uint64_t producedTotal = 0;
     unsigned char chunk[64 * 1024];
     int status = Z_OK;
     do {
@@ -140,6 +172,16 @@ bool RawInflate(const unsigned char* src, std::size_t srcSize,
             return false;
         }
         const std::size_t produced = sizeof(chunk) - stream.avail_out;
+        producedTotal += produced;
+        // 实时预算检查：任何一项越界都立刻放弃，绝不把整段 chunk insert 进内存。
+        if (producedTotal > kMaxDecompressedBytes ||
+            producedTotal > declaredCap ||
+            producedTotal > ratioCap ||
+            writtenTotal + producedTotal > kMaxTotalDecompressedBytes) {
+            inflateEnd(&stream);
+            PPET_LOG_ERR("ZIP 条目解压超出安全预算（压缩比/累计字节超限），已拒绝");
+            return false;
+        }
         if (produced > 0) out.insert(out.end(), chunk, chunk + produced);
         // Z_BUF_ERROR 且没有产出：输入耗尽但流未结束，属于数据截断。
         if (status == Z_BUF_ERROR && produced == 0) {
@@ -149,6 +191,7 @@ bool RawInflate(const unsigned char* src, std::size_t srcSize,
     } while (status != Z_STREAM_END);
 
     inflateEnd(&stream);
+    writtenTotal += producedTotal;
     return true;
 }
 
@@ -191,8 +234,9 @@ bool ReadRawEntryData(const std::vector<unsigned char>& archive,
 }
 
 /// 解压单个条目到内存。
+/// writtenTotal 在整包范围内累计，用于阻止「多条目累积撑爆内存」的炸弹。
 bool DecodeEntry(const std::vector<unsigned char>& archive, const CentralEntry& entry,
-                 std::vector<unsigned char>& out) {
+                 std::vector<unsigned char>& out, std::uint64_t& writtenTotal) {
     if (entry.flags & (kFlagEncrypted | kFlagStrongEncryption)) {
         PPET_LOG_ERR("ZIP 条目已加密，无法解压：%s\n", entry.name.c_str());
         return false;
@@ -202,6 +246,13 @@ bool DecodeEntry(const std::vector<unsigned char>& archive, const CentralEntry& 
     if (!ReadRawEntryData(archive, entry, raw)) return false;
 
     if (entry.method == kMethodStore) {
+        // store 方式同样受整包累计预算约束（原始字节即输出字节）。
+        if (static_cast<std::uint64_t>(raw.size()) > kMaxDecompressedBytes ||
+            writtenTotal + raw.size() > kMaxTotalDecompressedBytes) {
+            PPET_LOG_ERR("ZIP 条目超出安全预算，已拒绝：%s\n", entry.name.c_str());
+            return false;
+        }
+        writtenTotal += raw.size();
         out.swap(raw);
         return true;
     }
@@ -211,7 +262,7 @@ bool DecodeEntry(const std::vector<unsigned char>& archive, const CentralEntry& 
         return false;
     }
     return RawInflate(raw.data(), raw.size(), out,
-                      static_cast<std::size_t>(entry.uncompressedSize));
+                      static_cast<std::size_t>(entry.uncompressedSize), writtenTotal);
 }
 
 /// 校验解压后的数据大小与声明一致（防止畸形包越界）。
@@ -220,6 +271,25 @@ bool CheckSize(const CentralEntry& entry, std::size_t actual) {
     if (expected != actual) {
         PPET_LOG_ERR("ZIP 条目大小不符：%s（期望 %u，实际 %u）\n", entry.name.c_str(),
                      static_cast<unsigned>(expected), static_cast<unsigned>(actual));
+        return false;
+    }
+    return true;
+}
+
+/// 校验解压后数据的 CRC32 与中央目录声明一致（缺陷 2.6.4）。
+/// 检测到数据被篡改或损坏时拒绝继续，避免把坏贴图/坏模型喂给解析器。
+bool CheckCrc(const CentralEntry& entry, const std::vector<unsigned char>& data) {
+    // 数据描述符（bit 3）场景下中央目录里的 CRC 仍是权威值，可以统一校验。
+    uLong crc = crc32(0L, Z_NULL, 0);
+    if (!data.empty()) {
+        crc = crc32(crc, reinterpret_cast<const Bytef*>(data.data()),
+                    static_cast<uInt>(data.size()));
+    }
+    const std::uint32_t actual = static_cast<std::uint32_t>(crc);
+    if (actual != entry.crc) {
+        PPET_LOG_ERR("ZIP 条目 CRC 校验失败（数据损坏或被篡改）：%s（期望 %08X，实际 %08X）\n",
+                     entry.name.c_str(), static_cast<unsigned>(entry.crc),
+                     static_cast<unsigned>(actual));
         return false;
     }
     return true;
@@ -365,8 +435,11 @@ bool ReadZipEntry(const std::string& zipPath, const std::string& name,
     const std::string wanted = NormalizeEntryName(name);
     for (const CentralEntry& entry : central) {
         if (NormalizeEntryName(DecodeEntryName(entry.name, entry.flags)) != wanted) continue;
-        if (!DecodeEntry(archive, entry, out)) return false;
-        return CheckSize(entry, out.size());
+        std::uint64_t writtenTotal = 0;
+        if (!DecodeEntry(archive, entry, out, writtenTotal)) return false;
+        if (!CheckSize(entry, out.size())) return false;
+        if (!CheckCrc(entry, out)) return false;
+        return true;
     }
     return false;
 }
@@ -401,6 +474,8 @@ bool ExtractZipToDirectory(const std::string& zipPath, const std::string& destDi
         return fail("无法创建解压目录", destDir, IoErrorText(ec));
     }
 
+    // 整包累计解压预算：阻止「单条目都合法、但几百个条目累加撑爆内存」的炸弹。
+    std::uint64_t writtenTotal = 0;
     for (const CentralEntry& entry : central) {
         const std::string name = NormalizeEntryName(DecodeEntryName(entry.name, entry.flags));
         if (name.empty()) continue;
@@ -428,13 +503,17 @@ bool ExtractZipToDirectory(const std::string& zipPath, const std::string& destDi
         }
 
         std::vector<unsigned char> data;
-        if (!DecodeEntry(archive, entry, data)) {
+        if (!DecodeEntry(archive, entry, data, writtenTotal)) {
             return fail("解压条目失败", name,
-                        "条目数据损坏、被加密或使用了不支持的压缩方式");
+                        "条目数据损坏、被加密、超出安全预算或使用了不支持的压缩方式");
         }
         if (!CheckSize(entry, data.size())) {
             return fail("条目大小校验失败", name,
                         "解压结果与中央目录声明的大小不一致");
+        }
+        if (!CheckCrc(entry, data)) {
+            return fail("条目 CRC 校验失败", name,
+                        "数据已损坏或被篡改，CRC32 与中央目录声明不一致");
         }
         const std::string targetUtf8 = FromFsPath(target);
         sysErr.clear();

@@ -52,10 +52,21 @@
 #define stbi_zlib_decode_noheader_buffer  vrm_stbi_zlib_decode_noheader_buffer
 #define stbi_zlib_decode_noheader_malloc  vrm_stbi_zlib_decode_noheader_malloc
 
+// 单张贴图的最大边长与最大像素预算（缺陷 2.1.4）。
+// 8192 边长足以覆盖任何合理的桌宠贴图；超过即视为解压炸弹而拒绝，
+// stb 在超过 STBI_MAX_DIMENSIONS 时也会在解码阶段直接失败。
+#define STBI_MAX_DIMENSIONS 8192
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb/stb_image.h"
 
+#include <new>
+
 namespace ppet::vrm {
+
+namespace {
+// 单张图片解码后的 RGBA 字节上限（4096×4096×4 = 64 MB，留少量余量）。
+constexpr std::size_t kMaxDecodedPixels = 4096ull * 4096ull;
+}  // namespace
 
 bool DecodeImage(const unsigned char* data, std::size_t size, DecodedImage& out) {
     if (data == nullptr || size == 0) return false;
@@ -66,19 +77,41 @@ bool DecodeImage(const unsigned char* data, std::size_t size, DecodedImage& out)
     int height = 0;
     int channels = 0;
     // 统一请求 4 通道（RGBA），渲染层不需要区分原始通道数。
-    stbi_uc* pixels = vrm_stbi_load_from_memory(data, static_cast<int>(size), &width, &height,
-                                                &channels, 4);
+    stbi_uc* pixels = nullptr;
+    try {
+        pixels = vrm_stbi_load_from_memory(data, static_cast<int>(size), &width, &height,
+                                           &channels, 4);
+    } catch (...) {
+        // stb 内部可能抛 bad_alloc（在进入我们手写的分配之前）；统一降级为失败，
+        // 不让异常穿透到渲染线程（缺陷 2.3.5）。
+        return false;
+    }
     if (pixels == nullptr) return false;
     if (width <= 0 || height <= 0) {
         vrm_stbi_image_free(pixels);
         return false;
     }
-    const std::size_t pixelCount = static_cast<std::size_t>(width) *
-                                   static_cast<std::size_t>(height) * 4u;
+
+    // 乘法前先做上限校验，避免 width*height*4 在 size_t 上溢出绕过预算。
+    const std::size_t w = static_cast<std::size_t>(width);
+    const std::size_t h = static_cast<std::size_t>(height);
+    const bool oversized = w > kMaxDecodedPixels || h > kMaxDecodedPixels ||
+                           (w * h) > kMaxDecodedPixels;
+    if (oversized) {
+        vrm_stbi_image_free(pixels);
+        return false;
+    }
+    const std::size_t pixelCount = w * h * 4u;
+
+    try {
+        out.pixels.assign(pixels, pixels + pixelCount);
+    } catch (const std::bad_alloc&) {
+        vrm_stbi_image_free(pixels);
+        return false;
+    }
     out.width = width;
     out.height = height;
     out.channels = 4;
-    out.pixels.assign(pixels, pixels + pixelCount);
     vrm_stbi_image_free(pixels);
     return true;
 }

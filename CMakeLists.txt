@@ -1079,6 +1079,20 @@ add_test(NAME config_unit
          COMMAND ppet_config_test
          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
+# P0 安全边界回归：ZIP 炸弹/EOCD 回绕/CRC 篡改/非法配置不崩溃。
+add_executable(ppet_p0_security_test
+    tools/p0_security_test.cpp
+    src/tools/core/ZipArchive.cpp
+    src/tools/core/Config.cpp
+    src/tools/core/FileIO.cpp
+    src/tools/core/Log.cpp
+)
+target_include_directories(ppet_p0_security_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(ppet_p0_security_test PRIVATE ppet_zlib)
+add_test(NAME p0_security_unit
+         COMMAND ppet_p0_security_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
 # IO 错误诊断（Q3）：系统错误码 + 中文原因提示，保证 create_directories /
 # WriteFile 失败时不再只留一句「无法创建目录」。纯头文件、零依赖，三配置均可跑。
 add_executable(ppet_io_error_test tools/io_error_test.cpp)

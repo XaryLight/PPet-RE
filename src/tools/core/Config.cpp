@@ -2,8 +2,10 @@
 // 应用配置实现：JSON 持久化。
 #include <src/tools/core/Config.hpp>
 
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <limits>
 #include <string_view>
 #include <vector>
 
@@ -37,6 +39,55 @@ std::string StagingConfigPath() {
     const std::string exeDir = ExecutableDir();
     if (exeDir.empty()) return std::string();
     return FromFsPath(ToFsPath(exeDir) / "PPet" / "config.json");
+}
+
+/// 把可能含非法 UTF-8 字节的字符串净化成合法 UTF-8（缺陷 2.1.5）。
+/// ModelNaming 故意按纯字节处理名字以兼容非法编码路径，但 nlohmann::json::dump
+/// 会对非法 UTF-8 抛 type_error.316。落盘前把无法解码的字节替换为 '?'，
+/// 保证序列化永不因编码问题崩溃；显示名不符时最多是乱码，不影响功能。
+std::string SanitizeUtf8(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    const auto* p = reinterpret_cast<const unsigned char*>(s.data());
+    const std::size_t n = s.size();
+    std::size_t i = 0;
+    while (i < n) {
+        const unsigned char c = p[i];
+        if (c < 0x80) {
+            out.push_back(static_cast<char>(c));
+            ++i;
+            continue;
+        }
+        std::size_t extra = 0;
+        if ((c & 0xE0) == 0xC0) extra = 1;
+        else if ((c & 0xF0) == 0xE0) extra = 2;
+        else if ((c & 0xF8) == 0xF0) extra = 3;
+        if (extra == 0 || i + extra >= n) {
+            out.push_back('?');
+            ++i;
+            continue;
+        }
+        bool ok = true;
+        for (std::size_t k = 1; k <= extra; ++k) {
+            if ((p[i + k] & 0xC0) != 0x80) { ok = false; break; }
+        }
+        if (!ok) {
+            out.push_back('?');
+            ++i;
+            continue;
+        }
+        out.append(reinterpret_cast<const char*>(p + i), extra + 1);
+        i += extra + 1;
+    }
+    return out;
+}
+
+/// 对字符串数组整体做 UTF-8 净化。
+std::vector<std::string> SanitizeStrings(const std::vector<std::string>& in) {
+    std::vector<std::string> out;
+    out.reserve(in.size());
+    for (const auto& s : in) out.push_back(SanitizeUtf8(s));
+    return out;
 }
 
 }  // namespace
@@ -110,17 +161,35 @@ bool ConfigStore::Load(const std::string& path, std::string& error) {
     }
 
     // 逐字段读取，缺失的字段保持默认值 —— 保证旧版本配置文件仍可加载。
+    // 所有 get 都在 try 保护下：超范围整数 get<int>() 会抛 out_of_range（缺陷 2.1.5），
+    // 单个坏字段只跳过、用默认值，绝不让整个进程崩溃。
     const auto get_bool = [&](const char* key, bool& out) {
-        if (j.contains(key) && j[key].is_boolean()) out = j[key].get<bool>();
+        try {
+            if (j.contains(key) && j[key].is_boolean()) out = j[key].get<bool>();
+        } catch (const json::exception&) { /* 坏字段忽略，保留默认值 */ }
     };
     const auto get_int = [&](const char* key, int& out) {
-        if (j.contains(key) && j[key].is_number_integer()) out = j[key].get<int>();
+        try {
+            if (!j.contains(key) || !j[key].is_number_integer()) return;
+            // 先取 int64 再比较范围，避免 get<int>() 对超范围值直接抛异常。
+            const std::int64_t v = j[key].get<std::int64_t>();
+            if (v >= std::numeric_limits<int>::min() && v <= std::numeric_limits<int>::max()) {
+                out = static_cast<int>(v);
+            }
+        } catch (const json::exception&) { /* 坏字段忽略 */ }
     };
     const auto get_float = [&](const char* key, float& out) {
-        if (j.contains(key) && j[key].is_number()) out = j[key].get<float>();
+        try {
+            if (j.contains(key) && j[key].is_number()) {
+                const double v = j[key].get<double>();
+                out = static_cast<float>(v);
+            }
+        } catch (const json::exception&) { /* 坏字段忽略 */ }
     };
     const auto get_str = [&](const char* key, std::string& out) {
-        if (j.contains(key) && j[key].is_string()) out = j[key].get<std::string>();
+        try {
+            if (j.contains(key) && j[key].is_string()) out = j[key].get<std::string>();
+        } catch (const json::exception&) { /* 坏字段忽略 */ }
     };
 
     const auto get_string_array = [&](const char* key, std::vector<std::string>& out) {
@@ -196,9 +265,12 @@ bool ConfigStore::Save(const std::string& path, std::string& error) const {
     j["useGhProxy"] = config_.useGhProxy;
     j["fullscreenTracking"] = config_.fullscreenTracking;
     j["language"] = LanguageToString(config_.language);
-    j["modelPath"] = config_.modelPath;
-    j["modelList"] = config_.modelList;
-    j["modelNames"] = model_naming::ResolveNames(config_.modelList, config_.modelNames);
+    j["modelPath"] = SanitizeUtf8(config_.modelPath);
+    // modelList/modelNames 含从文件系统读来的字节，可能不是合法 UTF-8；
+    // 序列化前统一净化，避免 dump() 抛 type_error.316 导致整个进程崩溃。
+    j["modelList"] = SanitizeStrings(config_.modelList);
+    j["modelNames"] = SanitizeStrings(
+        model_naming::ResolveNames(config_.modelList, config_.modelNames));
     j["renderScale"] = config_.renderScale;
     j["autoFitWindow"] = config_.autoFitWindow;
     j["armRestDropDeg"] = config_.armRestDropDeg;
@@ -211,7 +283,17 @@ bool ConfigStore::Save(const std::string& path, std::string& error) const {
     j["maxTrackingAngle"] = config_.maxTrackingAngle;
     j["maxFps"] = config_.maxFps;
     j["safeMode"] = config_.safeMode;
-    const std::string text = j.dump(4);
+
+    // 最后一道保险：即使有未预料的字段含非法编码，dump 失败也只返回错误，
+    // 不让异常穿透到调用方（缺陷 2.1.5）。
+    std::string text;
+    try {
+        text = j.dump(4);
+    } catch (const json::exception& e) {
+        error = std::string("配置信息序列化失败：") + e.what();
+        PPET_LOG_TAG_ERR("CFG", "%s", error.c_str());
+        return false;
+    }
 
     // 每一步失败都往 error 里**追加**一条带系统错误码与中文原因的描述，
     // 最后统一写 ERR 日志。这样「直写失败 + 暂存拷贝也失败」时两路原因都在，

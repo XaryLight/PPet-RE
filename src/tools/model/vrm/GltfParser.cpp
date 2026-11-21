@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <sstream>
 
 namespace ppet::vrm {
@@ -91,6 +92,17 @@ float GetFloatOr(const nlohmann::json& obj, const char* key, float def) {
     float v = def;
     if (!JsonToFloat(*it, v)) return def;
     return v;
+}
+
+double GetDoubleOr(const nlohmann::json& obj, const char* key, double def) {
+    if (!obj.is_object()) return def;
+    const auto it = obj.find(key);
+    if (it == obj.end() || !it->is_number()) return def;
+    try {
+        return it->get<double>();
+    } catch (const nlohmann::json::exception&) {
+        return def;
+    }
 }
 
 bool GetBoolOr(const nlohmann::json& obj, const char* key, bool def) {
@@ -274,6 +286,35 @@ std::string DirNameOf(const std::string& path) {
     return path.substr(0, pos);
 }
 
+/// 把 URI 解出的相对路径安全地拼到模型目录下（缺陷 2.1.6）。
+/// 拒绝绝对路径、盘符与任何跳出 baseDir 的 '../' 穿越，避免模型文件
+/// 读取到模型目录之外的本地文件（信息泄露）。Unix 与 Windows 都覆盖。
+bool ResolveUriInsideBase(const std::string& baseDir, const std::string& relative,
+                          std::string& out) {
+    namespace fs = std::filesystem;
+    if (relative.empty()) return false;
+
+    fs::path rel = ToFsPath(relative);
+    // 绝对路径（Unix '/x' 或 Windows 'C:\x' / UNC）一律拒绝。
+    if (rel.is_absolute() || rel.has_root_name() || rel.has_root_directory()) return false;
+    if (relative.size() >= 2 && relative[1] == ':') return false;
+
+    std::error_code ec;
+    const fs::path base = fs::weakly_canonical(ToFsPath(baseDir), ec);
+    const fs::path baseForCompare = ec ? ToFsPath(baseDir).lexically_normal() : base;
+    const fs::path child = fs::weakly_canonical(baseForCompare / rel, ec);
+    const fs::path childForCompare = ec ? (baseForCompare / rel).lexically_normal() : child;
+
+    // 必须仍位于 baseDir 之内。
+    auto baseIt = baseForCompare.begin();
+    auto childIt = childForCompare.begin();
+    for (; baseIt != baseForCompare.end(); ++baseIt, ++childIt) {
+        if (childIt == childForCompare.end() || *childIt != *baseIt) return false;
+    }
+    out = FromFsPath(childForCompare);
+    return true;
+}
+
 /// 读取整个文件。失败返回 false。
 bool ReadWholeFile(const std::string& path, std::vector<unsigned char>& out,
                    std::string& error) {
@@ -412,6 +453,7 @@ struct AccessorView {
     int componentType = 0;
     bool normalized = false;
     int components = 0;
+    bool zeroBase = false;  ///< sparse accessor 可省略 bufferView，基数据全为 0
 };
 
 /// 解析 accessor 并定位其数据。返回 false 时 error 中写入原因。
@@ -449,7 +491,23 @@ bool ResolveAccessor(const std::vector<GltfAccessor>& accessors,
         view.components = comps;
         return true;
     }
-    if (acc.bufferView < 0 || static_cast<std::size_t>(acc.bufferView) >= views.size()) {
+    if (acc.bufferView < 0) {
+        // glTF 规范：sparse accessor 可以省略 bufferView，此时基数据全为 0，
+        // 由 sparse.indices/values 覆盖（缺陷 2.1.3）。非 sparse 则是非法文件。
+        if (acc.sparse.present && acc.sparse.count > 0) {
+            view.base = nullptr;
+            view.stride = compSize * static_cast<std::size_t>(comps);
+            view.count = acc.count;
+            view.componentType = acc.componentType;
+            view.normalized = acc.normalized;
+            view.components = comps;
+            view.zeroBase = true;
+            return true;
+        }
+        error = "accessor 的 bufferView 索引越界";
+        return false;
+    }
+    if (static_cast<std::size_t>(acc.bufferView) >= views.size()) {
         error = "accessor 的 bufferView 索引越界";
         return false;
     }
@@ -501,6 +559,102 @@ bool ResolveAccessor(const std::vector<GltfAccessor>& accessors,
     view.componentType = acc.componentType;
     view.normalized = acc.normalized;
     view.components = comps;
+    return true;
+}
+
+/// 把 sparse 覆盖层应用到已经读好的扁平数据 out（缺陷 2.1.3）。
+/// out 是按 [count][components] 紧密排列的浮点数组。indices 指定要覆盖的元素序号，
+/// values 提供覆盖值（与 accessor 同 componentType / normalized）。
+/// 所有 indices/values 的读取都做 bufferView 边界校验，越界即报错拒绝。
+bool ApplySparse(const GltfAccessor& acc,
+                 const std::vector<GltfBufferView>& views,
+                 const std::vector<GltfBuffer>& buffers,
+                 std::vector<float>& out, std::size_t components,
+                 std::string& error) {
+    if (!acc.sparse.present || acc.sparse.count == 0) return true;
+    const GltfSparse& sp = acc.sparse;
+    if (sp.count > acc.count) {
+        error = "sparse.count 超过 accessor.count";
+        return false;
+    }
+    if (sp.count > kMaxAccessorCount) {
+        error = "sparse.count 超出上限";
+        return false;
+    }
+
+    // --- indices ---
+    if (sp.indicesBufferView < 0 ||
+        static_cast<std::size_t>(sp.indicesBufferView) >= views.size()) {
+        error = "sparse indices 的 bufferView 索引越界";
+        return false;
+    }
+    const GltfBufferView& idxView = views[static_cast<std::size_t>(sp.indicesBufferView)];
+    if (idxView.buffer < 0 || static_cast<std::size_t>(idxView.buffer) >= buffers.size()) {
+        error = "sparse indices 的 buffer 索引越界";
+        return false;
+    }
+    const GltfBuffer& idxBuf = buffers[static_cast<std::size_t>(idxView.buffer)];
+    const std::size_t idxCompSize = ComponentSize(sp.indicesComponentType);
+    if (idxCompSize == 0) {
+        error = "sparse indices 的 componentType 非法";
+        return false;
+    }
+    const std::size_t idxStride = idxView.byteStride ? idxView.byteStride : idxCompSize;
+    const std::uint64_t idxStart = static_cast<std::uint64_t>(idxView.byteOffset) + sp.indicesByteOffset;
+    const std::uint64_t idxEnd = idxStart + static_cast<std::uint64_t>(sp.count - 1) * idxStride + idxCompSize;
+    if (idxStart > idxBuf.data.size() || idxEnd > idxBuf.data.size()) {
+        error = "sparse indices 数据超出 buffer 范围";
+        return false;
+    }
+
+    // --- values ---
+    if (sp.valuesBufferView < 0 ||
+        static_cast<std::size_t>(sp.valuesBufferView) >= views.size()) {
+        error = "sparse values 的 bufferView 索引越界";
+        return false;
+    }
+    const GltfBufferView& valView = views[static_cast<std::size_t>(sp.valuesBufferView)];
+    if (valView.buffer < 0 || static_cast<std::size_t>(valView.buffer) >= buffers.size()) {
+        error = "sparse values 的 buffer 索引越界";
+        return false;
+    }
+    const GltfBuffer& valBuf = buffers[static_cast<std::size_t>(valView.buffer)];
+    const std::size_t valCompSize = ComponentSize(acc.componentType);
+    if (valCompSize == 0) {
+        error = "sparse values 的 componentType 非法";
+        return false;
+    }
+    const std::size_t valElemSize = valCompSize * components;
+    const std::size_t valStride = valView.byteStride ? valView.byteStride : valElemSize;
+    if (valStride < valElemSize) {
+        error = "sparse values 的 byteStride 小于元素长度";
+        return false;
+    }
+    const std::uint64_t valStart = static_cast<std::uint64_t>(valView.byteOffset) + sp.valuesByteOffset;
+    const std::uint64_t valEnd = valStart + static_cast<std::uint64_t>(sp.count - 1) * valStride + valElemSize;
+    if (valStart > valBuf.data.size() || valEnd > valBuf.data.size()) {
+        error = "sparse values 数据超出 buffer 范围";
+        return false;
+    }
+
+    // --- 覆盖 ---
+    if (out.size() < acc.count * components) {
+        error = "sparse 目标数据缓冲区不足";
+        return false;
+    }
+    for (std::size_t s = 0; s < sp.count; ++s) {
+        const unsigned char* ip = idxBuf.data.data() + idxStart + s * idxStride;
+        const std::uint32_t index = ReadComponentAsU32(ip, sp.indicesComponentType);
+        if (index >= acc.count) {
+            error = "sparse indices 索引越界";
+            return false;
+        }
+        const unsigned char* vp = valBuf.data.data() + valStart + s * valStride;
+        for (std::size_t c = 0; c < components; ++c) {
+            out[static_cast<std::size_t>(index) * components + c] =
+                ReadComponentAsFloat(vp + c * valCompSize, acc.componentType, acc.normalized);
+        }
+    }
     return true;
 }
 
@@ -597,14 +751,22 @@ bool GltfDocument::ReadAccessorFloats(int accessorIndex, std::vector<float>& out
     if (view.count == 0) return true;
     const std::size_t comps = static_cast<std::size_t>(view.components);
     out.resize(view.count * comps);
-    const std::size_t compSize = ComponentSize(view.componentType);
-    for (std::size_t i = 0; i < view.count; ++i) {
-        const unsigned char* p = view.base + i * view.stride;
-        for (std::size_t k = 0; k < comps; ++k) {
-            out[i * comps + k] = ReadComponentAsFloat(p + k * compSize, view.componentType,
-                                                      view.normalized);
+    if (view.zeroBase) {
+        // sparse accessor 省略 bufferView：基数据全 0，随后由 sparse 覆盖。
+        std::fill(out.begin(), out.end(), 0.0f);
+    } else {
+        const std::size_t compSize = ComponentSize(view.componentType);
+        for (std::size_t i = 0; i < view.count; ++i) {
+            const unsigned char* p = view.base + i * view.stride;
+            for (std::size_t k = 0; k < comps; ++k) {
+                out[i * comps + k] = ReadComponentAsFloat(p + k * compSize, view.componentType,
+                                                          view.normalized);
+            }
         }
     }
+    // sparse 覆盖（缺陷 2.1.3）：先读基数据，再按 indices/values 覆盖。
+    const GltfAccessor& acc = accessors_[static_cast<std::size_t>(accessorIndex)];
+    if (!ApplySparse(acc, bufferViews_, buffers_, out, comps, error)) return false;
     return true;
 }
 
@@ -644,11 +806,26 @@ bool GltfDocument::ReadAccessorU32(int accessorIndex, std::vector<std::uint32_t>
     if (view.count == 0) return true;
     const std::size_t comps = static_cast<std::size_t>(view.components);
     out.resize(view.count * comps);
-    const std::size_t compSize = ComponentSize(view.componentType);
-    for (std::size_t i = 0; i < view.count; ++i) {
-        const unsigned char* p = view.base + i * view.stride;
-        for (std::size_t k = 0; k < comps; ++k) {
-            out[i * comps + k] = ReadComponentAsU32(p + k * compSize, view.componentType);
+    if (view.zeroBase) {
+        std::fill(out.begin(), out.end(), 0u);
+    } else {
+        const std::size_t compSize = ComponentSize(view.componentType);
+        for (std::size_t i = 0; i < view.count; ++i) {
+            const unsigned char* p = view.base + i * view.stride;
+            for (std::size_t k = 0; k < comps; ++k) {
+                out[i * comps + k] = ReadComponentAsU32(p + k * compSize, view.componentType);
+            }
+        }
+    }
+    // JOINTS 等整数 accessor 也可能被 sparse 覆盖（缺陷 2.1.3）。
+    // sparse values 用浮点通道读取再转 u32；对整数字段是精确的值拷贝。
+    const GltfAccessor& acc = accessors_[static_cast<std::size_t>(accessorIndex)];
+    if (acc.sparse.present && acc.sparse.count > 0) {
+        std::vector<float> asFloat(out.size());
+        for (std::size_t i = 0; i < out.size(); ++i) asFloat[i] = static_cast<float>(out[i]);
+        if (!ApplySparse(acc, bufferViews_, buffers_, asFloat, comps, error)) return false;
+        for (std::size_t i = 0; i < out.size(); ++i) {
+            out[i] = static_cast<std::uint32_t>(asFloat[i]);
         }
     }
     return true;
@@ -667,12 +844,14 @@ bool GltfDocument::ReadAccessorMat4(int accessorIndex, std::vector<Mat4>& out,
         return false;
     }
     out.resize(view.count);
-    const std::size_t compSize = ComponentSize(view.componentType);
-    for (std::size_t i = 0; i < view.count; ++i) {
-        const unsigned char* p = view.base + i * view.stride;
-        for (std::size_t k = 0; k < 16; ++k) {
-            out[i].m[k] = ReadComponentAsFloat(p + k * compSize, view.componentType,
-                                                view.normalized);
+    if (!view.zeroBase) {
+        const std::size_t compSize = ComponentSize(view.componentType);
+        for (std::size_t i = 0; i < view.count; ++i) {
+            const unsigned char* p = view.base + i * view.stride;
+            for (std::size_t k = 0; k < 16; ++k) {
+                out[i].m[k] = ReadComponentAsFloat(p + k * compSize, view.componentType,
+                                                    view.normalized);
+            }
         }
     }
     return true;
@@ -721,9 +900,13 @@ bool GltfDocument::GetImageBytes(int imageIndex, std::vector<unsigned char>& out
         if (mimeType.empty()) mimeType = mime;
         return true;
     }
-    // 外部文件：相对模型文件所在目录。
+    // 外部文件：相对模型文件所在目录，且必须仍在该目录内（防目录穿越）。
     const std::string rel = PercentDecode(image.uri);
-    const std::string full = rel.empty() || rel[0] == '/' ? rel : baseDir_ + "/" + rel;
+    std::string full;
+    if (!ResolveUriInsideBase(baseDir_, rel, full)) {
+        error = "图片 URI 指向模型目录之外，已拒绝：" + rel;
+        return false;
+    }
     if (!ReadWholeFile(full, out, error)) return false;
     if (mimeType.empty()) {
         if (full.size() >= 4 && full.compare(full.size() - 4, 4, ".png") == 0) {
@@ -786,7 +969,11 @@ static bool ParseBuffers(const nlohmann::json& root, const std::string& baseDir,
             }
         } else {
             const std::string rel = PercentDecode(buffer.uri);
-            const std::string full = rel.empty() || rel[0] == '/' ? rel : baseDir + "/" + rel;
+            std::string full;
+            if (!ResolveUriInsideBase(baseDir, rel, full)) {
+                error = "buffer " + std::to_string(i) + " 的 URI 指向模型目录之外，已拒绝：" + rel;
+                return false;
+            }
             if (!ReadWholeFile(full, buffer.data, error)) {
                 std::ostringstream oss;
                 oss << "buffer " << i << "：" << error;
@@ -878,6 +1065,60 @@ static bool ParseAccessors(const nlohmann::json& root, GltfDocument& doc, std::s
             acc.count = static_cast<std::size_t>(d);
         }
         acc.type = TypeFromString(GetStringOr(item, "type", "SCALAR"));
+
+        // sparse accessor：解析 count/indices/values（缺陷 2.1.3）。
+        // 只读入结构，真正的边界校验与覆盖发生在读取数据时（ApplySparse）。
+        const auto sparseIt = item.find("sparse");
+        if (sparseIt != item.end() && sparseIt->is_object()) {
+            const nlohmann::json& sp = *sparseIt;
+            GltfSparse& sparse = acc.sparse;
+            sparse.present = true;
+            sparse.count = static_cast<std::size_t>(
+                std::max(0.0, std::min(static_cast<double>(kMaxAccessorCount),
+                                       GetDoubleOr(sp, "count", 0.0))));
+            const auto indicesIt = sp.find("indices");
+            if (indicesIt == sp.end() || !indicesIt->is_object() ||
+                indicesIt->find("bufferView") == indicesIt->end()) {
+                error = "accessor 的 sparse 缺少 indices.bufferView";
+                return false;
+            }
+            sparse.indicesBufferView = GetIntOr(*indicesIt, "bufferView", -1);
+            if (const auto bo = indicesIt->find("byteOffset");
+                bo != indicesIt->end() && bo->is_number()) {
+                const double d = bo->get<double>();
+                if (d < 0 || d > 4294967295.0) {
+                    error = "sparse indices 的 byteOffset 非法";
+                    return false;
+                }
+                sparse.indicesByteOffset = static_cast<std::size_t>(d);
+            }
+            sparse.indicesComponentType =
+                GetIntOr(*indicesIt, "componentType", kGltfUnsignedShort);
+            // 规范只允许 indices 是无符号整数类型。
+            if (sparse.indicesComponentType != kGltfUnsignedByte &&
+                sparse.indicesComponentType != kGltfUnsignedShort &&
+                sparse.indicesComponentType != kGltfUnsignedInt) {
+                error = "sparse indices 的 componentType 非法";
+                return false;
+            }
+            const auto valuesIt = sp.find("values");
+            if (valuesIt == sp.end() || !valuesIt->is_object() ||
+                valuesIt->find("bufferView") == valuesIt->end()) {
+                error = "accessor 的 sparse 缺少 values.bufferView";
+                return false;
+            }
+            sparse.valuesBufferView = GetIntOr(*valuesIt, "bufferView", -1);
+            if (const auto bo = valuesIt->find("byteOffset");
+                bo != valuesIt->end() && bo->is_number()) {
+                const double d = bo->get<double>();
+                if (d < 0 || d > 4294967295.0) {
+                    error = "sparse values 的 byteOffset 非法";
+                    return false;
+                }
+                sparse.valuesByteOffset = static_cast<std::size_t>(d);
+            }
+        }
+
         doc.accessors_.push_back(acc);
     }
     return true;

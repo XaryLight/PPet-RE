@@ -53,6 +53,19 @@ enum class GltfType {
     Mat4,
 };
 
+/// accessor 的 sparse 覆盖层（glTF 2.0 sparse accessor）。
+/// 基数据全部/部分由 indices+values 覆盖，常用于 gltfpack/Blender 优化导出的
+/// morph 位移与 JOINTS；缺失此支持会导致表情/形变静默失效（缺陷 2.1.3）。
+struct GltfSparse {
+    bool present = false;
+    std::size_t count = 0;
+    int indicesBufferView = -1;
+    std::size_t indicesByteOffset = 0;
+    int indicesComponentType = kGltfUnsignedShort;
+    int valuesBufferView = -1;
+    std::size_t valuesByteOffset = 0;
+};
+
 /// accessor：描述一段顶点 / 索引 / 矩阵数据在 buffer 中的布局。
 struct GltfAccessor {
     int bufferView = -1;
@@ -61,6 +74,7 @@ struct GltfAccessor {
     bool normalized = false;
     std::size_t count = 0;
     GltfType type = GltfType::Scalar;
+    GltfSparse sparse;
 };
 
 /// bufferView：buffer 中的一段连续数据。
