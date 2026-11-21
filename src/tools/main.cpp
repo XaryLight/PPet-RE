@@ -19,6 +19,7 @@
 #include <QApplication>
 
 #include <src/tools/app/App.hpp>
+#include <src/tools/core/Doctor.hpp>
 #include <src/tools/core/Log.hpp>
 #include <src/tools/platform/CrashHandler.hpp>
 
@@ -29,6 +30,26 @@ namespace {
 ///   --log-console-level=...                       控制台阈值
 ///   --log-file=<路径>                             日志文件路径（需重新 Init）
 /// 不消费参数，只是读取；QApplication 会把不认识的选项原样留在 argv 里，互不影响。
+/// 构建期后端标签（供 --doctor 报告；与 CMake 的三个配置对应）。
+const char* BackendLabel() {
+#if defined(PPET_WITH_CUBISM) && PPET_WITH_CUBISM
+    return "真实 Cubism SDK";
+#elif defined(PPET_WITH_CUBISM_STUB) && PPET_WITH_CUBISM_STUB
+    return "内置 Cubism Core 桩";
+#else
+    return "无后端";
+#endif
+}
+
+/// 是否请求了 --doctor 自检（不消费 argv）。
+bool WantsDoctor(int argc, char** argv) {
+    for (int i = 1; i < argc; ++i) {
+        const std::string_view arg(argv[i] ? argv[i] : "");
+        if (arg == "--doctor") return true;
+    }
+    return false;
+}
+
 void ApplyLogOptions(int argc, char** argv) {
     constexpr std::string_view kLevel = "--log-level=";
     constexpr std::string_view kConsole = "--log-console-level=";
@@ -75,6 +96,19 @@ void EnablePerMonitorV2DpiAwareness() {
 }  // namespace
 
 int main(int argc, char** argv) {
+    // --doctor：自检命令（报告 4.2.3）。放在 QApplication / 窗口创建之前，
+    // 无显示环境也能运行；输出体检报告后直接退出，不启动 GUI 与主循环。
+    if (WantsDoctor(argc, argv)) {
+#if defined(_WIN32)
+        SetConsoleOutputCP(CP_UTF8);
+        SetConsoleCP(CP_UTF8);
+#endif
+        const ppet::DoctorReport report =
+            ppet::RunDoctor("", "last.log", BackendLabel());
+        std::fputs(ppet::FormatDoctorReport(report).c_str(), stdout);
+        return report.HasFailure() ? 2 : 0;
+    }
+
 #if defined(_WIN32)
     // 必须在 QApplication / GLFW 创建任何窗口之前设置：PMv2 下
     // framebuffer 物理像素与窗口逻辑尺寸不同，正是 Q4 修复的前提。

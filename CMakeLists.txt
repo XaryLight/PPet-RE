@@ -727,6 +727,7 @@ message(STATUS "文案翻译器：${PPET_I18N_ZH} + ${PPET_I18N_EN} -> ${PPET_I1
 # ---------------------------------------------------------------------------
 set(PPET_CORE_SOURCES
     src/tools/core/Config.cpp
+    src/tools/core/Doctor.cpp
     src/tools/core/I18n.cpp
     src/tools/core/Log.cpp
     src/tools/core/ModelPackage.cpp
@@ -1097,6 +1098,19 @@ add_executable(ppet_config_test
 target_include_directories(ppet_config_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME config_unit
          COMMAND ppet_config_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# 自检模块（--doctor）：配置/模型/后端/日志目录体检，纯逻辑可无 GUI 单测。
+add_executable(ppet_doctor_test
+    tools/doctor_test.cpp
+    src/tools/core/Doctor.cpp
+    src/tools/core/Config.cpp
+    src/tools/core/FileIO.cpp
+    src/tools/core/Log.cpp
+)
+target_include_directories(ppet_doctor_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME doctor_unit
+         COMMAND ppet_doctor_test
          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
 # P0 安全边界回归：ZIP 炸弹/EOCD 回绕/CRC 篡改/非法配置不崩溃。
