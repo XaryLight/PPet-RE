@@ -23,93 +23,13 @@
 #include <src/tools/core/Log.hpp>
 #include <src/tools/core/ModelNaming.hpp>
 #include <src/tools/model/ModelError.hpp>
+#include <src/tools/app/ConsoleFormat.hpp>
 
 namespace ppet {
-namespace {
 
-/// 从路径取「文件名（去后缀）」。
-/// 这里**刻意不碰 std::filesystem**：Windows 的 path(char*) 构造会做
-/// char -> wide 的 UTF-8 严格转换，模型路径一旦含非法字节就会抛
-/// `filesystem error: in __char_to_wide: Illegal byte sequence`，
-/// 把 list 这种纯展示命令整条打断。显示名只是字节串切分，不需要文件系统。
-std::string ConsoleBaseName(const std::string& path) {
-    if (path.empty()) return "(未加载)";
-    const std::string name = model_naming::FileStem(path);
-    return name.empty() ? path : name;
-}
-
-/// 第 i 个模型的显示名（优先用配置里用户改过的名字）。
-std::string ModelNameAt(const AppConfig& cfg, std::size_t index) {
-    return model_naming::NameAt(cfg.modelList, cfg.modelNames, index);
-}
-
-/// 按路径找模型下标，找不到返回 -1。
-int FindModelIndex(const AppConfig& cfg, const std::string& path) {
-    for (std::size_t i = 0; i < cfg.modelList.size(); ++i) {
-        if (cfg.modelList[i] == path) return static_cast<int>(i);
-    }
-    return -1;
-}
-
-/// 当前模型的显示名（列表里找不到时退回文件名）。
-std::string CurrentModelName(const AppConfig& cfg) {
-    const int idx = FindModelIndex(cfg, cfg.modelPath);
-    return idx >= 0 ? ModelNameAt(cfg, static_cast<std::size_t>(idx))
-                    : ConsoleBaseName(cfg.modelPath);
-}
-
-/// 失败结果判定：只有失败/异常/用法错误才写日志，正常指令只回显到控制台。
-bool IsConsoleFailure(const std::string& result) {
-    if (result.rfind("fail:", 0) == 0 || result.rfind("用法:", 0) == 0 ||
-        result.rfind("未知指令:", 0) == 0) {
-        return true;
-    }
-    return result.find("\nfail:") != std::string::npos ||
-           result.find("\n用法:") != std::string::npos;
-}
-
-const char* TypeName(ModelType type) {
-    switch (type) {
-        case ModelType::Pmx: return "PMX";
-        case ModelType::Vrm: return "VRM";
-        case ModelType::Live2D: return "Live2D";
-        case ModelType::Unknown:
-        default: return "Unknown";
-    }
-}
-
-bool ParseIndex(const std::string& text, int& out) {
-    if (text.empty()) return false;
-    try {
-        std::size_t used = 0;
-        const int value = std::stoi(text, &used);
-        if (used != text.size()) return false;
-        out = value;
-        return true;
-    } catch (...) {
-        return false;
-    }
-}
-
-std::string Join(const std::vector<std::string>& items, const std::string& sep) {
-    std::ostringstream os;
-    for (std::size_t i = 0; i < items.size(); ++i) {
-        if (i) os << sep;
-        os << items[i];
-    }
-    return os.str();
-}
-
-std::string Failure(const ModelLoadError& err) {
-    return "fail: " + (err.summary.empty() ? err.ToString() : err.summary);
-}
-
-/// 分节标题。
-std::string Section(const std::string& name) {
-    return "[" + name + "]";
-}
-
-}  // namespace
+// 纯格式化/解析逻辑已抽到 console_fmt（可独立单测，见 ConsoleFormat.hpp）。
+// 这里保留 using 只为让下方分派代码维持原有简短调用名。
+using namespace console_fmt;
 
 void App::SetConsoleOptions(bool force, std::string script) {
     consoleForce_ = force;
@@ -295,107 +215,18 @@ std::string App::ExecuteConsoleCommand(const console::Command& cmd) {
     if (v == "debug" || v == "info") {
         if (!model_) return "fail: 当前没有模型";
         const ModelDebugInfo info = model_->DebugInfo();
-        std::string section = a.empty() ? "all" : a[0];
-        std::transform(section.begin(), section.end(), section.begin(),
-                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        const bool all = (section == "all" || section == "debuginfo");
-
-        std::ostringstream os;
-        os << "Model: " << info.displayName << " [" << TypeName(info.type) << "]\n";
-        os << "Path : " << (info.path.empty() ? cfg.modelPath : info.path) << "\n";
-
-        if (all || section == "status") {
-            os << Section("status 渲染状态") << "\n"
-               << "  loaded      : " << (info.loaded ? "true" : "false") << "\n"
-               << "  gpuReady    : " << (info.gpuReady ? "true" : "false") << "\n"
-               << "  renderingOk : " << (info.renderingOk ? "true" : "false") << "\n"
-               << "  glError     : " << info.glError << "\n"
-               << "  renderStatus: " << info.renderStatus << "\n"
-               << "  modelId     : " << (info.modelId.empty() ? cfg.modelPath : info.modelId)
-               << "\n";
-        }
-        if (all || section == "params" || section == "param") {
-            os << Section("params 规模参数") << "\n"
-               << "  vertices=" << info.vertexCount << "  indices=" << info.indexCount
-               << "  triangles=" << info.triangleCount << "\n"
-               << "  bones=" << info.boneCount << "  materials=" << info.materialCount
-               << "  subMeshes=" << info.subMeshCount << "  morphs=" << info.morphCount << "\n"
-               << "  textures=" << info.textureLoaded << "/" << info.textureReferenced
-               << "  drawCalls=" << info.drawCalls << "\n"
-               << "  modelHeight=" << info.modelHeight << "\n";
-        }
-        if (all || section == "res" || section == "resources") {
-            os << Section("res 加载的资源") << "\n";
-            const auto extra = model_->RenderResources();
-            for (const auto& kv : extra) {
-                os << "  " << kv.first << " : " << kv.second << "\n";
-            }
-            for (const ModelDebugInfo::TextureInfo& tex : info.textures) {
-                os << "  texture : " << (tex.name.empty() ? "(无名)" : tex.name)
-                   << "  " << tex.width << "x" << tex.height
-                   << (tex.loaded ? "  [loaded]" : "  [missing]")
-                   << (tex.path.empty() ? "" : "  " + tex.path) << "\n";
-            }
-            if (extra.empty() && info.textures.empty()) {
-                os << "  (后端未提供资源清单)\n";
-            }
-            for (const std::string& missing : info.missingResources) {
-                os << "  MISSING : " << missing << "\n";
-            }
-        }
-        if (all || section == "bones") {
-            os << Section("bones 骨架 (" + std::to_string(info.bones.size()) + ")") << "\n";
-            const std::size_t limit = std::min<std::size_t>(info.bones.size(), 40);
-            for (std::size_t i = 0; i < limit; ++i) {
-                const auto& b = info.bones[i];
-                os << "  #" << b.index << " " << b.name << "  parent=" << b.parentIndex
-                   << "  depth=" << b.depth << "  " << b.flags << "\n";
-            }
-            if (info.bones.size() > limit) {
-                os << "  ... 其余 " << (info.bones.size() - limit) << " 根省略\n";
-            }
-        }
-        if (all || section == "parts" || section == "part") {
-            os << Section("parts 模型部分 (" + std::to_string(info.parts.size()) + ")") << "\n";
-            const std::size_t limit = std::min<std::size_t>(info.parts.size(), 40);
-            for (std::size_t i = 0; i < limit; ++i) {
-                const auto& p = info.parts[i];
-                os << "  " << p.name << "  indices=" << p.indexCount
-                   << "  material=" << p.materialIndex << "  " << p.detail << "\n";
-            }
-        }
-        if (all || section == "motion" || section == "actions") {
-            os << Section("motion 动作") << "\n"
-               << "  status : " << info.motionStatus << "\n"
-               << "  summary: " << info.motionSummary << "\n"
-               << "  actions: " << Join(model_->MotionNames(), ", ") << "\n";
-        }
-        if (all || section == "expression" || section == "expr") {
-            os << Section("expression 表情") << "\n"
-               << "  status : " << info.expressionStatus << "\n"
-               << "  summary: " << info.expressionSummary << "\n"
-               << "  presets: " << Join(model_->ExpressionPresetIds(), ", ") << "\n";
-        }
-        if (all || section == "error" || section == "errors") {
-            os << Section("error 错误与警告") << "\n";
-            if (lastLoadError_.ok()) {
-                os << "  (无)\n";
-            } else {
-                os << "  category: " << lastLoadError_.CategoryName() << "\n"
-                   << "  summary : " << lastLoadError_.summary << "\n";
-                for (const std::string& detail : lastLoadError_.details) {
-                    os << "    - " << detail << "\n";
-                }
-            }
-            os << "  dialogue: " << info.dialogueStatus << "\n";
-        }
-        if (all || section == "property" || section == "properties") {
-            os << Section("property 性质") << "\n"
-               << "  format=" << info.formatVersion << "  encoding=" << info.textEncoding
-               << "  skinned=" << info.isSkinned << "  outline=" << info.hasOutline << "\n";
-            for (const std::string& p : info.properties) os << "  " << p << "\n";
-        }
-        return os.str();
+        // 采集 App 侧状态快照；分节渲染细节交给可单测的 console_fmt 模块。
+        // 原先这里内联了约 105 行格式化代码，属 App 里最重的一块纯逻辑。
+        DebugViewContext ctx;
+        ctx.fallbackPath = cfg.modelPath;
+        ctx.resources = model_->RenderResources();
+        ctx.motionNames = model_->MotionNames();
+        ctx.expressionIds = model_->ExpressionPresetIds();
+        ctx.hasLoadError = !lastLoadError_.ok();
+        ctx.errorCategory = lastLoadError_.CategoryName();
+        ctx.errorSummary = lastLoadError_.summary;
+        ctx.errorDetails = lastLoadError_.details;
+        return FormatDebugInfo(info, a.empty() ? "all" : a[0], ctx);
     }
 
     // ---------------------------------------------------------------- re

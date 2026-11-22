@@ -740,6 +740,8 @@ set(PPET_CORE_SOURCES
     # 交互式控制台：stdin 读取线程 + 命令执行器。
     src/tools/app/Console.cpp
     src/tools/app/AppConsole.cpp
+    # 控制台格式化纯函数（报告 2.3.1）：从 AppConsole 剥离，可独立单测。
+    src/tools/app/ConsoleFormat.cpp
     # 渲染帧抓图：stb_image_write 的实现宏只在这个翻译单元定义一次，
     # 因此只编入 ppet 主程序，不放进 ppet_model（避免与其它测试目标重复定义）。
     src/tools/render/FrameCapture.cpp
@@ -1244,6 +1246,15 @@ add_test(NAME live2d_stage_unit
 add_executable(ppet_console_command_test tools/console_command_test.cpp)
 add_test(NAME console_command_unit
          COMMAND ppet_console_command_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# App 控制台格式化纯函数（报告 2.3.1 God Object 拆分）：
+# 10 个字符串/配置格式化函数 + debug 诊断渲染，均可脱离 App 单测。
+add_executable(ppet_console_format_test
+    tools/console_format_test.cpp
+    src/tools/app/ConsoleFormat.cpp)
+add_test(NAME console_format_unit
+         COMMAND ppet_console_format_test
          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
 # 动作队列（官方 MotionQueueManager 语义：交叉淡入淡出 + EasingSine）与
