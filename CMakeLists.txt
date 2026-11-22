@@ -1577,12 +1577,46 @@ endif()
 # 这里统一扫描全部目标来登记，避免以后新增目标时漏掉（漏了就是
 # "fatal error: src/tools/core/I18nStrings.inl: No such file or directory"）。
 # ---------------------------------------------------------------------------
+# 显式登记函数：新增「直接编译 I18n.cpp」的目标时可主动调用，避免依赖下方扫描。
+function(ppet_register_i18n_consumer _target)
+    add_dependencies(${_target} ppet_i18n_gen_run)
+    target_include_directories(${_target} PRIVATE ${PPET_I18N_GEN_DIR})
+    set_property(GLOBAL APPEND PROPERTY PPET_I18N_CONSUMERS ${_target})
+endfunction()
+
+# 扫描兜底：按「文件名」而非完整路径字符串匹配（报告 2.3.6）。
+# 原来用 "src/tools/core/I18n.cpp" 精确匹配 SOURCES，路径写法一变（./、换目录、
+# 生成器表达式）就静默漏登记，表现为编译期找不到 .inl。这里改为 basename 匹配。
 get_property(_ppet_all_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+set(_ppet_i18n_consumer_count 0)
 foreach(_ppet_t IN LISTS _ppet_all_targets)
     get_target_property(_ppet_t_sources ${_ppet_t} SOURCES)
-    if(_ppet_t_sources AND "src/tools/core/I18n.cpp" IN_LIST _ppet_t_sources)
-        add_dependencies(${_ppet_t} ppet_i18n_gen_run)
-        target_include_directories(${_ppet_t} PRIVATE ${PPET_I18N_GEN_DIR})
-        message(STATUS "文案翻译器：目标 ${_ppet_t} 依赖生成的内嵌表")
+    if(NOT _ppet_t_sources)
+        continue()
+    endif()
+    set(_ppet_has_i18n FALSE)
+    foreach(_src IN LISTS _ppet_t_sources)
+        if(_src STREQUAL "_ppet_t_sources-NOTFOUND")
+            continue()
+        endif()
+        get_filename_component(_src_name "${_src}" NAME)
+        if(_src_name STREQUAL "I18n.cpp")
+            set(_ppet_has_i18n TRUE)
+            break()
+        endif()
+    endforeach()
+    if(_ppet_has_i18n)
+        ppet_register_i18n_consumer(${_ppet_t})
+        math(EXPR _ppet_i18n_consumer_count "${_ppet_i18n_consumer_count} + 1")
     endif()
 endforeach()
+
+# 防静默失效：若一个消费者都没登记到，说明扫描逻辑已失效（例如 I18n.cpp 被
+# 移走或改名），立刻显性失败，而不是等到某个 TU 报 "No such file"。
+if(_ppet_i18n_consumer_count EQUAL 0)
+    message(FATAL_ERROR
+        "文案翻译器消费者登记失败：没有任何目标编译 I18n.cpp，"
+        "内嵌表 I18nStrings.inl 可能不会被生成。请检查 I18n.cpp 的路径或显式调用 "
+        "ppet_register_i18n_consumer(<target>)。")
+endif()
+message(STATUS "文案翻译器：共登记 ${_ppet_i18n_consumer_count} 个消费者目标（basename 匹配 + 零命中断言）")
