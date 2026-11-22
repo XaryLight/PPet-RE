@@ -1008,6 +1008,19 @@ endif()
 # ---------------------------------------------------------------------------
 enable_testing()
 
+# 报告 3.5.4：把「单源文件 + 标准 CTest 注册」的重复样板抽成函数。
+#   ppet_add_simple_test(<name> <source>...)
+#     -> add_executable(ppet_<name> <source>...)
+#     -> add_test(NAME <name>_unit COMMAND ppet_<name> WORKING_DIRECTORY 源码根)
+# 需要额外链接库、编译选项、CTest 参数或属性的测试（fuzz / smoke / 多后端）
+# 仍显式书写，避免把特殊配置藏进函数里。
+function(ppet_add_simple_test name)
+    add_executable(ppet_${name}_test ${ARGN})
+    add_test(NAME ${name}_unit
+             COMMAND ppet_${name}_test
+             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+endfunction()
+
 add_executable(ppet_pmx_test tools/pmx_test.cpp)
 target_link_libraries(ppet_pmx_test PRIVATE ppet_model)
 
@@ -1098,10 +1111,7 @@ add_test(NAME log_unit
          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
 # 模型显示名：默认名 / 重名序号 / 非法字节路径不抛异常（Windows __char_to_wide 回归）。
-add_executable(ppet_model_naming_test tools/model_naming_test.cpp)
-add_test(NAME model_naming_unit
-         COMMAND ppet_model_naming_test
-         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+ppet_add_simple_test(model_naming tools/model_naming_test.cpp)
 
 # 配置落盘：默认路径必须是可写目录（回归 %APPDATA% 指向不可写盘导致写不出去）、
 # Save/Load 往返保真、写入失败带系统级错误原因（不再吞掉 GetLastError / errno）。
@@ -1169,10 +1179,7 @@ add_test(NAME io_error_unit
          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
 # 长期运行稳定性：帧计数饱和 / 无符号差值 / dt 钳制 / 相位精度。
-add_executable(ppet_stability_test tools/stability_test.cpp)
-add_test(NAME stability_unit
-         COMMAND ppet_stability_test
-         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+ppet_add_simple_test(stability tools/stability_test.cpp)
 
 # 矩阵/数值稳定性（报告 2.5.5）：极端坐标钳制 / 向量溢出 / 可逆性 / 投影除零。
 add_executable(ppet_math_stability_test tools/math_stability_test.cpp)
@@ -1219,55 +1226,31 @@ add_test(NAME crash_classify_unit
          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
 # 结构化模型加载错误：分类推断 / 明细 / 建议（纯头文件，无需链接模型层）。
-add_executable(ppet_model_error_test tools/model_error_test.cpp)
-add_test(NAME model_error_unit
-         COMMAND ppet_model_error_test
-         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+ppet_add_simple_test(model_error tools/model_error_test.cpp)
 
 # 窗口位置钳制：透明窗口被拖到桌面外后靠它救回，含多显示器负坐标场景。
-add_executable(ppet_window_layout_test tools/window_layout_test.cpp)
-add_test(NAME window_layout_unit
-         COMMAND ppet_window_layout_test
-         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+ppet_add_simple_test(window_layout tools/window_layout_test.cpp)
 
 # 帧像素证据：纯统计函数，无需 GL 上下文。「正常渲染」结论靠它兜底。
-add_executable(ppet_frame_evidence_test tools/frame_evidence_test.cpp)
-add_test(NAME frame_evidence_unit
-         COMMAND ppet_frame_evidence_test
-         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+ppet_add_simple_test(frame_evidence tools/frame_evidence_test.cpp)
 
 # Live2D 动作调度：纯逻辑状态机（Idle 待机循环 / HitArea 互动 / 优先级 / fade），
 # 不依赖 Cubism SDK，三种 CMake 配置均可编译运行。
-add_executable(ppet_motion_director_test tools/motion_director_test.cpp)
-add_test(NAME motion_director_unit
-         COMMAND ppet_motion_director_test
-         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+ppet_add_simple_test(motion_director tools/motion_director_test.cpp)
 
 # PMX/VRM 表情管理：纯逻辑状态机（参考 VRM-VPet 的 ExpressionManager），
 # 覆盖别名解析 / 预设过渡 / 自动眨眼叠层 / 动作表情叠层淡出 / 二元量化 / 时间轴。
-add_executable(ppet_expression_director_test tools/expression_director_test.cpp)
-add_test(NAME expression_director_unit
-         COMMAND ppet_expression_director_test
-         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+ppet_add_simple_test(expression_director tools/expression_director_test.cpp)
 
 # 语言功能：台词库 / 气泡状态机 / 口型同步（参考 FULASKA 的 phrases/bubble/mouth）。
-add_executable(ppet_dialogue_system_test tools/dialogue_system_test.cpp)
-add_test(NAME dialogue_system_unit
-         COMMAND ppet_dialogue_system_test
-         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+ppet_add_simple_test(dialogue_system tools/dialogue_system_test.cpp)
 
 # Live2D 运行时分层：参数栈仲裁 / 姿态总线 / 三通道视线 / 待机导演 /
 # 待机小表情 / 多边形热区 / 口型导演（参考 FULASKA SPEC 的 L0–L5 与分层）。
-add_executable(ppet_live2d_stage_test tools/live2d_stage_test.cpp)
-add_test(NAME live2d_stage_unit
-         COMMAND ppet_live2d_stage_test
-         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+ppet_add_simple_test(live2d_stage tools/live2d_stage_test.cpp)
 
 # 控制台指令解析（纯逻辑，零依赖）。
-add_executable(ppet_console_command_test tools/console_command_test.cpp)
-add_test(NAME console_command_unit
-         COMMAND ppet_console_command_test
-         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+ppet_add_simple_test(console_command tools/console_command_test.cpp)
 
 # App 控制台格式化纯函数（报告 2.3.1 God Object 拆分）：
 # 10 个字符串/配置格式化函数 + debug 诊断渲染，均可脱离 App 单测。
@@ -1280,15 +1263,9 @@ add_test(NAME console_format_unit
 
 # 动作队列（官方 MotionQueueManager 语义：交叉淡入淡出 + EasingSine）与
 # 渲染计划（官方 OpenGL 渲染器的决策层）：都是纯逻辑、零依赖，直接单测。
-add_executable(ppet_motion_queue_test tools/motion_queue_test.cpp)
-add_test(NAME motion_queue_unit
-         COMMAND ppet_motion_queue_test
-         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+ppet_add_simple_test(motion_queue tools/motion_queue_test.cpp)
 
-add_executable(ppet_render_plan_test tools/render_plan_test.cpp)
-add_test(NAME render_plan_unit
-         COMMAND ppet_render_plan_test
-         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+ppet_add_simple_test(render_plan tools/render_plan_test.cpp)
 
 # Live2D 部件不透明度合并（Q1）：把 PartOpacity 曲线从「丢弃」改为逐帧写入，
 # 修复同一 moc3 里两套互斥身体被同时渲染。纯头文件、零依赖，三配置均可跑。
@@ -1327,17 +1304,11 @@ add_test(NAME window_fit_unit
 
 # 真实内容帧 / 动态像素比：按模型真实渲染像素推算窗口比例与居中 contain fit，
 # 验证横向宽幅内容在方形窗口里不被截断（需求 3）。纯头文件、零依赖。
-add_executable(ppet_live2d_frame_test tools/live2d_frame_test.cpp)
-add_test(NAME live2d_frame_unit
-         COMMAND ppet_live2d_frame_test
-         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+ppet_add_simple_test(live2d_frame tools/live2d_frame_test.cpp)
 
 # 控制台 action <idx> 索引解析：名字与数字索引统一解析为动作目标，
 # 索引与 `action list` 的 Idx 列一致。纯头文件、零依赖。
-add_executable(ppet_console_motion_idx_test tools/console_motion_idx_test.cpp)
-add_test(NAME console_motion_idx_unit
-         COMMAND ppet_console_motion_idx_test
-         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+ppet_add_simple_test(console_motion_idx tools/console_motion_idx_test.cpp)
 
 # 分区坐标映射：NormalizedFromRegion 与 RegionFromPoint 互为反查。
 # 纯逻辑、零依赖（只含 Model.hpp 头），直接单测。
@@ -1348,10 +1319,7 @@ add_test(NAME region_unit
 
 # 视线追踪策略（需求 7）：全屏追踪开关 -> 光标源判定 / 最大偏转角度钳制。
 # 纯逻辑、零依赖，直接单测。
-add_executable(ppet_tracking_policy_test tools/tracking_policy_test.cpp)
-add_test(NAME tracking_policy_unit
-         COMMAND ppet_tracking_policy_test
-         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+ppet_add_simple_test(tracking_policy tools/tracking_policy_test.cpp)
 
 # 插件系统（需求 6）：注册 / 启用禁用 / 事件分发 / 兴趣过滤。
 # 纯逻辑、零依赖，直接单测。
@@ -1386,10 +1354,7 @@ add_test(NAME dynamic_plugin_unit
 
 # VRM 动作识别（需求 4）：从 humanoid 骨骼 / glTF 动画 / 弹簧骨推导
 # 「该 VRM 模型能做什么基础动作」（nod/shake/wave、待机）。纯逻辑、零依赖。
-add_executable(ppet_vrm_motion_profile_test tools/vrm_motion_profile_test.cpp)
-add_test(NAME vrm_motion_profile_unit
-         COMMAND ppet_vrm_motion_profile_test
-         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+ppet_add_simple_test(vrm_motion_profile tools/vrm_motion_profile_test.cpp)
 
 # 智能动作识别（需求 2）：按文件名 / 动作组识别 idle / touch / expression
 # 并产出「区域 -> 触摸动作」映射。纯逻辑、零依赖。
@@ -1403,10 +1368,7 @@ add_test(NAME motion_recognizer_unit
 
 # 程序化待机动画（呼吸 / 重心 / 头部 / 手臂 / 腿部）：IdleAnimator 是纯头文件，
 # 零外部依赖，直接单测。
-add_executable(ppet_idle_animator_test tools/idle_animator_test.cpp)
-add_test(NAME idle_animator_unit
-         COMMAND ppet_idle_animator_test
-         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+ppet_add_simple_test(idle_animator tools/idle_animator_test.cpp)
 
 # 内置骨骼动作（VRM-VPet 风格：点头 / 摇头 / 挥手）：播放器 + 关键帧插值，
 # 纯逻辑，不依赖渲染层。
