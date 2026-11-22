@@ -2,7 +2,7 @@
 
 > 对应 `PPet-RE-项目深度分析报告.md.txt` 第二部分（2.1 安全 / 2.2 正确性 / 2.3 架构 / 2.4 并发 / 2.5 数值渲染 / 2.6 工程）。
 > 按「先堵安全、再补正确性、逐步偿还架构债」推进，每批完成即提交推送。
-> 状态：**✅ 已修复** / **⚠️ 部分或保守版** / **⏸ 有意延后（附原因）**。
+> 状态：**✅ 已修复** / **⚠️ 部分或保守版** / **⏸ 有意延后（本批已全部清空）**。
 
 ## 2.1 安全边界（P0/P1）——全部修复
 
@@ -27,8 +27,8 @@
 | 2.2.3 | macOS 虚拟桌面并集错误 | ✅ | `332e11c` 显式 firstScreen + y 翻转 |
 | 2.2.4 | Live2D 物理双重叠加 | ✅ | `ffca404` 直接写回 Evaluate 混合值 |
 | 2.2.5 | 循环动作周期性淡出 | ✅ | `ffca404` 仅非 loop 淡出 |
-| 2.2.6 | Stage 参数栈未接入 | ⏸ | 高风险：会改变已验证的参数叠加顺序，需独立重构批次 + 全量视觉回归 |
-| 2.2.7 | stub Part API 不可测 | ⏸ | 需伪造 stub part 数据，可能破坏 stub drawable/part 模拟关系 |
+| 2.2.6 | Stage 参数栈未接入 | ✅ | `419a93c` 追踪层 L1 gaze / L3 idle 加性写入 ParameterStack，Commit 后统一回写；`live2d_stage_unit` 视觉等价断言 |
+| 2.2.7 | stub Part API 不可测 | ✅ | `c388769` stub Core 补齐 Part API，并修复 4 个潜伏内存/解析 bug；`stub_part_api_unit` 覆盖 Count/Find/Set/Reset + drawable 传播 |
 | 2.2.8 | 同深度父子骨骼断链 | ✅ | `ffca404` 深度+父节点索引排序 + 拓扑修正 |
 | 2.2.9 | CUBICSPLINE morph 丢弃 | ✅ | `ffca404` components/3 |
 | 2.2.10 | 插件禁用态重名替换 | ✅ | `ffca404` 新实例默认启用 + OnEnable |
@@ -36,27 +36,27 @@
 | 2.2.12 | SkinnedMesh 缺 textures | ✅ | `ffca404` 新增 TextureRef + 两端填充 |
 | 2.2.13 | 口型/表情数组互斥 | ✅ | `ffca404` 独立口型叠加层（PmxModel/VrmModel） |
 
-## 2.3 架构（P2）——数值/异常项修复，结构性重构延后
+## 2.3 架构（P2）——全部落地（2.3.1 为保守版）
 
 | 编号 | 主题 | 状态 | 说明 |
 | --- | --- | --- | --- |
-| 2.3.1 | App God Object 拆分 | ⏸ | 大重构，牵一发动全身，需独立需求与设计 |
-| 2.3.2 | 巨型 TU 拆分 | ⏸ | 同上，收益主要是可维护性，风险/收益比低 |
-| 2.3.3 | 插件动态加载 | ⏸ | 当前内置插件已验证扩展点；dlopen 涉及 ABI/生命周期，另立批次 |
-| 2.3.4 | IModel 契约统一 | ⏸ | 接口面广，需与 2.2.6 一并设计 |
+| 2.3.1 | App God Object 拆分 | ⚠️ | `10d1e39` 保守落地：抽出 `ConsoleFormat` 纯函数模块（10 函数 + 约 105 行 debug 渲染）并加 70 项单测；App 仍是主控制器，成员级拆分留待后续 |
+| 2.3.2 | 巨型 TU 拆分 | ✅ | `f7596d2` 抽出 header-only `ToonShaders.hpp`，Renderer.cpp 由 1151 行降至 957 行；保留 stb 多前缀避免符号冲突 |
+| 2.3.3 | 插件动态加载 | ✅ | `8b54f15` dlopen/LoadLibrary + ABI 版本校验 + shared_ptr 自定义 deleter；`dynamic_plugin_unit` 覆盖加载/释放/目录扫描 |
+| 2.3.4 | IModel 契约统一 | ✅ | `991b0a3` 能力位 SupportsExpressions/LipSync/Motion + 统一 SetMouth + 工厂注册表；`model_capability_unit` |
 | 2.3.5 | GPU 资源建立无异常捕获 | ✅ | `a1b264b` gpuInitFailed_ + try/catch 降级 |
-| 2.3.6 | CMake 自动登记脆弱 | ⏸ | 构建脚本可读性改进，非运行时风险，低优先 |
-| 2.3.7 | 配置保存非原子 | ⏸ | **有意不改**：用户明确要求 A: 盘「直写→暂存→拷贝」回退流程，改 rename 会回归该行为（见 `docs/debugging.md`） |
+| 2.3.6 | CMake 自动登记脆弱 | ✅ | `3b16d5d` `ppet_register_i18n_consumer` + basename 匹配 + 零消费者 FATAL 断言 |
+| 2.3.7 | 配置保存非原子 | ✅ | `1ca01d6` 同目录 .tmp + rename 原子写，失败清理后回退；**严格保留** A: 盘「直写→暂存→copy_file」流程（见 `docs/debugging.md`）；`config_unit` 断言无 .tmp 残留 |
 
 ## 2.4 并发与生命周期（P2/P3）
 
 | 编号 | 主题 | 状态 | 说明 |
 | --- | --- | --- | --- |
-| 2.4.1 | detach 线程访问全局 iostream | ⏸ | 窗口极窄（进程退出 + cin 已析构 + 线程恰被唤醒）；彻底修复需跨平台 stdin 关闭唤醒 getline，反而可能引入 join 死锁。当前已用 shared_ptr<State> 避免成员 UAF |
+| 2.4.1 | detach 线程访问全局 iostream | ✅ | `76732b0` 读线程改用 OS 级 read/ReadFile 逐字节读，prompt 由主线程输出；彻底消除全局 iostream UB，不引入 join 死锁 |
 | 2.4.2 | CrashHandler 非 async-signal-safe | ✅ | `a1b264b` 改 GetStdHandle+WriteFile，去 fputs/snprintf |
 | 2.4.3 | 事件分发无锁 | ✅ | `a1b264b` recursive_mutex + DepthGuard |
 | 2.4.4 | stdout 无锁交错 | ✅ | `a1b264b` OutputMutex + WriteRaw |
-| 2.4.5 | 模态框/deleteLater 竞态 | ⏸ | 跨 GUI 生命周期改动，需重做对话框交互，高风险 |
+| 2.4.5 | 模态框/deleteLater 竞态 | ✅ | `21c0aea` 确认框改非模态 + weak_ptr<bool> alive 哨兵；Shutdown 先 reset 再 deleteLater |
 | 2.4.6 | 双全局事件泵 | ✅ | `a1b264b` 移除每帧第二次 PumpEvents |
 | 2.4.7 | Shutdown 双调用/裸指针 | ✅ | `a1b264b` bubble_ 改 unique_ptr（幂等保持） |
 
@@ -69,7 +69,7 @@
 | 2.5.3 | PhaseOf 负相位 | ✅ | `2e7b691` 加 2π 修正 |
 | 2.5.4 | 着色器编译失败每帧重试 | ✅ | `2e7b691` shaderCompileFailed_ 只试一次 |
 | 2.5.5 | 矩阵/数值稳定性 | ✅ | `06e6a29` int64 钳制 + 稳健 Length/Normalize + TryInverse 相对阈值 + 投影除零校验 |
-| 2.5.6 | 每帧反解相机 + 全量骨骼 + 超大 UBO | ⏸ | 性能向优化，需改着色器 UBO 尺寸与顶点上传策略，涉及渲染正确性回归，另立批次 |
+| 2.5.6 | 每帧反解相机 + 全量骨骼 + 超大 UBO | ✅ | `5b16ab0` UBO 按实际骨骼容量（16 对齐、封顶硬件上限）+ `boneMatrices_` 复用；容量变化时 reset shader 防越界 |
 | 2.5.7 | 别名表悬垂 + 眨眼包络 | ✅ | `2e7b691` pool 先填后取 c_str + 哨兵 |
 | 2.5.8 | 语义识别子串误匹配 | ✅ | `2e7b691` 词边界匹配 + 尾部编号剥离 |
 | 2.5.9 | 待机热改频率跳变 | ✅ | `06e6a29` 相位改累积式 + 注释对齐 |
@@ -86,8 +86,9 @@
 
 ## 统计
 
-- 第二部分共 **48** 个缺陷条目：
-  - **已修复 37 项**（含保守版）
-  - **有意延后 11 项**：2.2.6、2.2.7、2.3.1、2.3.2、2.3.3、2.3.4、2.3.6、2.3.7、2.4.1、2.4.5、2.5.6
-- 延后项均属**高风险架构重构**、**性能深水区**或**需保留用户既定行为**，并非遗漏；每项在上表注明原因。
-- 测试体系从 45 项增至 **58 项**，三配置（stub/cubism/nocubism）全绿；ASAN 仅剩两个既有 Qt GUI 内存泄漏用例（与改动无关）。
+- 第二部分共 **48** 个缺陷条目，**已全部落地**（47 项已修复 + 1 项保守落地）：
+  - 原 37 项在此批之前已修复；
+  - 原延后 11 项已在隔离副本 `refactor/deferred-11` 中逐项重构验证，提交区间 `3b16d5d` → `10d1e39`；
+  - 其中 2.3.1（App God Object）为 **⚠️ 保守落地**：剥离可单测的纯逻辑，App 成员级拆分未做。
+- 2.3.7 特别说明：原子写仅作为第一路径，失败即回退，**严格保留**用户要求的 A: 盘「直写→暂存→拷贝」语义。
+- 测试体系从 45 项增至 **62 项**（stub 配置）/ **61 项**（nocubism、cubism 配置），三配置全绿；ASAN 仅剩两个既有 Qt GUI 内存泄漏用例（与改动无关）。
