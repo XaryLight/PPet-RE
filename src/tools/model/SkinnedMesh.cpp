@@ -36,17 +36,38 @@ void ApplyMorphs(SkinnedMesh& mesh, const std::vector<float>& morphWeights,
     outVertices = mesh.vertices;
     if (morphWeights.empty()) return;
 
+    bool anyNormalMorphed = false;
     for (std::size_t m = 0; m < mesh.morphs.size() && m < morphWeights.size(); ++m) {
-        const float weight = morphWeights[m];
+        // 报告 3.4.11：morph 权重统一钳制到 [0,1]。
+        // 各后端的表情通道已在写入前钳制，但动画通道（animMorphWeights_）
+        // 与 ExpressionDirector 直出可能是越界值；在此处做最后一道防御，
+        // 避免负权重反向变形或 >1 权重导致形变过度。
+        const float raw = morphWeights[m];
+        if (!std::isfinite(raw)) continue;
+        const float weight = std::min(1.0f, std::max(0.0f, raw));
         if (std::fabs(weight) <= kEpsilon) continue;
         const SkinnedMesh::MorphTarget& target = mesh.morphs[m];
         const std::size_t limit = std::min(target.positions.size(), outVertices.size());
+        const bool hasNormals = !target.normals.empty();
         for (std::size_t i = 0; i < limit; ++i) {
             // morph 的 positions 存的是相对原位置的偏移量（未参与的顶点为 0）。
             outVertices[i].position += target.positions[i] * weight;
             if (i < target.normals.size()) {
                 outVertices[i].normal += target.normals[i] * weight;
+                anyNormalMorphed = true;
             }
+        }
+        if (hasNormals && target.normals.size() < limit) {
+            anyNormalMorphed = true;  // 部分顶点有法线偏移，仍需归一化参与项。
+        }
+    }
+
+    // 报告 3.4.11：法线是单位向量，叠加 morph 偏移后长度会偏离 1，
+    // 直接送进 toon 光照会让明暗失真。这里对所有顶点法线重新归一化
+    // （Normalize 内部对零/非有限向量返回零向量，天然安全）。
+    if (anyNormalMorphed) {
+        for (Vertex& v : outVertices) {
+            v.normal = Normalize(v.normal);
         }
     }
 }

@@ -1179,6 +1179,16 @@ add_test(NAME math_stability_unit
          COMMAND ppet_math_stability_test
          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
+# morph 权重钳制与法线归一化（报告 3.4.11）：SkinnedMesh.cpp 只依赖 header-only
+# 数学库，直接编入本目标，避免引入 ppet_model 的 GL/Qt 重量级依赖。
+add_executable(ppet_morph_normal_test
+    tools/morph_normal_test.cpp
+    src/tools/model/SkinnedMesh.cpp)
+target_include_directories(ppet_morph_normal_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME morph_normal_unit
+         COMMAND ppet_morph_normal_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
 # 控制台命令队列：有界队列、丢弃计数、每帧消费上限。
 add_executable(ppet_console_queue_test
     tools/console_queue_test.cpp
