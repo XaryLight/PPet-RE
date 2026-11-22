@@ -41,6 +41,21 @@ std::string StagingConfigPath() {
     return FromFsPath(ToFsPath(exeDir) / "PPet" / "config.json");
 }
 
+/// 【2.3.7】把已写好的临时文件原子替换到目标路径。
+/// POSIX：rename 同目录文件是原子的（覆盖目标）；Windows：std::filesystem::rename
+/// 遇到已存在的目标会失败，故先删旧目标再 rename。即便如此，新内容在 rename 前
+/// 已完整写入临时文件，写入中途崩溃只会留下完整的旧目标或新临时文件，绝不出现
+/// 被截断的 config.json —— 这正是「原子保存」要防的核心风险。
+bool AtomicReplace(const std::filesystem::path& stagedTmp,
+                   const std::filesystem::path& target, std::error_code& ec) {
+#if defined(_WIN32)
+    std::filesystem::remove(target, ec);
+    if (ec) return false;
+#endif
+    std::filesystem::rename(stagedTmp, target, ec);
+    return !ec;
+}
+
 /// 把可能含非法 UTF-8 字节的字符串净化成合法 UTF-8（缺陷 2.1.5）。
 /// ModelNaming 故意按纯字节处理名字以兼容非法编码路径，但 nlohmann::json::dump
 /// 会对非法 UTF-8 抛 type_error.316。落盘前把无法解码的字节替换为 '?'，
@@ -304,9 +319,11 @@ bool ConfigStore::Save(const std::string& path, std::string& error) const {
         error += DescribeIoFailure(operation, target, reason);
     };
 
-    // 第 1 路：直接写到目标路径（先保证父目录存在）。
-    // WriteFileText 内部对软驱 / 重定向卷常见的「未就绪 / 共享冲突」做了重试，
-    // 多数情况下这一路就能成功。
+    // 第 1 路：原子写 —— 先写目标同目录的临时文件，再原子替换到目标路径
+    // （报告 2.3.7）。这样写入中途崩溃只会留下完整的旧配置或临时文件，
+    // 不会像直写覆盖那样留下被截断的 config.json 导致下次 Load 永久失败。
+    // 【保留 A: 盘流程】若本路任一步失败（含 A: 盘 rename 失败），清理临时文件后
+    // fall through 到第 2 路「直写 + 暂存拷贝」回退链，行为与历史完全一致。
     {
         std::error_code ec;
         const fs::path p = ToFsPath(path);
@@ -319,9 +336,19 @@ bool ConfigStore::Save(const std::string& path, std::string& error) const {
                 return false;
             }
         }
+        const fs::path tmp = p.string() + ".tmp";
         std::string sysErr;
-        if (WriteFileText(path, text, &sysErr)) return true;
-        appendError("无法写入配置文件", path, IoErrorText(sysErr));
+        if (WriteFileText(FromFsPath(tmp), text, &sysErr)) {
+            std::error_code renameEc;
+            if (AtomicReplace(tmp, p, renameEc)) return true;
+            appendError("原子替换配置失败（将尝试回退写盘）", path, IoErrorText(renameEc));
+        } else {
+            appendError("无法写入配置临时文件（将尝试回退写盘）", FromFsPath(tmp),
+                        IoErrorText(sysErr));
+        }
+        // 清理可能残留的临时文件（A: 盘上写入成功但替换失败时会残留）。
+        std::error_code cleanEc;
+        fs::remove(tmp, cleanEc);
     }
 
     // 第 2 路：直写失败（如 A: 这类「资源管理器能写、程序 CreateFileW 写不进」的盘），

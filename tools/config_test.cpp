@@ -83,6 +83,10 @@ int main() {
         Check(loaded.config().fullscreenTracking == false, "fullscreenTracking 已持久化");
         Check(loaded.config().maxTrackingAngle == 45.0f, "maxTrackingAngle 已持久化");
 
+        // 【2.3.7】原子写后临时文件应已被 rename 消费，不残留 .tmp。
+        Check(!fs::exists(fs::path(path + ".tmp")),
+              "原子保存后不残留 config.json.tmp");
+
         // 首次运行（文件不存在）应返回默认配置且不报错。
         ConfigStore fresh;
         Check(fresh.Load(JoinPath(dir, "does_not_exist.json"), err), "缺文件 Load 视为默认");
