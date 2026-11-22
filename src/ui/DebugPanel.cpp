@@ -5,14 +5,18 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <fstream>
 #include <sstream>
 #include <utility>
 #include <vector>
+
+#include <src/tools/core/RuntimeStatsExport.hpp>
 
 #include <QApplication>
 #include <QAbstractItemView>
 #include <QClipboard>
 #include <QDialog>
+#include <QFileDialog>
 #include <QEventLoop>
 #include <QFont>
 #include <QGroupBox>
@@ -132,6 +136,8 @@ struct DebugPanel::Impl {
     QLabel* logLabel = nullptr;
     QLabel* hintLabel = nullptr;
     QPushButton* copyBtn = nullptr;
+    QPushButton* exportJsonBtn = nullptr;
+    QPushButton* exportCsvBtn = nullptr;
 
     // 【2.4.5】生命周期哨兵：lambda（尤其 QTimer::singleShot 延时回调）捕获
     // weak_ptr，Shutdown 后作废，避免 deleteLater 后 queued 回调 use-after-free。
@@ -289,11 +295,53 @@ void DebugPanel::BuildUi() {
 
         auto* buttons = new QHBoxLayout();
         buttons->addStretch(1);
+        impl_->exportJsonBtn = new QPushButton(ToQString(s.debugExportJson), page);
+        impl_->exportJsonBtn->setObjectName(QStringLiteral("ppetExportJsonBtn"));
+        impl_->exportCsvBtn = new QPushButton(ToQString(s.debugExportCsv), page);
+        impl_->exportCsvBtn->setObjectName(QStringLiteral("ppetExportCsvBtn"));
         impl_->copyBtn = new QPushButton(ToQString(s.debugCopy), page);
+        impl_->copyBtn->setObjectName(QStringLiteral("ppetCopyBtn"));
+        buttons->addWidget(impl_->exportJsonBtn);
+        buttons->addWidget(impl_->exportCsvBtn);
         buttons->addWidget(impl_->copyBtn);
         layout->addLayout(buttons);
 
         std::weak_ptr<bool> weakAlive = impl_->alive;
+        // 报告 4.2.3：导出当前运行时指标为 JSON / CSV，便于长期性能分析。
+        // 序列化逻辑在 RuntimeStatsExport（纯 C++、可单测），这里只负责选路径与落盘。
+        auto doExport = [this, weakAlive](bool asJson) {
+            if (weakAlive.expired()) return;
+            const Metrics metrics = BuildMetrics(impl_->lastModel, impl_->lastRuntime);
+            const std::string body = asJson ? MetricsToJson(metrics) : MetricsToCsv(metrics);
+            const QString filter = asJson ? QStringLiteral("JSON (*.json)")
+                                          : QStringLiteral("CSV (*.csv)");
+            const QString defaultName = asJson ? QStringLiteral("ppet-stats.json")
+                                               : QStringLiteral("ppet-stats.csv");
+            const QString path = QFileDialog::getSaveFileName(
+                nullptr, asJson ? QStringLiteral("Export JSON") : QStringLiteral("Export CSV"),
+                defaultName, filter);
+            if (path.isEmpty()) return;
+            std::ofstream out(path.toStdString(), std::ios::binary | std::ios::trunc);
+            if (!out) return;
+            out.write(body.data(), static_cast<std::streamsize>(body.size()));
+            const Strings emptyEx;
+            const Strings& se = strings ? *strings : emptyEx;
+            QPushButton* btn = asJson ? impl_->exportJsonBtn : impl_->exportCsvBtn;
+            if (btn) btn->setText(ToQString(se.debugExportOk));
+            QTimer::singleShot(1500, btn, [this, weakAlive, asJson]() {
+                if (weakAlive.expired()) return;
+                const Strings e2;
+                const Strings& s2 = strings ? *strings : e2;
+                QPushButton* b = asJson ? impl_->exportJsonBtn : impl_->exportCsvBtn;
+                if (!b) return;
+                b->setText(ToQString(asJson ? s2.debugExportJson : s2.debugExportCsv));
+            });
+        };
+        QObject::connect(impl_->exportJsonBtn, &QPushButton::clicked,
+                         [doExport]() { doExport(true); });
+        QObject::connect(impl_->exportCsvBtn, &QPushButton::clicked,
+                         [doExport]() { doExport(false); });
+
         QObject::connect(impl_->copyBtn, &QPushButton::clicked, [this, weakAlive]() {
             if (weakAlive.expired()) return;
             // 把当前快照拼成纯文本，方便贴到 issue 里。
@@ -409,6 +457,8 @@ void DebugPanel::Shutdown() {
     impl_->groupRenderLabel = nullptr;
     impl_->groupErrorsLabel = nullptr;
     impl_->copyBtn = nullptr;
+    impl_->exportJsonBtn = nullptr;
+    impl_->exportCsvBtn = nullptr;
     impl_->lastModelKey.clear();
     impl_->everUpdated = false;
 }
@@ -464,6 +514,8 @@ void DebugPanel::Refresh() {
     impl_->tabs->setTabText(kTabResources, ToQString(s.debugTabResources));
     impl_->tabs->setTabText(kTabExpression, ToQString(s.debugTabExpression));
     if (impl_->copyBtn) impl_->copyBtn->setText(ToQString(s.debugCopy));
+    if (impl_->exportJsonBtn) impl_->exportJsonBtn->setText(ToQString(s.debugExportJson));
+    if (impl_->exportCsvBtn) impl_->exportCsvBtn->setText(ToQString(s.debugExportCsv));
     if (impl_->hintLabel) impl_->hintLabel->setText(ToQString(s.debugAutoRefresh));
     if (impl_->groupMissingLabel) {
         impl_->groupMissingLabel->setText(ToQString(s.debugGroupMissing));

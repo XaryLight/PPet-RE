@@ -73,6 +73,9 @@ struct Strings {
     std::string debugStatusError;
     std::string debugCopy;
     std::string debugCopied;
+    std::string debugExportJson;
+    std::string debugExportCsv;
+    std::string debugExportOk;
     std::string debugLogHint;
     std::string debugAutoRefresh;
     std::string debugMissingNone;

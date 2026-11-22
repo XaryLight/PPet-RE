@@ -729,6 +729,7 @@ set(PPET_CORE_SOURCES
     src/tools/core/Config.cpp
     src/tools/core/Doctor.cpp
     src/tools/core/I18n.cpp
+    src/tools/core/RuntimeStatsExport.cpp
     src/tools/core/LanguageDetect.cpp
     src/tools/core/Log.cpp
     src/tools/core/ModelPackage.cpp
@@ -904,6 +905,7 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/debug_panel_smoke.cpp)
     add_executable(ppet_debug_panel_smoke
         tools/debug_panel_smoke.cpp
         src/ui/DebugPanel.cpp
+        src/tools/core/RuntimeStatsExport.cpp
         src/tools/core/I18n.cpp
         src/tools/core/Log.cpp
     )
@@ -1187,6 +1189,15 @@ add_executable(ppet_morph_normal_test
 target_include_directories(ppet_morph_normal_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME morph_normal_unit
          COMMAND ppet_morph_normal_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# 运行时指标导出（报告 4.2.3）：JSON/CSV 序列化纯逻辑，零 Qt 依赖。
+add_executable(ppet_runtime_stats_export_test
+    tools/runtime_stats_export_test.cpp
+    src/tools/core/RuntimeStatsExport.cpp)
+target_include_directories(ppet_runtime_stats_export_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME runtime_stats_export_unit
+         COMMAND ppet_runtime_stats_export_test
          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
 # 控制台命令队列：有界队列、丢弃计数、每帧消费上限。

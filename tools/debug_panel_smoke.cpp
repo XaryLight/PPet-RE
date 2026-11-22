@@ -191,10 +191,14 @@ int main(int argc, char** argv) {
     panel.Update(model, runtime);
     panel.PumpEvents();
 
-    // 「复制诊断摘要」按钮：找一个 QPushButton 触发点击，验证剪贴板回调不崩。
-    if (auto* button = panel.Handle()->findChild<QPushButton*>()) {
+    // 「复制诊断摘要」按钮：按 objectName 精确定位（面板现在还有两个导出按钮，
+    // 它们会弹出模态文件对话框，冒烟测试不能点到），触发点击验证剪贴板回调不崩。
+    if (auto* button = panel.Handle()->findChild<QPushButton*>(QStringLiteral("ppetCopyBtn"))) {
         button->click();
         panel.PumpEvents();
+    } else {
+        std::printf("debug_panel_smoke: 未找到复制诊断按钮\n");
+        return 1;
     }
 
     panel.Toggle();
