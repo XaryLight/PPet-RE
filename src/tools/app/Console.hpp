@@ -6,6 +6,10 @@
 //   「独立线程 → 队列 → 主循环 PumpEvents」的先例，这里沿用同一模式。
 //   命令的**执行**必须在主线程（要访问 model_ / configStore_ / Qt 气泡），
 //   所以线程只负责读字符串并入队，Poll() 在主循环里取出来执行。
+//
+// 【2.4.1 全局流 UB】detach 线程用 OS 级 read/ReadFile 逐字节读 stdin，
+//   绝不触碰 std::cin / stdout；prompt 由主线程打印。进程退出时即使线程被
+//   exit() 强制终止，也不会访问已析构的 C++ 流对象。
 #pragma once
 
 #include <atomic>
@@ -43,8 +47,9 @@ public:
     ///         此时仍可用 SubmitLine() + Poll() 走脚本化模式。
     bool Start(bool force = false);
 
-    /// 停止读取线程。线程可能正阻塞在 getline 上，因此用共享状态 + detach，
-    /// 保证不会因 join 而卡住程序退出，也不会访问已析构的 Console 对象。
+    /// 停止读取线程。线程可能正阻塞在 OS 级 read 上，因此用共享状态 + detach，
+    /// 保证不会因 join 而卡住程序退出。读线程只用 OS 句柄读 stdin、不触碰任何
+    /// 全局 iostream 对象，被 exit() 强制终止时无 C++ 对象析构 UB（报告 2.4.1）。
     void Stop();
 
     /// 主线程每帧调用：取出待执行命令、执行并打印结果。
@@ -75,6 +80,8 @@ private:
     struct State {
         /// 待执行命令队列上限。
         static constexpr std::size_t kMaxPending = 4096;
+        /// 单行最大字节数，超出截断（防御无换行灌入导致无限增长）。
+        static constexpr std::size_t kMaxLineBytes = 8192;
         std::mutex mutex;
         std::deque<std::string> pending;
         /// 由 mutex 保护（与 pending 同一临界区）。
