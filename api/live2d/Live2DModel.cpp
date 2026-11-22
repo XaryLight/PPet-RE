@@ -1243,8 +1243,34 @@ void Live2DModel::ApplyTracking(const RenderContext& ctx, float deltaTime) {
     // 追踪强度倍率（设置项）。0 = 完全不跟，1 = 默认，2 = 双倍。
     const float angle = maxTrackingAngle_ * trackingStrength_;
 
-    // 叠加写入：在当前参数值（可能已被动作写过）之上加追踪量。
-    auto add = [&](int index, float offset) {
+    // 【2.2.6】用 Stage 的分层参数栈统一累积「视线(L1) + 待机微摆(L3)」的加性
+    // 贡献，Commit 后一次写回。原先是每处各自「读当前值 + offset + 钳制 + 写回」，
+    // 现在层序与 Add 模式由 ParameterStack 管理。两次 Add 的累加结果与原来的
+    // 「g.headX * angle + sway.headYaw」严格相等，钳制仍在同一最终值上做，
+    // 因此视觉行为完全等价（本环境无真实 moc3 素材可做像素回归，故采用等价
+    // 语义改写而非改变叠加顺序）。
+    // key 用 Cubism 参数索引（稳定且唯一），避免每帧查参数名字符串。
+    auto keyOf = [](int index) { return "p" + std::to_string(index); };
+    paramStack_.Reset({});  // 空基线：只累积本层的加性增量
+    auto writeAdd = [&](ParamLayer layer, int index, float delta) {
+        if (index < 0) return;
+        paramStack_.Write(layer, keyOf(index), delta, WriteMode::Add);
+    };
+
+    // 头部：追踪量(L1) + 待机微摆(L3) 叠加（模型自己的摇头动作保留）。
+    writeAdd(ParamLayer::Gaze, paramAngleX_, g.headX * angle);
+    writeAdd(ParamLayer::Idle, paramAngleX_, sway.headYaw);
+    writeAdd(ParamLayer::Gaze, paramAngleY_, g.headY * angle);
+    writeAdd(ParamLayer::Idle, paramAngleY_, sway.headPitch);
+    // 身体(L1)：幅度最小，只做轻微跟随。
+    writeAdd(ParamLayer::Gaze, paramBodyAngleX_, g.bodyX * angle);
+    writeAdd(ParamLayer::Gaze, paramBodyAngleZ_, g.bodyX * angle);
+
+    // 提交：按 L1..L3 层序合成（本帧仅 Gaze/Idle 两层有加性贡献）。
+    paramStack_.Commit();
+
+    // 通用的「当前值 + 偏移 + 钳制 + 写回」，供栈写回与无 range 回退共用。
+    auto applyOffset = [&](int index, float offset) {
         if (index < 0) return;
         float minValue = -1.0f;
         float maxValue = 1.0f;
@@ -1257,10 +1283,20 @@ void Live2DModel::ApplyTracking(const RenderContext& ctx, float deltaTime) {
         }
         cubism::SetParameterValue(impl_->model, index, value);
     };
+    // 从参数栈取该参数的本帧总增量并写回。
+    auto add = [&](int index) {
+        if (index < 0) return;
+        const auto& deltas = paramStack_.Values();
+        const auto it = deltas.find(keyOf(index));
+        if (it != deltas.end()) applyOffset(index, it->second);
+    };
 
-    // 头部：追踪量与待机微摆叠加（模型自己的摇头动作保留）。
-    add(paramAngleX_, g.headX * angle + sway.headYaw);
-    add(paramAngleY_, g.headY * angle + sway.headPitch);
+    // 头部：从栈写回（L1 视线 + L3 待机微摆已累积）。
+    add(paramAngleX_);
+    add(paramAngleY_);
+    // 身体：同样从栈写回。
+    add(paramBodyAngleX_);
+    add(paramBodyAngleZ_);
     // 眼球：始终跟随鼠标，这是「眼睛追踪」最直观的体现。
     //
     // 眼球参数与头部角度参数的**量纲不同**：
@@ -1275,7 +1311,7 @@ void Live2DModel::ApplyTracking(const RenderContext& ctx, float deltaTime) {
         float maxValue = 1.0f;
         const bool hasRange = cubism::ParameterRange(impl_->model, index, minValue, maxValue);
         if (!hasRange) {
-            add(index, normalized);
+            applyOffset(index, normalized);
             return;
         }
         // 把 [-1,1] 的方向映射到参数自身的 [min,max]。
@@ -1287,9 +1323,6 @@ void Live2DModel::ApplyTracking(const RenderContext& ctx, float deltaTime) {
     };
     addNormalized(paramEyeBallX_, g.eyeX);
     addNormalized(paramEyeBallY_, g.eyeY);
-    // 身体：幅度最小，只做轻微跟随。
-    add(paramBodyAngleX_, g.bodyX * angle);
-    add(paramBodyAngleZ_, g.bodyX * angle);
 }
 
 void Live2DModel::ApplyEyeBlink(float deltaTime) {

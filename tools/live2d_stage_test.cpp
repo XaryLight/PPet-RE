@@ -52,6 +52,18 @@ void TestParameterStack() {
     Check(Nearly(stack.Commit().at("ParamAngleX"), 0.3f), "写值时生效");
     stack.Reset(defaults);
     Check(Nearly(stack.Commit().at("ParamAngleX"), 0.0f), "不写值回落默认（退出复位）");
+
+    // 【2.2.6 追踪层接入的等价性】ApplyTracking 把 L1 视线 + L3 待机微摆
+    // 拆成两次 Add（key 用参数索引），其结果必须与原先「单次写入两者之和」
+    // 严格相等 —— 这是 Live2DModel 改写后视觉不变的核心保证。
+    const float gazeAngle = 0.37f;
+    const float idleSway = -0.08f;
+    stack.Reset({});
+    stack.Write(ParamLayer::Gaze, "p6", gazeAngle, WriteMode::Add);
+    stack.Write(ParamLayer::Idle, "p6", idleSway, WriteMode::Add);
+    const float viaStack = stack.Commit().at("p6");
+    const float direct = gazeAngle + idleSway;  // 旧实现的单次 offset
+    Check(Nearly(viaStack, direct), "分层两次 Add 之和 == 旧实现单次 offset（视觉等价）");
 }
 
 void TestPoseBus() {

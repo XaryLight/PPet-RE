@@ -241,6 +241,12 @@ private:
     /// 三通道视线阻尼（眼/头/身体各自指数追向目标，参考 FULASKA 的 GazeChannels）。
     GazeChannels gaze_;
 
+    /// 【2.2.6】分层参数栈：把视线(L1)/待机(L3)/表情(L4)对同一参数的加性贡献
+    /// 统一累积后一次写回，替代原先分散的「读当前值-加偏移-写回」多次调用。
+    /// 加性叠加满足结合律，最终值与钳制点完全一致（视觉等价），但层序与
+    /// WriteMode 现在由 Stage 架构统一管理，后续加层无需再改这里。
+    ParameterStack paramStack_;
+
     /// 待机导演：常驻微摆 + 随机成套动作（IdleDirector）。
     IdleDirector idleStage_;
 
