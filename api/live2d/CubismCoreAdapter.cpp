@@ -598,13 +598,13 @@ bool GetDrawableMasks(const Model* model, int drawableIndex,
 // ---------------------------------------------------------------------------
 // 部件组（Part）不透明度
 //
-// 只有真实 Cubism Core 提供 csmGetPart* 系列；桩与「无 SDK」构建没有 part
-// 数据。这里用条件编译隔离：真实 SDK 下完整实现，其它配置安全降级为 no-op，
-// 保证三套构建都能编译、既有单测不受影响。
+// 真实 SDK 与桩都提供 csmGetPart* 系列（桩按「每个 drawable 即一个同名 part」
+// 派生），因此两者共用同一份实现；只有「无 SDK」构建降级为 no-op。这样
+// PartOpacity 这一关键修复（互斥部件透明度）在三配置矩阵的 stub 下也可单测。
 // ---------------------------------------------------------------------------
 
 int PartCount(const Model* model) {
-#if defined(PPET_WITH_CUBISM)
+#if defined(PPET_WITH_CUBISM) || defined(PPET_WITH_CUBISM_STUB)
     if (!model || !model->model_) return 0;
     return csmGetPartCount(model->model_);
 #else
@@ -614,7 +614,7 @@ int PartCount(const Model* model) {
 }
 
 int FindPart(const Model* model, const std::string& id) {
-#if defined(PPET_WITH_CUBISM)
+#if defined(PPET_WITH_CUBISM) || defined(PPET_WITH_CUBISM_STUB)
     if (!model || !model->model_ || id.empty()) return -1;
     const int count = csmGetPartCount(model->model_);
     const char** ids = csmGetPartIds(model->model_);
@@ -631,7 +631,7 @@ int FindPart(const Model* model, const std::string& id) {
 }
 
 void ResetPartOpacities(Model* model) {
-#if defined(PPET_WITH_CUBISM)
+#if defined(PPET_WITH_CUBISM) || defined(PPET_WITH_CUBISM_STUB)
     if (!model || !model->model_) return;
     float* opacities = csmGetPartOpacities(model->model_);
     if (!opacities) return;
@@ -643,7 +643,7 @@ void ResetPartOpacities(Model* model) {
 }
 
 void SetPartOpacity(Model* model, int index, float value) {
-#if defined(PPET_WITH_CUBISM)
+#if defined(PPET_WITH_CUBISM) || defined(PPET_WITH_CUBISM_STUB)
     if (!model || !model->model_) return;
     float* opacities = csmGetPartOpacities(model->model_);
     if (!opacities) return;

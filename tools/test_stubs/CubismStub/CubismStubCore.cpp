@@ -196,8 +196,9 @@ bool ScanExtents(const unsigned char* data, std::size_t size, StubHeader& header
 /// 对桩与真 SDK 完全一致。
 class BlockAllocator {
 public:
-    BlockAllocator(unsigned char* base, std::size_t capacity)
-        : base_(base), capacity_(capacity) {}
+    BlockAllocator(unsigned char* base, std::size_t capacity,
+                   std::size_t headerBytes = 0)
+        : base_(base), capacity_(capacity), offset_(AlignUp(headerBytes, 16)) {}
 
     /// 分配 count 个 T，并按至少 16 字节对齐。
     template <typename T>
@@ -298,6 +299,15 @@ struct CSM_MODEL {
     /// 每个部件在 baseVertexPositions 中的起始下标与数量。
     unsigned int* baseVertexOffsets;
     unsigned int* baseVertexCounts;
+
+    // --- 部件组（Part）派生表 ---
+    // 桩没有独立的 part 段：按「每个 drawable 即一个同名 part」派生。
+    // partIds 直接复用 drawableIds（不额外分配）；partOpacities 与
+    // drawableBaseOpacities 各按 drawableCount 分配，用于把 part 不透明度
+    // 传播到对应 drawable（模拟真实 Core 的 part→drawable opacity 乘法）。
+    unsigned int partCount;
+    float* partOpacities;
+    float* drawableBaseOpacities;
 };
 
 extern "C" {
@@ -340,6 +350,10 @@ unsigned int csmGetSizeofModel(const csmMoc* moc) {
 
     const auto* data = reinterpret_cast<const unsigned char*>(moc);
     StubHeader header;
+    // 先单独解析头部拿到 payloadSize，再扫描。此前直接把未初始化的
+    // header.payloadSize(0) 传给 ScanExtents，导致任何 stub moc 都无法加载
+    // （无测试走此路径所以一直潜伏；报告 2.2.7 让 Part API 可测时才暴露）。
+    if (!ParseHeader(data, kStubHeaderSize, header)) return 0;
     std::size_t paramIdBytes = 0;
     std::size_t drawableIdBytes = 0;
     std::size_t totalVertices = 0;
@@ -352,24 +366,48 @@ unsigned int csmGetSizeofModel(const csmMoc* moc) {
     const std::size_t paramCount = header.paramCount;
     const std::size_t drawableCount = header.drawableCount;
 
+    // 精确模拟 csmInitializeModelInPlace 里的每一次 BlockAllocator::Alloc：
+    // 每次分配都独立按 16 字节对齐。此前把多数组合并成一项只对齐一次，
+    // 严重低估容量（尤其 drawable 少时每数组浪费近半），导致后面的 maskLists
+    // 等分配返回 nullptr 并在写入时崩溃。因 stub moc 从未被真正加载过一直潜伏
+    // （报告 2.2.7 让 Part API 可测时暴露）。这里的顺序须与下方分配代码一致。
     std::size_t total = AlignUp16(sizeof(CSM_MODEL));
-    // 参数 id 字符串池 + id 指针数组 + 4 组 float 数组。
-    total = AlignUp16(total + paramIdBytes);
-    total = AlignUp16(total + paramCount * sizeof(const char*));
-    total = AlignUp16(total + paramCount * sizeof(float) * 4);
-    // 部件 id 字符串池 + id 指针数组 + 标志与数值数组。
-    total = AlignUp16(total + drawableIdBytes);
-    total = AlignUp16(total + drawableCount * sizeof(const char*));
-    total = AlignUp16(total + drawableCount * sizeof(csmFlags) * 2);
-    total = AlignUp16(total + drawableCount * sizeof(int) * 5);
-    total = AlignUp16(total + drawableCount * sizeof(float));
-    // 锯齿数组的指针表。
-    total = AlignUp16(total + drawableCount * sizeof(const csmVector2*) * 2);
-    total = AlignUp16(total + drawableCount * sizeof(const unsigned short*));
-    total = AlignUp16(total + drawableCount * sizeof(unsigned int) * 2);
-    // 顶点 / UV / 基准顶点 / 索引。
-    total = AlignUp16(total + totalVertices * sizeof(csmVector2) * 3);
-    total = AlignUp16(total + totalIndices * sizeof(unsigned short));
+    auto add = [&total](std::size_t bytes) { total = AlignUp16(total + bytes); };
+    // 参数区：id 指针 + 4 组 float（ ParamValues/Defaults/Minimums/Maximums）。
+    add(paramCount * sizeof(const char*));
+    add(paramCount * sizeof(float));
+    add(paramCount * sizeof(float));
+    add(paramCount * sizeof(float));
+    add(paramCount * sizeof(float));
+    // 部件区：id 指针 + 2 组标志 + 6 组 int + opacities + maskLists 指针。
+    add(drawableCount * sizeof(const char*));
+    add(drawableCount * sizeof(csmFlags));
+    add(drawableCount * sizeof(csmFlags));
+    add(drawableCount * sizeof(int));   // textureIndices
+    add(drawableCount * sizeof(int));   // drawOrders
+    add(drawableCount * sizeof(int));   // renderOrders
+    add(drawableCount * sizeof(float)); // opacities
+    add(drawableCount * sizeof(int));   // maskCounts
+    add(drawableCount * sizeof(const int*));  // maskLists
+    add(drawableCount * sizeof(int));   // vertexCounts
+    add(drawableCount * sizeof(int));   // indexCounts
+    // 锯齿指针表。
+    add(drawableCount * sizeof(const csmVector2*));  // vertexPositions
+    add(drawableCount * sizeof(const csmVector2*));  // vertexUvs
+    add(drawableCount * sizeof(const unsigned short*));  // indices
+    add(drawableCount * sizeof(unsigned int));  // baseVertexOffsets
+    add(drawableCount * sizeof(unsigned int));  // baseVertexCounts
+    // 部件组派生表：part 不透明度 + drawable 基准不透明度。
+    add(drawableCount * sizeof(float));
+    add(drawableCount * sizeof(float));
+    // 字符串池（AllocRaw，16 字节对齐）。
+    add(paramIdBytes);
+    add(drawableIdBytes);
+    // 顶点 / UV / 基准顶点 / 索引池。
+    add(totalVertices * sizeof(csmVector2));
+    add(totalVertices * sizeof(csmVector2));
+    add(totalVertices * sizeof(csmVector2));
+    add(totalIndices * sizeof(unsigned short));
 
     return static_cast<unsigned int>(total);
 }
@@ -381,6 +419,8 @@ csmModel* csmInitializeModelInPlace(const csmMoc* moc, void* address,
     const auto* raw = reinterpret_cast<const unsigned char*>(moc);
 
     StubHeader header;
+    // 同 csmGetSizeofModel：先解析头部再扫描（报告 2.2.7）。
+    if (!ParseHeader(raw, kStubHeaderSize, header)) return nullptr;
     std::size_t paramIdBytes = 0;
     std::size_t drawableIdBytes = 0;
     std::size_t totalVertices = 0;
@@ -393,7 +433,8 @@ csmModel* csmInitializeModelInPlace(const csmMoc* moc, void* address,
 
     auto* model = static_cast<CSM_MODEL*>(address);
     auto* base = static_cast<unsigned char*>(address);
-    BlockAllocator alloc(base, size);
+    // 从 CSM_MODEL 结构体之后开始分配，避免覆盖 model 自身的字段（潜伏 bug）。
+    BlockAllocator alloc(base, size, sizeof(CSM_MODEL));
 
     model->canvasWidth = header.canvasWidth;
     model->canvasHeight = header.canvasHeight;
@@ -431,6 +472,18 @@ csmModel* csmInitializeModelInPlace(const csmMoc* moc, void* address,
     model->baseVertexOffsets = alloc.Alloc<unsigned int>(drawableCount);
     model->baseVertexCounts = alloc.Alloc<unsigned int>(drawableCount);
 
+    // 部件组派生表：每个 drawable 即一个同名 part，初始不透明度 1.0。
+    model->partCount = static_cast<unsigned int>(drawableCount);
+    model->partOpacities = alloc.Alloc<float>(drawableCount);
+    model->drawableBaseOpacities = alloc.Alloc<float>(drawableCount);
+    if (drawableCount > 0 && (!model->partOpacities || !model->drawableBaseOpacities)) {
+        return nullptr;
+    }
+    for (std::size_t d = 0; d < drawableCount; ++d) {
+        model->partOpacities[d] = 1.0f;
+        model->drawableBaseOpacities[d] = 1.0f;  // 逐条读取部件时会用 moc 值覆盖
+    }
+
     // --- 分配 id 字符串池 ---
     char* paramIdPool = static_cast<char*>(alloc.AllocRaw(paramIdBytes));
     char* drawableIdPool = static_cast<char*>(alloc.AllocRaw(drawableIdBytes));
@@ -449,6 +502,9 @@ csmModel* csmInitializeModelInPlace(const csmMoc* moc, void* address,
         (totalIndices > 0 && !indexPool)) {
         return nullptr;
     }
+    // UpdateModel 从这里按 baseVertexOffsets 重算顶点；此前漏赋值导致空指针崩溃
+    // （同样因 stub 从未真正 Update 过而潜伏，报告 2.2.7 暴露）。
+    model->baseVertexPositions = basePool;
 
     // --- 逐条读取参数 ---
     ByteReader reader(raw, mocSize);
@@ -502,6 +558,7 @@ csmModel* csmInitializeModelInPlace(const csmMoc* moc, void* address,
 
         model->textureIndices[d] = textureIndex;
         model->opacities[d] = opacity;
+        model->drawableBaseOpacities[d] = opacity;
         model->vertexCounts[d] = static_cast<int>(vertexCount);
         model->indexCounts[d] = static_cast<int>(indexCount);
         // Live2D 网格多为双面，桩实现统一标记为双面。
@@ -591,6 +648,14 @@ void csmUpdateModel(csmModel* model) {
             for (unsigned int v = 0; v < count; ++v) verts[v] = base[v];
         }
 
+        // 模拟真实 Core 的 part→drawable 不透明度传播：
+        // 最终 drawable 不透明度 = moc 基准值 × 对应 part 不透明度。
+        // 每帧从基准重算（而非就地乘法累积），与真实 Core 语义一致，
+        // 使 SetPartOpacity 在桩下也能被观测到（互斥身体切换可测）。
+        const float partOpacity =
+            (d < model->partCount) ? model->partOpacities[d] : 1.0f;
+        model->opacities[d] = model->drawableBaseOpacities[d] * partOpacity;
+
         // 动态标志：可见性 + 顶点变化。
         model->dynamicFlags[d] = csmIsVisible | csmVertexPositionsDidChange;
         if (model->opacities[d] <= 0.0f) {
@@ -644,6 +709,22 @@ const float* csmGetParameterMinimumValues(const csmModel* model) {
 const float* csmGetParameterMaximumValues(const csmModel* model) {
     if (!model || model->paramCount == 0) return nullptr;
     return model->paramMaximums;
+}
+
+int csmGetPartCount(const csmModel* model) {
+    if (!model) return 0;
+    return static_cast<int>(model->partCount);
+}
+
+const char** csmGetPartIds(const csmModel* model) {
+    // part 与 drawable 一一对应，直接复用 drawable 的 id 指针表。
+    if (!model || model->partCount == 0) return nullptr;
+    return model->drawableIds;
+}
+
+float* csmGetPartOpacities(csmModel* model) {
+    if (!model || model->partCount == 0) return nullptr;
+    return model->partOpacities;
 }
 
 int csmGetDrawableCount(const csmModel* model) {

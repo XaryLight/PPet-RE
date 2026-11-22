@@ -1255,6 +1255,17 @@ add_test(NAME part_opacity_plan_unit
          COMMAND ppet_part_opacity_plan_test
          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
+# stub 配置下的 Part API 可测性（报告 2.2.7）：真实 SDK 与桩都实现 csmGetPart*
+# 后，PartOpacity 曲线写入 Core 的整条链路可在无 SDK 环境单测。
+if(PPET_WITH_CUBISM_STUB)
+    add_executable(ppet_stub_part_api_test tools/stub_part_api_test.cpp)
+    target_link_libraries(ppet_stub_part_api_test PRIVATE ppet_model)
+    target_include_directories(ppet_stub_part_api_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME stub_part_api_unit
+             COMMAND ppet_stub_part_api_test
+             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+endif()
+
 # 高 DPI 视口解析（Q4）：把 framebuffer 物理像素与窗口逻辑尺寸分离，
 # 修复 x2.13 / x1.06 缩放下渲染图被固定 840x600 客户区截断。纯头文件、零依赖。
 add_executable(ppet_dpi_layout_test tools/dpi_layout_test.cpp)

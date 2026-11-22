@@ -207,6 +207,18 @@ const float* csmGetParameterMinimumValues(const csmModel* model);
 /// 参数上界数组。
 const float* csmGetParameterMaximumValues(const csmModel* model);
 
+/// 部件组（Part）数量。
+///
+/// 真实 Core 的 part 是 drawable 的上层分组；桩实现按「每个 drawable 视为一个
+/// 同名 part」派生，使 PartOpacity API 在桩下也可被编译、调用与单测覆盖。
+int csmGetPartCount(const csmModel* model);
+
+/// 部件组名数组（长度与 csmGetPartCount 一致）。
+const char** csmGetPartIds(const csmModel* model);
+
+/// 部件组不透明度数组（可写，长度与 csmGetPartCount 一致）。
+float* csmGetPartOpacities(csmModel* model);
+
 /// 部件数量。
 int csmGetDrawableCount(const csmModel* model);
 
