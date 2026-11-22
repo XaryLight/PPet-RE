@@ -133,6 +133,10 @@ struct DebugPanel::Impl {
     QLabel* hintLabel = nullptr;
     QPushButton* copyBtn = nullptr;
 
+    // 【2.4.5】生命周期哨兵：lambda（尤其 QTimer::singleShot 延时回调）捕获
+    // weak_ptr，Shutdown 后作废，避免 deleteLater 后 queued 回调 use-after-free。
+    std::shared_ptr<bool> alive = std::make_shared<bool>(true);
+
     // 节流与增量重建
     std::chrono::steady_clock::time_point lastUpdate{};
     std::string lastModelKey;
@@ -289,7 +293,9 @@ void DebugPanel::BuildUi() {
         buttons->addWidget(impl_->copyBtn);
         layout->addLayout(buttons);
 
-        QObject::connect(impl_->copyBtn, &QPushButton::clicked, [this]() {
+        std::weak_ptr<bool> weakAlive = impl_->alive;
+        QObject::connect(impl_->copyBtn, &QPushButton::clicked, [this, weakAlive]() {
+            if (weakAlive.expired()) return;
             // 把当前快照拼成纯文本，方便贴到 issue 里。
             std::ostringstream os;
             const ModelDebugInfo& m = impl_->lastModel;
@@ -325,7 +331,8 @@ void DebugPanel::BuildUi() {
             const Strings emptyStrings;
             const Strings& s2 = strings ? *strings : emptyStrings;
             impl_->copyBtn->setText(ToQString(s2.debugCopied));
-            QTimer::singleShot(1500, impl_->copyBtn, [this]() {
+            QTimer::singleShot(1500, impl_->copyBtn, [this, weakAlive]() {
+                if (weakAlive.expired()) return;
                 const Strings emptyAgain;
                 const Strings& s3 = strings ? *strings : emptyAgain;
                 if (impl_->copyBtn) impl_->copyBtn->setText(ToQString(s3.debugCopy));
@@ -376,6 +383,8 @@ bool DebugPanel::Initialize(std::string& error) {
 
 void DebugPanel::Shutdown() {
     if (!impl_) return;
+    // 【2.4.5】先作废旧回调，再 deleteLater，消除延时 lambda 的 UAF 窗口。
+    impl_->alive.reset();
     if (impl_->dialog) {
         impl_->dialog->deleteLater();
         impl_->dialog = nullptr;

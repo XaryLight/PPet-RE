@@ -84,6 +84,10 @@ struct SettingsPanel::Impl {
     QTextEdit* aboutEdit = nullptr;
     QPushButton* clearBtn = nullptr;
 
+    // 【2.4.5】生命周期哨兵：所有 lambda 捕获 weak_ptr，Shutdown 时 reset，
+    // 之后即使 queued 信号触发回调也会因 lock 失败而提前返回，避免 use-after-free。
+    std::shared_ptr<bool> alive = std::make_shared<bool>(true);
+
     // 刷新时用它屏蔽「因 setValue/setCurrentRow 触发的信号 -> 回调 -> 再刷新」回路。
     bool updating = false;
 };
@@ -301,20 +305,27 @@ void SettingsPanel::BuildUi() {
 
     // ===================== 信号连接（全部用 lambda，无需 moc） =====================
     auto* w = impl_.get();
+    // 【2.4.5】weak_ptr 哨兵：Shutdown 后所有回调作废，避免 queued 信号 UAF。
+    std::weak_ptr<bool> weakAlive = impl_->alive;
 
     // 模型列表：选中即切换当前模型。
     QObject::connect(impl_->modelList, &QListWidget::currentRowChanged,
-                     [this, w](int row) {
+                     [this, w, weakAlive](int row) {
+                         if (weakAlive.expired()) return;
                          if (w->updating) return;
                          if (row >= 0 && onSelectModel) onSelectModel(row);
                      });
 
     // 导入模型（本地文件）。
     QObject::connect(impl_->importBtn, &QPushButton::clicked,
-                     [this]() { OpenImportDialog(); });
+                     [this, weakAlive]() {
+                         if (weakAlive.expired()) return;
+                         OpenImportDialog();
+                     });
 
     // 移除模型。
-    QObject::connect(impl_->removeBtn, &QPushButton::clicked, [this, w]() {
+    QObject::connect(impl_->removeBtn, &QPushButton::clicked, [this, w, weakAlive]() {
+        if (weakAlive.expired()) return;
         const int row = w->modelList->currentRow();
         if (row < 0) return;
         if (onRemoveModel) onRemoveModel(row);
@@ -322,7 +333,8 @@ void SettingsPanel::BuildUi() {
     });
 
     // 导入在线模型（URL）。
-    QObject::connect(impl_->importUrlBtn, &QPushButton::clicked, [this, w]() {
+    QObject::connect(impl_->importUrlBtn, &QPushButton::clicked, [this, w, weakAlive]() {
+        if (weakAlive.expired()) return;
         const QString text = w->urlEdit->text().trimmed();
         if (text.isEmpty()) return;
         if (onImportModel) onImportModel(text.toStdString());
@@ -331,7 +343,8 @@ void SettingsPanel::BuildUi() {
 
     // 渲染大小。
     QObject::connect(impl_->renderScaleSlider, &QSlider::valueChanged,
-                     [this, w](int value) {
+                     [this, w, weakAlive](int value) {
+                         if (weakAlive.expired()) return;
                          if (w->updating) return;
                          const float scale = static_cast<float>(value) / 100.0f;
                          if (config) config->renderScale = scale;
@@ -342,7 +355,8 @@ void SettingsPanel::BuildUi() {
 
     // 全屏追踪开关。
     QObject::connect(impl_->fullscreenChk, &QCheckBox::toggled,
-                     [this, w](bool checked) {
+                     [this, w, weakAlive](bool checked) {
+                         if (weakAlive.expired()) return;
                          if (w->updating) return;
                          if (config) config->fullscreenTracking = checked;
                          if (onConfigChanged) onConfigChanged();
@@ -350,7 +364,8 @@ void SettingsPanel::BuildUi() {
 
     // 追踪半径。
     QObject::connect(impl_->radiusSlider, &QSlider::valueChanged,
-                     [this, w](int value) {
+                     [this, w, weakAlive](int value) {
+                         if (weakAlive.expired()) return;
                          if (w->updating) return;
                          if (config) config->trackingRadius = static_cast<float>(value);
                          w->radiusValue->setText(QString::number(value) + " px");
@@ -359,7 +374,8 @@ void SettingsPanel::BuildUi() {
 
     // 最大偏转角度。
     QObject::connect(impl_->angleSlider, &QSlider::valueChanged,
-                     [this, w](int value) {
+                     [this, w, weakAlive](int value) {
+                         if (weakAlive.expired()) return;
                          if (w->updating) return;
                          if (config) config->maxTrackingAngle = static_cast<float>(value);
                          w->angleValue->setText(QString::number(value) + "°");
@@ -368,19 +384,22 @@ void SettingsPanel::BuildUi() {
 
     // 窗口相关开关。
     QObject::connect(impl_->alwaysOnTopChk, &QCheckBox::toggled,
-                     [this, w](bool checked) {
+                     [this, w, weakAlive](bool checked) {
+                         if (weakAlive.expired()) return;
                          if (w->updating) return;
                          if (config) config->alwaysOnTop = checked;
                          if (onConfigChanged) onConfigChanged();
                      });
     QObject::connect(impl_->ignoreMouseChk, &QCheckBox::toggled,
-                     [this, w](bool checked) {
+                     [this, w, weakAlive](bool checked) {
+                         if (weakAlive.expired()) return;
                          if (w->updating) return;
                          if (config) config->ignoreMouseEvents = checked;
                          if (onConfigChanged) onConfigChanged();
                      });
     QObject::connect(impl_->showToolChk, &QCheckBox::toggled,
-                     [this, w](bool checked) {
+                     [this, w, weakAlive](bool checked) {
+                         if (weakAlive.expired()) return;
                          if (w->updating) return;
                          if (config) config->showTool = checked;
                          if (onConfigChanged) onConfigChanged();
@@ -388,7 +407,8 @@ void SettingsPanel::BuildUi() {
 
     // 语言切换。
     QObject::connect(impl_->langCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-                     [this, w](int index) {
+                     [this, w, weakAlive](int index) {
+                         if (weakAlive.expired()) return;
                          if (w->updating) return;
                          if (config)
                              config->language =
@@ -396,16 +416,24 @@ void SettingsPanel::BuildUi() {
                          if (onConfigChanged) onConfigChanged();
                      });
 
-    // 清除设置（带二次确认）。
-    QObject::connect(impl_->clearBtn, &QPushButton::clicked, [this, w]() {
-        QMessageBox::StandardButton reply = QMessageBox::question(
-            w->dialog, ToQString(strings ? strings->clearSettings : "清除设置"),
-            strings ? ToQString(strings->clearSettings + "？")
-                    : "清除设置？",
-            QMessageBox::Yes | QMessageBox::No);
-        if (reply != QMessageBox::Yes) return;
-        if (onClearSettings) onClearSettings();
-        Refresh();
+    // 清除设置（非模态二次确认，避免嵌套事件循环冻结 GLFW 主循环——报告 2.4.5）。
+    QObject::connect(impl_->clearBtn, &QPushButton::clicked, [this, w, weakAlive]() {
+        if (weakAlive.expired()) return;
+        auto* confirm = new QMessageBox(
+            QMessageBox::Question,
+            ToQString(strings ? strings->clearSettings : "清除设置"),
+            strings ? ToQString(strings->clearSettings + "？") : "清除设置？",
+            QMessageBox::Yes | QMessageBox::No, w->dialog);
+        confirm->setAttribute(Qt::WA_DeleteOnClose, true);
+        // 非模态：show() 立即返回，不启动嵌套事件循环，桌宠画面不会冻结。
+        QObject::connect(confirm, &QMessageBox::finished, confirm,
+                         [this, w, weakAlive, confirm](int result) {
+                             if (weakAlive.expired()) return;
+                             if (result != QMessageBox::Yes) return;
+                             if (onClearSettings) onClearSettings();
+                             Refresh();
+                         });
+        confirm->show();
     });
 }
 
@@ -521,6 +549,9 @@ void SettingsPanel::Toggle() {
 QWidget* SettingsPanel::Handle() const { return impl_->dialog; }
 
 void SettingsPanel::Shutdown() {
+    // 【2.4.5】先让哨兵失效：此后所有 lambda 回调（含 queued）立即返回，
+    // 不会再触碰 w/impl_ 或 dialog，消除 deleteLater 后 queued 信号的 UAF 窗口。
+    if (impl_) impl_->alive.reset();
     if (impl_->dialog) {
         impl_->dialog->deleteLater();
         impl_->dialog = nullptr;
