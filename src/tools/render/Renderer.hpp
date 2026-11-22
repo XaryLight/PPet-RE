@@ -133,6 +133,9 @@ private:
     /// 必须与着色器里 uBones 数组的编译期长度一致，
     /// 否则 uniform block 会越界读取缓冲区。
     std::size_t boneCapacity_ = 0;
+    /// 【2.5.6】复用的骨骼矩阵暂存缓冲：Upload 时按 boneCapacity_ 分配一次，
+    /// 每帧 Draw 只覆写内容，不再每帧 vector 分配。
+    std::vector<Mat4> boneMatrices_;
     std::vector<Texture> textures_;
     std::shared_ptr<Shader> shader_;
     /// 描边用的独立着色器（顶点外扩 + 纯色输出）。

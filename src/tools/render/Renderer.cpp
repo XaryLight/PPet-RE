@@ -822,11 +822,27 @@ bool SkinnedMeshRenderer::Upload(const SkinnedMesh& mesh) {
 
     // 着色器里 uBones 数组的长度是编译期常量，UBO 的实际容量必须与之相同，
     // 否则 uniform block 会读到缓冲区之外的数据（未定义行为）。
-    // 容量取驱动允许的上限（GL_MAX_UNIFORM_BLOCK_SIZE），一次分配够用。
-    // 新模型/新容量：允许着色器重新编译（缺陷 2.5.4 的失败标志随之复位）。
+    // 【2.5.6】按模型实际骨骼数分配容量（向上对齐到 16），而非一律取硬件上限
+    // 1024：10 根骨骼的模型此前也占 64KB 并编译 uBones[1024]，浪费显存与编译时间。
+    // 留有余量以容纳运行时可能追加的骨骼；封顶仍是驱动能力上限。
     shaderCompileFailed_ = false;
     outlineCompileFailed_ = false;
-    boneCapacity_ = static_cast<std::size_t>(QueryMaxBoneCount());
+    {
+        const std::size_t hardwareMax = static_cast<std::size_t>(QueryMaxBoneCount());
+        constexpr std::size_t kAlignment = 16;
+        // 至少 16 槽（覆盖单位阵与常见小模型），向上对齐，再封顶硬件上限。
+        std::size_t wanted = std::max<std::size_t>(boneCount_, kAlignment);
+        wanted = (wanted + kAlignment - 1) / kAlignment * kAlignment;
+        const std::size_t newCapacity = std::min(wanted, hardwareMax);
+        // 【2.5.6】容量变化时必须重编着色器：uBones[MAX_BONES] 是编译期常量，
+        // 若从大容量模型换到小容量模型而着色器仍是旧的大数组，会读到 UBO 之外
+        // （未定义行为）。反之小→大不重编只会浪费槽位，但为一致性一并重编。
+        if (newCapacity != boneCapacity_) {
+            shader_.reset();
+            outlineShader_.reset();
+        }
+        boneCapacity_ = newCapacity;
+    }
     if (boneCount_ > boneCapacity_) {
         std::fprintf(stderr,
                      "[渲染层] 警告：模型骨骼数 %zu 超过本机 uniform block 上限 %zu，"
@@ -840,12 +856,11 @@ bool SkinnedMeshRenderer::Upload(const SkinnedMesh& mesh) {
     glBindBuffer(GL_UNIFORM_BUFFER, boneVbo_);
     // 整个缓冲区先填单位阵：模型实际用不到的骨骼槽位保持「无变换」，
     // 这样着色器即使读到那些槽位也不会把顶点拉歪。
-    {
-        std::vector<Mat4> identity(boneCapacity_, Mat4::Identity());
-        glBufferData(GL_UNIFORM_BUFFER,
-                     static_cast<GLsizeiptr>(identity.size() * sizeof(Mat4)), identity.data(),
-                     GL_DYNAMIC_DRAW);
-    }
+    // 【2.5.6】boneMatrices_ 在 Upload 时分配一次，之后每帧复用，不再反复分配。
+    boneMatrices_.assign(boneCapacity_, Mat4::Identity());
+    glBufferData(GL_UNIFORM_BUFFER,
+                 static_cast<GLsizeiptr>(boneMatrices_.size() * sizeof(Mat4)),
+                 boneMatrices_.data(), GL_DYNAMIC_DRAW);
     glBindBufferBase(GL_UNIFORM_BUFFER, kBoneBindingPoint, boneVbo_);
     glBindBuffer(GL_UNIFORM_BUFFER, 0);
 
@@ -1045,13 +1060,18 @@ void SkinnedMeshRenderer::DrawInternal(const Mat4& vp, const std::vector<Mat4>& 
     }
 
     // 上传骨骼矩阵。数量不足时补单位阵，避免越界。
+    // 【2.5.6】复用 Upload 时分配的 boneMatrices_，每帧只覆写前 boneCount_ 个，
+    // 不再每帧新建 vector（此前每帧一次堆分配 + 全量单位阵初始化）。
     {
-        std::vector<Mat4> matrices(boneCount_, Mat4::Identity());
-        const std::size_t count = std::min(matrices.size(), skinning.size());
-        for (std::size_t i = 0; i < count; ++i) matrices[i] = skinning[i];
+        if (boneMatrices_.size() != boneCapacity_) {
+            boneMatrices_.assign(boneCapacity_, Mat4::Identity());
+        }
+        const std::size_t count = std::min(boneMatrices_.size(), skinning.size());
+        for (std::size_t i = 0; i < count; ++i) boneMatrices_[i] = skinning[i];
         glBindBuffer(GL_UNIFORM_BUFFER, boneVbo_);
         glBufferSubData(GL_UNIFORM_BUFFER, 0,
-                        static_cast<GLsizeiptr>(matrices.size() * sizeof(Mat4)), matrices.data());
+                        static_cast<GLsizeiptr>(boneMatrices_.size() * sizeof(Mat4)),
+                        boneMatrices_.data());
     }
 
     program->Use();
