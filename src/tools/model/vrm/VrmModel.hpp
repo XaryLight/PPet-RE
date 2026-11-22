@@ -94,6 +94,10 @@ public:
 
     /// 表情预设切换（"happy" / "angry" …）。内部做别名解析，
     /// 所以中文/日文 morph 名（开心 / 笑い）也能命中。
+    bool SupportsExpressions() const override { return true; }
+    bool SupportsMotion() const override { return true; }
+    // 口型走元音 morph（SetExpressionWeights），不提供原生 LipSync。
+
     bool SetExpressionPreset(const std::string& id) override;
     /// 待机随机表情（对齐 VRM-VPet 的随机表情）。
     void SetRandomIdleExpression(bool enabled) override;

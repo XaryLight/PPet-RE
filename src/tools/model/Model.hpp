@@ -2,6 +2,7 @@
 // 模型抽象接口：Live2D / PMX / VRM 三种后端统一由此驱动。
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <memory>
 #include <string>
@@ -275,6 +276,28 @@ public:
         (void)open;
         (void)form;
         return false;
+    }
+
+    // --- 能力查询（报告 2.3.4）---
+    // 让调用方区分「后端不支持」与「执行失败」，无需预知后端类型。
+    /// 是否支持表情预设 / 权重通道（PMX / VRM / Live2D 均为 true）。
+    virtual bool SupportsExpressions() const { return false; }
+    /// 是否支持原生 LipSync 接口（Open/Form 参数，Live2D 为 true；
+    /// PMX/VRM 用元音 morph，走 SetExpressionWeights，返回 false）。
+    virtual bool SupportsLipSync() const { return false; }
+    /// 是否支持动作播放。
+    virtual bool SupportsMotion() const { return false; }
+
+    /// 统一口型入口：上层无需预知后端类型。
+    /// 原生 LipSync 后端直接写 Open/Form；其余后端把开口度/嘴形映射成元音
+    /// 权重走 SetExpressionWeights（aa 控制张口，ih/ou 控制嘴形宽窄）。
+    /// @return 是否有通道被成功设置。
+    virtual bool SetMouth(float open, float form) {
+        // 统一钳制到 [0,1]：避免越界值污染后端参数。
+        const float o = std::min(1.0f, std::max(0.0f, open));
+        const float f = std::min(1.0f, std::max(0.0f, form));
+        if (SupportsLipSync()) return SetLipSync(o, f);
+        return SetExpressionWeights({{"aa", o}, {"ih", f * o}});
     }
 
     /// 可用的表情预设 id 列表（供 UI 构建表情按钮）。无表情系统的后端返回空。

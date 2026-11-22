@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <unordered_map>
 
 #include <src/tools/model/pmx/PmxModel.hpp>
 #include <src/tools/model/vrm/VrmModel.hpp>
@@ -62,24 +63,35 @@ ModelType DetectModelType(const std::string& path) {
     return ModelType::Unknown;
 }
 
-ModelPtr CreateModel(ModelType type) {
-    switch (type) {
-        case ModelType::Pmx:
-            return std::make_shared<pmx::PmxModel>();
-        case ModelType::Vrm:
-            return std::make_shared<vrm::VrmModel>();
-        case ModelType::Live2D:
+namespace {
+
+/// 【2.3.4】工厂注册表：新增后端只需注册一个 creator，无需改 switch（开闭原则）。
+/// 用函数内静态 map，避免跨 TU 初始化顺序问题。
+using ModelCreator = ModelPtr (*)();
+std::unordered_map<ModelType, ModelCreator>& Registry() {
+    static std::unordered_map<ModelType, ModelCreator> registry = [] {
+        std::unordered_map<ModelType, ModelCreator> r;
+        r[ModelType::Pmx] = []() -> ModelPtr { return std::make_shared<pmx::PmxModel>(); };
+        r[ModelType::Vrm] = []() -> ModelPtr { return std::make_shared<vrm::VrmModel>(); };
 #if defined(PPET_WITH_CUBISM)
+        r[ModelType::Live2D] = []() -> ModelPtr {
             return std::make_shared<live2d::Live2DModel>();
+        };
 #else
-            // 未编译 Cubism SDK 时无法提供 Live2D 后端。
-            // 调用方应通过 DetectModelType 的结果给出「请启用 Cubism SDK」的提示。
-            return nullptr;
+        // 未编译 Cubism SDK 时不注册 Live2D 后端，CreateModel 返回 nullptr。
 #endif
-        case ModelType::Unknown:
-        default:
-            return nullptr;
-    }
+        return r;
+    }();
+    return registry;
+}
+
+}  // namespace
+
+ModelPtr CreateModel(ModelType type) {
+    const auto& registry = Registry();
+    const auto it = registry.find(type);
+    if (it == registry.end()) return nullptr;
+    return it->second();
 }
 
 }  // namespace ppet

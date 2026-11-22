@@ -1006,6 +1006,16 @@ enable_testing()
 add_executable(ppet_pmx_test tools/pmx_test.cpp)
 target_link_libraries(ppet_pmx_test PRIVATE ppet_model)
 
+# IModel 能力查询 / 统一口型入口 / 工厂注册表（报告 2.3.4）。
+# Model.cpp 不在 ppet_model 库里（很多轻量测试刻意不编译它），故此处显式编入。
+add_executable(ppet_model_capability_test
+    tools/model_capability_test.cpp
+    src/tools/model/Model.cpp)
+target_link_libraries(ppet_model_capability_test PRIVATE ppet_model)
+add_test(NAME model_capability_unit
+         COMMAND ppet_model_capability_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
 # ZIP 模型包导入测试：解压、定位模型、幂等性与非法输入。
 add_executable(ppet_zip_test
     tools/zip_test.cpp

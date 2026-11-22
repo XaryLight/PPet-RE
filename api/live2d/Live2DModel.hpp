@@ -90,6 +90,10 @@ public:
     float PreferredFrameAspect() const override;
 
     /// 表情/口型：切换到表情动作组（如 "ExpHappy"）；无对应组返回 false。
+    bool SupportsExpressions() const override { return true; }
+    bool SupportsMotion() const override { return true; }
+    bool SupportsLipSync() const override { return true; }
+
     bool SetExpressionPreset(const std::string& id) override;
     /// 口型：设置开口度与嘴形（来自 LipSync），刷入 ParamMouthOpenY/ParamMouthForm。
     bool SetLipSync(float open, float form) override;

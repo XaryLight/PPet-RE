@@ -85,6 +85,10 @@ public:
     std::vector<std::string> MissingResources() const override;
 
     /// 表情系统（ExpressionDirector 驱动 morph 顶点变形）。
+    bool SupportsExpressions() const override { return true; }
+    bool SupportsMotion() const override { return true; }
+    // 口型走元音 morph（SetExpressionWeights），不提供原生 LipSync。
+
     bool SetExpressionPreset(const std::string& id) override;
     /// 待机随机表情（对齐 VRM-VPet 的随机表情）。
     void SetRandomIdleExpression(bool enabled) override;
