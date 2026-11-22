@@ -31,6 +31,7 @@
 #include <src/tools/core/Stability.hpp>
 #include <src/tools/core/TrackingPolicy.hpp>
 #include <src/tools/plugin/BuiltinPlugins.hpp>
+#include <src/tools/plugin/DynamicPluginLoader.hpp>
 #include <src/tools/render/FrameCapture.hpp>
 #include <src/ui/ErrorDialog.hpp>
 #include <src/tools/platform/AutoStart.hpp>
@@ -174,8 +175,27 @@ bool App::Initialize(std::string& error) {
     pluginManager_.SetConfigSource(&configStore_.config());
     pluginManager_.Register(std::make_shared<plugin::GreeterPlugin>());
     pluginManager_.Register(std::make_shared<plugin::CounterPlugin>());
+    // 【2.3.3】扫描 exe 同目录 plugins/ 加载第三方动态插件（内置插件仍保留）。
+    // ABI 不匹配 / 缺符号 / 坏库会被加载器静默跳过，不影响内置插件与主程序。
+    {
+        const std::string exeDir = ExecutableDir();
+        if (!exeDir.empty()) {
+            const std::string pluginsDir =
+                exeDir + "/" + plugin::DefaultPluginDirectoryName();
+            const auto loaded = plugin::LoadPluginsFromDirectory(pluginManager_, pluginsDir);
+            if (!loaded.empty()) {
+                std::string names;
+                for (std::size_t i = 0; i < loaded.size(); ++i) {
+                    if (i) names += ", ";
+                    names += loaded[i];
+                }
+                PPET_LOG_TAG("PLUGIN", "已从 %s 加载 %zu 个动态插件：%s",
+                             pluginsDir.c_str(), loaded.size(), names.c_str());
+            }
+        }
+    }
     EmitPluginEvent(plugin::PluginEventKind::AppStart);
-    PPET_LOG_TAG("PLUGIN", "插件系统就绪：已注册 %zu 个内置插件",
+    PPET_LOG_TAG("PLUGIN", "插件系统就绪：已注册 %zu 个插件（内置 + 动态）",
                  pluginManager_.List().size());
 
     // --- 窗口 ---

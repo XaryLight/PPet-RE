@@ -734,6 +734,7 @@ set(PPET_CORE_SOURCES
     src/tools/core/ModelPackage.cpp
     src/tools/core/ZipArchive.cpp
     src/tools/plugin/PluginManager.cpp
+    src/tools/plugin/DynamicPluginLoader.cpp
     src/tools/model/Model.cpp
     src/tools/app/App.cpp
     # 交互式控制台：stdin 读取线程 + 命令执行器。
@@ -1328,6 +1329,27 @@ add_executable(ppet_plugin_test
 )
 add_test(NAME plugin_unit
          COMMAND ppet_plugin_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# 动态插件加载（报告 2.3.3）：把一个测试插件编译成 MODULE 库，验证
+# ABI 校验 / dlopen 加载 / 目录扫描 / 注册 / 卸载生命周期。
+add_library(ppet_test_plugin MODULE tools/test_plugin.cpp)
+target_include_directories(ppet_test_plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+set_target_properties(ppet_test_plugin PROPERTIES PREFIX "")
+add_executable(ppet_dynamic_plugin_test
+    tools/dynamic_plugin_test.cpp
+    src/tools/plugin/DynamicPluginLoader.cpp
+    src/tools/plugin/PluginManager.cpp)
+target_include_directories(ppet_dynamic_plugin_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(ppet_dynamic_plugin_test PRIVATE ${CMAKE_DL_LIBS})
+add_dependencies(ppet_dynamic_plugin_test ppet_test_plugin)
+if(WIN32)
+    set(_ppet_test_plugin_lib "$<TARGET_FILE:ppet_test_plugin>")
+else()
+    set(_ppet_test_plugin_lib "$<TARGET_FILE:ppet_test_plugin>")
+endif()
+add_test(NAME dynamic_plugin_unit
+         COMMAND ppet_dynamic_plugin_test ${_ppet_test_plugin_lib}
          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
 # VRM 动作识别（需求 4）：从 humanoid 骨骼 / glTF 动画 / 弹簧骨推导
