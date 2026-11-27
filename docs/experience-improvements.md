@@ -75,8 +75,18 @@ CI 矩阵跑 stub/nocubism/asan（真实 SDK 因许可证无法在公开 CI 分�
   现改为两层共享同一进度、由 `CrossFade` 互补计算，满权重切换时 `w_out + w_in === 1`；
   二次打断（旧动作权重<1）时总和单调升到 1、不过冲。曲线可通过 `SetCrossFadeCurve` 切换。
 - Live2D `MotionQueue` 用的是 Cubism 官方**覆盖式**混合（`v=v+(curve-v)·w`，非累加），
-  权重本就不需守恒，且其 EasingSine 公式与本模块一致，保持不动。
-- 新增 `transition_easing_test`（曲线端点/单调/对称、权重守恒、播放器无过冲），三配置全绿。
+  权重本就不需守恒，EasingSine 公式也与本模块一致。
+
+**「播放中再点击」的硬切修复（同需求续）**：Live2D 动作缺 `FadeInTime` 时早期按 0 处理，
+覆盖式混合会让新动作瞬间满权重、把旧姿态一把抹掉，表现为「点击立刻停旧播新、无过渡」。
+对齐官方（缺值默认 1000ms）与 pixi-live2d-display（`motionFadingDuration=500ms`）的做法：
+
+- `MotionQueue` 增加可配置默认过渡时长 **0.25s**（`SetDefaultFadeSeconds`，0 可退回硬切）；
+  **仅在确有打断、且新动作缺 fade 时**补淡入，首次启动（队列空）维持原语义。
+- 旧动作淡出时长与新动作淡入同步（取较大者），保证交接期两权重之和 ≈1。
+  显式配置 fade 的动作完全不受影响。`MotionDirector::SetDefaultTransition` 暴露配置入口。
+- 单测 `motion_queue_test` 新增：打断渐进淡入、交接权重守恒、显式 fade 不被覆盖、
+  关闭默认值退回硬切、优先级透传；共 46 项断言全绿。
 
 ## 有意未引入 / 延后
 

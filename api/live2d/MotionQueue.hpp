@@ -75,25 +75,51 @@ public:
         clock_ = 0.0f;
     }
 
+    /// 配置「打断正在播放的动作时」使用的默认过渡时长（秒）。
+    ///
+    /// 背景：Live2D 官方约定动作未设 fade 时默认 1000ms，pixi-live2d-display
+    /// 用 500ms 作为缺值默认；本项目的 motion3.json 常不带 FadeInTime，
+    /// 早期实现把缺值当 0（=瞬间切换），于是「播放中再点击」表现为硬切。
+    /// 这里给一个可配置默认值，让被打断的动作有平滑交接。设为 0 可关闭。
+    void SetDefaultFadeSeconds(float seconds) {
+        defaultFadeSeconds_ = std::max(0.0f, seconds);
+    }
+    float DefaultFadeSeconds() const { return defaultFadeSeconds_; }
+
     /// 启动一个新动作。对齐官方 StartMotion：先把所有已有动作标记为淡出。
+    ///
+    /// 若新动作缺 fade（fadeIn<=0）且正在打断别的动作，用默认过渡时长补上淡入，
+    /// 并让旧动作的淡出与之同步，避免覆盖式混合把旧姿态瞬间抹掉。
     ///
     /// @param now 当前队列时钟（秒），通常传 Clock()。
     void StartMotion(int motionIndex, float duration, float fadeIn, float fadeOut, bool loop,
                      int priority, const std::string& groupName, float now) {
         if (motionIndex < 0) return;
+
+        // 是否真的打断了仍在播放的动作（队列空 / 只有淡出中的动作时不算）。
+        bool interrupted = false;
+        for (const MotionQueueEntry& e : entries_) {
+            if (e.IsPrimary()) { interrupted = true; break; }
+        }
+        // 缺 fade 的新动作 + 确有打断 => 补默认淡入；否则完全尊重原值。
+        const float effectiveFadeIn =
+            (interrupted && fadeIn <= 0.0f) ? defaultFadeSeconds_ : fadeIn;
+
         for (MotionQueueEntry& entry : entries_) {
             if (entry.finished || entry.fadingOut) continue;
-            // 官方：SetFadeout(已有动作自身的 GetFadeOutTime())，
-            // 没有淡出时间时给它一个极短的值，避免瞬间消失。
             entry.fadingOut = true;
-            entry.fadeOutSeconds = entry.fadeOut > 0.0f ? entry.fadeOut : 0.15f;
             entry.fadeOutStart = now;
+            // 官方：SetFadeout(旧动作自身 fadeOut)。缺值时用默认过渡时长；
+            // 再与新动作淡入取较大者，保证淡出覆盖整个交接窗口。
+            const float ownFadeOut =
+                entry.fadeOut > 0.0f ? entry.fadeOut : defaultFadeSeconds_;
+            entry.fadeOutSeconds = std::max(ownFadeOut, effectiveFadeIn);
         }
 
         MotionQueueEntry entry;
         entry.motionIndex = motionIndex;
         entry.duration = duration;
-        entry.fadeIn = fadeIn;
+        entry.fadeIn = effectiveFadeIn;
         entry.fadeOut = fadeOut;
         entry.loop = loop;
         entry.priority = priority;
@@ -189,6 +215,8 @@ public:
 private:
     std::vector<MotionQueueEntry> entries_;
     float clock_ = 0.0f;
+    /// 打断动作时的默认过渡时长（秒），0 表示保持旧的硬切语义。
+    float defaultFadeSeconds_ = 0.25f;
 };
 
 }  // namespace ppet::live2d

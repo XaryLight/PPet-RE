@@ -138,9 +138,72 @@ void TestFinishedPriority() {
     MotionQueue q;
     q.StartMotion(0, 10.0f, 0.0f, 0.0f, false, 0, "Idle", q.Clock());
     q.StartMotion(1, 10.0f, 0.0f, 0.0f, false, 3, "Force", q.Clock());
+    // 打断时新动作会补默认淡入，入队当帧权重=0 不进 Blends()；
+    // 推进一小步待其可见后再校验优先级透传。
+    q.Tick(0.05f);
     const std::vector<QueueBlend> blends = q.Blends();
     Check(blends.back().priority == 3, "Force 优先级透传到 Blend");
     Check(q.Primary()->priority == 3, "Primary 是最后入队的高优先级动作");
+}
+
+// 「播放中再点击」：动作缺 fade 时，默认过渡避免硬切（本轮修复的核心）。
+void TestInterruptDefaultFade() {
+    std::printf("-- 打断动作时缺 fade 补默认过渡 --\n");
+    MotionQueue q;
+    Check(Near(q.DefaultFadeSeconds(), 0.25f), "默认过渡时长=0.25s");
+    q.SetDefaultFadeSeconds(0.3f);
+    Check(Near(q.DefaultFadeSeconds(), 0.3f), "默认过渡时长可配置");
+    q.SetDefaultFadeSeconds(0.25f);
+
+    // 首次启动（队列空）：缺 fade 仍保持权重=1，不改变待机语义。
+    q.StartMotion(0, 10.0f, 0.0f, 0.0f, false, 0, "Idle", q.Clock());
+    Check(Near(FindBlend(q.Blends(), 0).weight, 1.0f), "首次启动缺 fade 权重=1");
+    q.Tick(1.0f);
+
+    // 点击打断：新动作缺 fade，应补 0.25s 淡入，而非瞬间满格。
+    q.StartMotion(1, 10.0f, 0.0f, 0.0f, false, 2, "TapHead", q.Clock());
+    Check(Near(FindBlend(q.Blends(), 1).weight, 0.0f),
+          "新动作入队当帧权重=0（不再瞬间 1）");
+
+    q.Tick(0.125f);  // 半个过渡窗
+    const std::vector<QueueBlend> mid = q.Blends();
+    Check(mid.size() == 2, "过渡期新旧两条同时生效");
+    const QueueBlend oldB = FindBlend(mid, 0);
+    const QueueBlend newB = FindBlend(mid, 1);
+    Check(oldB.weight > 0.0f && oldB.weight < 1.0f, "旧动作淡出中");
+    Check(newB.weight > 0.0f && newB.weight < 1.0f, "新动作淡入中");
+    Check(Near(oldB.weight, 0.5f, 0.05f), "半程旧权重≈0.5");
+    Check(Near(newB.weight, 0.5f, 0.05f), "半程新权重≈0.5");
+    Check(std::fabs(oldB.weight + newB.weight - 1.0f) < 0.1f,
+          "交接期两权重之和≈1（姿态幅度守恒）");
+
+    q.Tick(0.2f);  // 越过 0.25s 过渡窗
+    Check(q.Size() == 1, "过渡结束旧动作出队");
+    Check(Near(FindBlend(q.Blends(), 1).weight, 1.0f), "新动作淡入完成=1");
+}
+
+void TestExplicitFadeUnchanged() {
+    std::printf("-- 显式 fade 不被默认值覆盖 --\n");
+    MotionQueue q;
+    q.StartMotion(0, 10.0f, 0.0f, 0.0f, false, 0, "Idle", q.Clock());
+    q.Tick(0.5f);
+    q.StartMotion(1, 10.0f, 0.4f, 0.6f, false, 2, "Tap", q.Clock());
+    q.Tick(0.2f);
+    // EasingSine(0.2/0.4)=EasingSine(0.5)=0.5，而非默认 0.25 的 0.8。
+    Check(Near(FindBlend(q.Blends(), 1).weight, 0.5f, 1e-3f),
+          "显式 fadeIn=0.4 未被默认 0.25 覆盖");
+}
+
+void TestDisableDefaultFade() {
+    std::printf("-- 默认过渡设为 0 退回硬切 --\n");
+    MotionQueue q;
+    q.SetDefaultFadeSeconds(0.0f);
+    q.StartMotion(0, 10.0f, 0.0f, 0.0f, false, 0, "Idle", q.Clock());
+    q.Tick(0.5f);
+    q.StartMotion(1, 10.0f, 0.0f, 0.0f, false, 2, "Tap", q.Clock());
+    q.Tick(0.01f);
+    Check(Near(FindBlend(q.Blends(), 1).weight, 1.0f),
+          "默认过渡=0 时新动作瞬间满格（保留关机语义）");
 }
 
 }  // namespace
@@ -154,6 +217,9 @@ int main() {
     TestLoop();
     TestFinishAndStop();
     TestFinishedPriority();
+    TestInterruptDefaultFade();
+    TestExplicitFadeUnchanged();
+    TestDisableDefaultFade();
     std::printf("=== %d 项检查，失败 %d ===\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

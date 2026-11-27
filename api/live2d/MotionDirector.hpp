@@ -506,6 +506,12 @@ public:
         idleCooldownJitter_ = std::max(0.0f, jitter);
     }
 
+    /// 设置「播放中再触发新动作」时的默认过渡时长（秒）。
+    /// 动作自身带 FadeInTime 时以其为准；缺失（<=0）时才用这个默认值。
+    /// 0 表示关闭过渡、退回瞬间切换（用于极端低性能场景）。
+    void SetDefaultTransition(float seconds) { queue_.SetDefaultFadeSeconds(seconds); }
+    float DefaultTransition() const { return queue_.DefaultFadeSeconds(); }
+
 private:
     void Reset() {
         current_ = ActiveClip();
