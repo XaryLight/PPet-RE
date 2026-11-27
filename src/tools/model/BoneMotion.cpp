@@ -9,11 +9,10 @@ namespace ppet::model {
 
 namespace {
 
-/// 平滑过渡曲线：比线性淡入淡出更接近官方 Framework 的 EasingSine 观感，
-/// 且端点导数为 0，切换动作时不会出现速度突变。
+/// 平滑过渡曲线：统一走 transition::Ease（SmoothStep），端点导数为 0，
+/// 切换动作时不会出现速度突变。与 Live2D / 表情系统共享同一份规范实现。
 float SmoothStep(float x) {
-    x = std::clamp(x, 0.0f, 1.0f);
-    return x * x * (3.0f - 2.0f * x);
+    return ppet::transition::Ease(x, ppet::transition::Curve::SmoothStep);
 }
 
 }  // namespace
@@ -27,12 +26,15 @@ bool BoneMotionPlayer::Play(const BoneMotion& motion, float fadeIn) {
 
     // 把正在播放的动作冻结成「淡出层」：切换瞬间不会把旧姿态直接抹掉，
     // 而是让它在 crossFade 秒内平滑退场，同时新动作淡入。
+    // 【动画自然过渡】淡入淡出共用同一个进度：当前动作淡入 w_in = SmoothStep(p)，
+    // 旧动作淡出 w_out = outgoingWeight·(1 - SmoothStep(p))。当旧动作满权重时
+    // w_in + w_out == 1，按骨骼名累加时姿态幅度不会凭空放大（消除「过冲/抽搐」）。
     if (playing_ && !current_.keys.empty() && Weight() > 0.001f && crossFade_ > 0.0f) {
         outgoing_ = current_;
         outgoingTime_ = time_;
+        // 记录切换瞬间旧动作的权重；若它自己正在淡出中被二次打断（<1），
+        // 淡出层不会凭空放大回来。
         outgoingWeight_ = Weight();
-        outgoingFade_ = 0.0f;
-        outgoingFadeDuration_ = std::max(crossFade_, fadeIn);
         hasOutgoing_ = true;
     } else {
         hasOutgoing_ = false;
@@ -41,7 +43,10 @@ bool BoneMotionPlayer::Play(const BoneMotion& motion, float fadeIn) {
     current_ = motion;
     time_ = 0.0f;
     playing_ = true;
-    fadeInDuration_ = std::max(0.0f, fadeIn);
+    // 有淡出层时，两层共享同一个淡化时长（取较大者），这样当前层淡入
+    // Ease(p) 与旧层淡出 outgoingWeight·(1-Ease(p)) 严格互补。
+    const float effectiveFade = hasOutgoing_ ? std::max(fadeIn, crossFade_) : fadeIn;
+    fadeInDuration_ = std::max(0.0f, effectiveFade);
     fadeIn_ = fadeInDuration_ > 0.0f ? 0.0f : 1.0f;
     fadeOutDuration_ = 0.0f;
     fadeOut_ = 0.0f;
@@ -68,7 +73,8 @@ float BoneMotionPlayer::Progress() const {
 
 float BoneMotionPlayer::Weight() const {
     if (!playing_) return 0.0f;
-    return SmoothStep(fadeIn_) * (1.0f - SmoothStep(fadeOut_));
+    // 淡入走统一的缓动曲线（与淡出层的 1-Ease 互补，保证 crossfade 权重守恒）。
+    return transition::Ease(fadeIn_, crossFadeCurve_) * (1.0f - SmoothStep(fadeOut_));
 }
 
 void BoneMotionPlayer::Interpolate(const BoneMotion& motion, float time, BonePose& pose) {
@@ -183,34 +189,38 @@ void BoneMotionPlayer::Tick(float dt, BonePose& pose) {
         }
     }
 
+    // 先推进当前动作时间与淡入进度，让淡入/淡出两层在同一帧用同一个进度 p。
+    // （用 playing_ 守卫以兼容原语义：Stop 后本函数仍会推进淡出层退场。）
+    if (playing_) {
+        time_ += step;
+        if (fadeIn_ < 1.0f) {
+            fadeIn_ = fadeInDuration_ > 0.0f
+                          ? std::min(1.0f, fadeIn_ + step / fadeInDuration_)
+                          : 1.0f;
+        }
+    }
+
     // --- 淡出层：上一个动作继续沿自己的时间轴走，权重平滑归零 ---
+    // 【动画自然过渡】淡入与淡出共用进度 fadeIn_，由 transition::CrossFade
+    // 互补计算：w_out = outgoingWeight·(1-Ease(p))，w_in = Ease(p)。
+    // 当旧动作满权重（=1）切换时 w_out + w_in === 1，按骨骼名累加不会过冲。
     if (hasOutgoing_) {
         outgoingTime_ += step;
         if (outgoing_.loop && outgoing_.duration > 0.0f) {
             outgoingTime_ = std::fmod(outgoingTime_, outgoing_.duration);
         }
-        outgoingFade_ = outgoingFadeDuration_ > 0.0f
-                            ? std::min(1.0f, outgoingFade_ + step / outgoingFadeDuration_)
-                            : 1.0f;
-        const float w = outgoingWeight_ * (1.0f - SmoothStep(outgoingFade_));
-        if (w > 1e-4f) {
+        const float wOut = outgoingWeight_ *
+                           (1.0f - transition::Ease(fadeIn_, crossFadeCurve_));
+        if (wOut > 1e-4f) {
             BonePose layer;
             Sample(outgoing_, outgoingTime_, layer);
-            Accumulate(pose, layer, w);
+            Accumulate(pose, layer, wOut);
         } else {
             hasOutgoing_ = false;
         }
     }
 
     if (!playing_) return;
-
-    time_ += step;
-
-    if (fadeIn_ < 1.0f) {
-        fadeIn_ = fadeInDuration_ > 0.0f
-                      ? std::min(1.0f, fadeIn_ + step / fadeInDuration_)
-                      : 1.0f;
-    }
 
     // 淡出：显式 Stop(fadeOut)，或一次性动作播完后的自动淡出。
     // 后者是「动作之间需要过渡」的关键：旧实现播完瞬间把姿态清零，会看到明显一顿。
@@ -221,6 +231,7 @@ void BoneMotionPlayer::Tick(float dt, BonePose& pose) {
         fadeOut_ = 0.0f;
     }
 
+    // 当前层权重 = Ease(fadeIn_) · (1-SmoothStep(fadeOut_))，与淡出层互补。
     const float w = Weight();
     if (w > 1e-4f) {
         float sampleTime = time_;

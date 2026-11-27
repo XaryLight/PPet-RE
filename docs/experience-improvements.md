@@ -13,9 +13,9 @@
 | 4.1.3 | 分场景自适应帧率与节能 | ✅ 已落地（保守版） | `src/tools/core/AdaptiveFps.hpp`、`App.cpp` |
 | 4.1.4 | 拖拽惯性/吸附、点击粒子、全局快捷键、无障碍 | ⏸ 未引入 | 跨 GUI / 平台，风险高，另行规划 |
 | 4.1.5 | 本地化：硬编码收口 + `--lang` + 系统语言检测 | ✅ 已落地 | `LanguageDetect.*`、`main.cpp`、`App.cpp`、`ModelNaming.hpp`、i18n JSON |
-| 4.2.1 | CMake Presets + 依赖管理 + 告警区分 | ✅ 大部分落地 | `CMakePresets.json`、`CMakeLists.txt`（`/W3` vs `-Wall -Wextra`） |
+| 4.2.1 | CMake Presets + 依赖管理 + 告警区分 | ✅ 已落地 | `CMakePresets.json`（含 `vcpkg-*` 变体）、`vcpkg.json`、`CMakeLists.txt`（`/W3` vs `-Wall -Wextra`） |
 | 4.2.2 | 错误引导 + 日志轮转 | ✅ 已落地 | 轮转早已实现（4 MiB→`.1`）；`--doctor` 给出修复建议 |
-| 4.2.3 | `--doctor` 自检 + 运行统计导出 | ✅ 体检落地 | `Doctor.*`、`main.cpp`；JSON/CSV 统计导出未做（低优先） |
+| 4.2.3 | `--doctor` 自检 + 运行统计导出 | ✅ 已落地 | `Doctor.*`、`main.cpp`；`RuntimeStatsExport.*` + 诊断面板导出按钮 |
 | 4.2.4 | 文档 ADR + 插件完整示例 | ✅ ADR 落地 | `docs/adr/0001~0003`；插件示例仍为内置计数器/问候 |
 | 4.2.5 | CI/CD 矩阵 + 发布自动化 | ✅ CI 落地 | `.github/workflows/ci.yml`；tag 自动发布未做 |
 
@@ -42,10 +42,14 @@
 
 ### 4.2.1 构建
 
-- `CMakePresets.json`（v2，兼容 CMake 3.20）封装 stub/cubism/nocubism/asan 四配置。
+- `CMakePresets.json`（v2，兼容 CMake 3.20）封装 stub/cubism/nocubism/asan 四配置，
+  另加 `vcpkg-stub/cubism/nocubism` 三个 opt-in 变体。
 - 告警开关按编译器区分：MSVC `/W3`、GCC/Clang `-Wall -Wextra`，避免第三方头告警洪水。
-- vcpkg/Conan 依赖管理未引入：项目 vendored zlib/stb 已能离线构建，引入包管理器会改变
-  贡献者工作流且收益有限，暂缓。
+- **vcpkg 依赖管理已落地（可选路径）**：根目录 `vcpkg.json`（manifest 模式，真实 baseline
+  固定版本）声明 GLFW/GLEW/Qt6(`qtbase`)/nlohmann-json。设置 `VCPKG_ROOT` 后用 `vcpkg-*`
+  preset 即可一键拉依赖。**原有 stub/cubism/nocubism 完全不感知 vcpkg**，仍走「系统包 +
+  GLFW FetchContent + vendored zlib/stb/nlohmann」链路，离线可构建——包管理器是增量选项，
+  不是强制前置。详见 `docs/build.md`「方式一」。
 
 ### 4.2.3 / 4.2.2 体检与日志
 
@@ -58,6 +62,21 @@
 新增 3 份 ADR 解释关键设计「为什么」（纯逻辑分层 / SDK 单点隔离 / 三配置矩阵）。
 CI 矩阵跑 stub/nocubism/asan（真实 SDK 因许可证无法在公开 CI 分发），ASAN 用 `ctest -E`
 排除两个已知 Qt GUI 内存泄漏用例（见 `docs/debugging.md`，属存量问题）。
+
+### 动画播放间的自然过渡（2026-11 新增需求）
+
+网上调研（Unity 动画状态机混合 / Cubism MotionFade 官方文档 / Easing Functions）确认三条实践：
+归一化进度 + 平滑曲线、crossfade 权重和为 1、过渡可打断。据此：
+
+- 新增纯逻辑模块 `src/tools/core/TransitionEasing.hpp`：`Ease(s, Curve)`（SmoothStep
+  `s²(3-2s)` / Cubism 官方 `EasingSine`）+ `CrossFade(from, to, p)` 权重守恒计算。
+- **修复骨骼动作交叉淡化的过冲**：旧实现淡入 0.1s / 淡出 0.28s 用两套独立计时器，
+  中间时刻两层权重和可 >1，按骨骼名累加时姿态幅度被放大（表现为切换瞬间「抽搐」）。
+  现改为两层共享同一进度、由 `CrossFade` 互补计算，满权重切换时 `w_out + w_in === 1`；
+  二次打断（旧动作权重<1）时总和单调升到 1、不过冲。曲线可通过 `SetCrossFadeCurve` 切换。
+- Live2D `MotionQueue` 用的是 Cubism 官方**覆盖式**混合（`v=v+(curve-v)·w`，非累加），
+  权重本就不需守恒，且其 EasingSine 公式与本模块一致，保持不动。
+- 新增 `transition_easing_test`（曲线端点/单调/对称、权重守恒、播放器无过冲），三配置全绿。
 
 ## 有意未引入 / 延后
 

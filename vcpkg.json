@@ -1,0 +1,17 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "ppet",
+  "version-string": "1.0.0",
+  "description": "PPet desktop pet - native C++ port. vcpkg manifest (报告 4.2.1)：一键安装 GLFW/GLEW/Qt6/nlohmann。",
+  "homepage": "https://github.com/XaryLight/PPet-RE",
+  "builtin-baseline": "99541cc939bf01ae3c42f928266d648f5acb88fd",
+  "dependencies": [
+    "glfw3",
+    "glew",
+    "nlohmann-json",
+    {
+      "name": "qtbase",
+      "description": "Qt6 Widgets：设置面板与诊断面板（vcpkg 端口 qtbase 提供 Qt6::Widgets）"
+    }
+  ]
+}

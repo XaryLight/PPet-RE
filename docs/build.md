@@ -33,7 +33,33 @@
 
 ## 依赖安装
 
-### Linux（Ubuntu / Debian）
+### 方式一：vcpkg 一键依赖（推荐，报告 4.2.1）
+
+仓库根目录的 `vcpkg.json` 是 [vcpkg manifest](https://learn.microsoft.com/vcpkg/consume/manifest-mode)，
+声明了 GLFW / GLEW / Qt6（`qtbase`）/ nlohmann-json。设置 `VCPKG_ROOT` 后，用带 `vcpkg-` 前缀的
+[preset（`vcpkg-*`）](#编译步骤) 即可让 vcpkg 自动拉取并编译这些依赖，**无需手动逐条安装**：
+
+```bash
+git clone https://github.com/microsoft/vcpkg.git ~/vcpkg
+~/vcpkg/bootstrap-vcpkg.sh                      # Windows: .\bootstrap-vcpkg.bat
+export VCPKG_ROOT=~/vcpkg                       # Windows: $env:VCPKG_ROOT = "C:\vcpkg"
+
+cmake --preset vcpkg-stub                       # 自动装依赖 + 配置（stub 后端）
+cmake --build --preset vcpkg-stub
+ctest --preset vcpkg-stub
+```
+
+`vcpkg-cubism` / `vcpkg-nocubism` 同理。依赖版本由 `vcpkg.json` 的 `builtin-baseline` 固定，可复现。
+
+> **重要：vcpkg 是可选(extra)路径，不破坏离线构建。**
+> 带 `vcpkg-` 前缀的 preset 才会启用 manifest 模式（它设置了 `CMAKE_TOOLCHAIN_FILE` 指向
+> `vcpkg.cmake`）。原有的 `stub` / `cubism` / `nocubism` preset **完全不感知 vcpkg**，仍走
+> 「系统包 / GLFW FetchContent / vendored zlib+stb+nlohmann」链路，无网络也能构建。
+> zlib / stb / nlohmann 继续保留 vendored 副本，manifest 里的 nlohmann-json 供 vcpkg 用户选用。
+
+### 方式二：系统包手动安装
+
+#### Linux（Ubuntu / Debian）
 
 ```bash
 sudo apt-get update
@@ -46,7 +72,7 @@ sudo apt-get install -y build-essential cmake pkg-config \
 sudo apt-get install -y xvfb
 ```
 
-### Windows
+#### Windows
 
 使用 vcpkg 或 MSYS2 安装 `glfw3`、`glew`，并准备 Qt 6。
 
@@ -56,7 +82,7 @@ vcpkg install glfw3 glew
 
 CLion + llvm-mingw 用户见下方「[Windows 工具链选择](#windows-工具链选择重要)」——**必须让 SDK 走 DLL 导入库方案**。
 
-### macOS
+#### macOS
 
 ```bash
 brew install cmake glfw glew qt@6
@@ -83,6 +109,18 @@ cmake --build build -j
 ```bash
 cmake -S . -B build -DCMAKE_PREFIX_PATH=<Qt6 安装路径>
 ```
+
+**用 Preset 一键复现三配置**（报告 4.2.1，无需记一长串 `-D`）：
+
+```bash
+cmake --list-presets                        # 列出全部 preset
+cmake --preset stub && cmake --build --preset stub && ctest --preset stub
+cmake --preset cubism && cmake --build --preset cubism && ctest --preset cubism
+cmake --preset nocubism && cmake --build --preset nocubism && ctest --preset nocubism
+```
+
+`stub`（桩后端）/ `cubism`（真 SDK）/ `nocubism`（无后端）三配置定义在 `CMakePresets.json`；
+带 `vcpkg-` 前缀的变体额外启用 manifest 依赖管理（见上文「方式一」）。两者互不影响。
 
 ### 构建选项
 

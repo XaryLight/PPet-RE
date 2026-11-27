@@ -20,6 +20,8 @@
 //   因此可以脱离渲染层做单元测试。
 #pragma once
 
+#include <src/tools/core/TransitionEasing.hpp>
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -108,6 +110,11 @@ public:
     void SetCrossFade(float seconds) { crossFade_ = std::max(0.0f, seconds); }
     float CrossFade() const { return crossFade_; }
 
+    /// 交叉淡化的缓动曲线（默认 SmoothStep，可切到 Cubism 官方 EasingSine）。
+    /// 两条曲线端点导数都为 0，仅中间段加速度分布不同。
+    void SetCrossFadeCurve(transition::Curve curve) { crossFadeCurve_ = curve; }
+    transition::Curve CrossFadeCurve() const { return crossFadeCurve_; }
+
     /// 一次性动作播完后的自动淡出时长（秒）。
     /// 旧实现播完瞬间把姿态清零，会看到明显「顿一下」；现在平滑回到待机。
     void SetEndFade(float seconds) { endFade_ = std::max(0.0f, seconds); }
@@ -169,13 +176,14 @@ private:
     float fadeOutDuration_ = 0.0f;
 
     // --- 交叉淡入淡出：切换动作时旧动作作为「淡出层」继续输出 ---
+    // 淡入（当前动作）与淡出（旧动作）共用同一个 crossfade 进度交叉计算，
+    // 保证两层权重守恒为 1（见 transition::CrossFade），消除姿态幅度过冲。
     BoneMotion outgoing_;
     float outgoingTime_ = 0.0f;
-    float outgoingWeight_ = 0.0f;
-    float outgoingFade_ = 0.0f;
-    float outgoingFadeDuration_ = 0.0f;
+    float outgoingWeight_ = 0.0f;      ///< 切换瞬间旧动作的权重（可能 <1，防止二次打断放大）
     bool hasOutgoing_ = false;
     float crossFade_ = 0.28f;
+    transition::Curve crossFadeCurve_ = transition::Curve::SmoothStep;
     /// 一次性动作播完后的自动淡出时长（秒）。
     float endFade_ = 0.22f;
 

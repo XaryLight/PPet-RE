@@ -64,6 +64,33 @@
         "PPET_WITH_CUBISM_STUB": "ON",
         "PPET_CUBISM_AUTODETECT": "OFF"
       }
+    },
+    {
+      "name": "vcpkg-base",
+      "hidden": true,
+      "description": "vcpkg manifest 模式基础（报告 4.2.1）：需先设置环境变量 VCPKG_ROOT 指向 vcpkg 根目录。",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_MANIFEST_MODE": "ON"
+      }
+    },
+    {
+      "name": "vcpkg-stub",
+      "displayName": "Release + 桩 + vcpkg 依赖",
+      "description": "vcpkg 一键装 GLFW/GLEW/Qt6/nlohmann，用桩后端构建。需 export VCPKG_ROOT。",
+      "inherits": ["stub", "vcpkg-base"]
+    },
+    {
+      "name": "vcpkg-cubism",
+      "displayName": "Release + 真实 Cubism SDK + vcpkg 依赖",
+      "description": "vcpkg 一键装依赖 + 真实 Cubism SDK。需 export VCPKG_ROOT 与 SDK。",
+      "inherits": ["cubism", "vcpkg-base"]
+    },
+    {
+      "name": "vcpkg-nocubism",
+      "displayName": "Debug + 无 Cubism + vcpkg 依赖",
+      "description": "vcpkg 一键装依赖 + 完全无 Cubism 后端。需 export VCPKG_ROOT。",
+      "inherits": ["nocubism", "vcpkg-base"]
     }
   ],
 
@@ -93,6 +120,27 @@
       "name": "asan",
       "displayName": "构建 asan",
       "configurePreset": "asan",
+      "configuration": "Debug",
+      "jobs": 4
+    },
+    {
+      "name": "vcpkg-stub",
+      "displayName": "构建 vcpkg-stub",
+      "configurePreset": "vcpkg-stub",
+      "configuration": "Release",
+      "jobs": 4
+    },
+    {
+      "name": "vcpkg-cubism",
+      "displayName": "构建 vcpkg-cubism",
+      "configurePreset": "vcpkg-cubism",
+      "configuration": "Release",
+      "jobs": 4
+    },
+    {
+      "name": "vcpkg-nocubism",
+      "displayName": "构建 vcpkg-nocubism",
+      "configurePreset": "vcpkg-nocubism",
       "configuration": "Debug",
       "jobs": 4
     }
@@ -137,6 +185,27 @@
       "description": "preset v2 不支持用例过滤；CI 中通过 ctest -E 排除两个已知的 Qt GUI 内存泄漏用例。",
       "inherits": "base",
       "configurePreset": "asan",
+      "configuration": "Debug"
+    },
+    {
+      "name": "vcpkg-stub",
+      "displayName": "测试 vcpkg-stub",
+      "inherits": "base",
+      "configurePreset": "vcpkg-stub",
+      "configuration": "Release"
+    },
+    {
+      "name": "vcpkg-cubism",
+      "displayName": "测试 vcpkg-cubism",
+      "inherits": "base",
+      "configurePreset": "vcpkg-cubism",
+      "configuration": "Release"
+    },
+    {
+      "name": "vcpkg-nocubism",
+      "displayName": "测试 vcpkg-nocubism",
+      "inherits": "base",
+      "configurePreset": "vcpkg-nocubism",
       "configuration": "Debug"
     }
   ]

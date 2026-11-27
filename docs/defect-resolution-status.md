@@ -91,8 +91,10 @@
 | 3.4.11 | morph 法线归一化与权重钳制 | ✅ | `071b746` `ApplyMorphs` 权重钳到 [0,1]、忽略 NaN/inf，叠加后法线重新归一化；`morph_normal_unit` |
 | 4.2.3 | RuntimeStats 导出 JSON/CSV | ✅ | `d61d9ea` 新增纯 C++ `RuntimeStatsExport`（含转义/往返）+ 诊断面板导出按钮 + 三键 i18n；`runtime_stats_export_unit` |
 | 3.5.4 | CMake 测试注册样板 | ✅ | `fab8371` 抽出 `ppet_add_simple_test`，替换 17 个标准测试；带特殊配置的 fuzz/smoke 保持显式 |
+| 4.2.1 | vcpkg 依赖管理 | ✅ | 根目录 `vcpkg.json`（manifest，真实 baseline）+ `CMakePresets.json` 的 `vcpkg-*` opt-in 变体；原有三配置完全不感知 vcpkg、离线可构建 |
+| 动画过渡 | 播放间自然过渡（新增需求） | ✅ | `TransitionEasing.hpp` 统一曲线 + 权重守恒 crossfade，修复骨骼切换过冲；`transition_easing_unit` |
 
-> 第四部分其余建议的落地情况：CMake Presets / CI / ADR / `--doctor` / 本地化与 `--lang` / 自适应帧率 / 日志轮转均已完成；AI 对话与 TTS（4.1.1）、vcpkg/Conan 依赖管理（4.2.1）、全局快捷键真正注册（4.1.4）属高成本或引入外部依赖的可选项，本轮未纳入。
+> 第四部分其余建议的落地情况：CMake Presets / CI / ADR / `--doctor` / 本地化与 `--lang` / 自适应帧率 / 日志轮转 / vcpkg 依赖管理（4.2.1）均已完成；AI 对话与 TTS（4.1.1）、全局快捷键真正注册（4.1.4）属高成本/跨 GUI 平台项，本轮未纳入。
 
 ## 统计
 
@@ -101,4 +103,4 @@
   - 原延后 11 项已在隔离副本 `refactor/deferred-11` 中逐项重构验证，提交区间 `3b16d5d` → `10d1e39`；
   - 其中 2.3.1（App God Object）为 **⚠️ 保守落地**：剥离可单测的纯逻辑，App 成员级拆分未做。
 - 2.3.7 特别说明：原子写仅作为第一路径，失败即回退，**严格保留**用户要求的 A: 盘「直写→暂存→拷贝」语义。
-- 测试体系从 45 项增至 **64 项**（stub 配置）/ **63 项**（nocubism、cubism 配置），三配置全绿；ASAN 仅剩两个既有 Qt GUI 内存泄漏用例（与改动无关）。
+- 测试体系从 45 项增至 **65 项**（stub 配置）/ **64 项**（nocubism、cubism 配置），三配置全绿；ASAN 仅剩两个既有 Qt GUI 内存泄漏用例（与改动无关）。

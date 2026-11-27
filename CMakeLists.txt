@@ -1380,6 +1380,16 @@ add_test(NAME bone_motion_unit
          COMMAND ppet_bone_motion_test
          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
+# 动画过渡原语（报告：动画播放间自然过渡）：缓动曲线 + 权重守恒 crossfade。
+# 纯逻辑，不依赖渲染层。
+add_executable(ppet_transition_easing_test
+    tools/transition_easing_test.cpp
+    src/tools/model/BoneMotion.cpp
+)
+add_test(NAME transition_easing_unit
+         COMMAND ppet_transition_easing_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
 # Live2D 物理（头发摇曳）：解析 physics3.json + 摆锤求解。
 # 纯逻辑，不依赖 Cubism SDK，三种 CMake 配置均可编译运行。
 add_executable(ppet_live2d_physics_test
