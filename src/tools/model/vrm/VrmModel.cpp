@@ -348,6 +348,9 @@ bool VrmModel::Load(const std::string& path, std::string& error) {
     gazeFollow_.SetWeight(1.0f);
     motionHeadTurn_ = 0.0f;
 
+    // 动作源调度：切换模型时清掉上一个模型的 VRMA 源，内嵌 glTF 源稍后重建。
+    motionDirector_.ClearSources();
+
     // 注册 VRM-VPet 风格的内置骨骼动作到随机待机池（点头 / 摇头 / 挥手）。
     boneMotion_.ClearRandomMotions();
     for (const model::BoneMotion& motion : model::bone_motions::Builtin()) {
@@ -379,6 +382,14 @@ bool VrmModel::Load(const std::string& path, std::string& error) {
     }
 
     loaded_ = true;
+
+    // 动作源注册：内嵌 glTF 动画作为外部待机源（回退链：glTF 优先，程序化待机兜底）。
+    // 外部 VRMA 源由调用方通过 RegisterMotionSource 注册，优先级更高时接管对应状态。
+    motionDirector_.ClearSources();
+    if (hasAnimation_) {
+        motionDirector_.RegisterSource({VrmMotionCategory::Idle, 1, "gltf", true});
+    }
+
     return true;
 }
 
@@ -1989,8 +2000,17 @@ void VrmModel::UpdateAnimation(float dt) {
 }
 
 void VrmModel::UpdateIdle(float dt) {
-    // 有 glTF 动画时以动画为准，不再叠加待机动作。
-    if (hasAnimation_) return;
+    // 内置骨骼动作（触摸反馈：点头 / 摇头 / 挥手）始终 Tick，不因存在外部
+    // 待机动画（glTF / VRMA）而短路——有动画的模型触摸时也应能播动作。
+    // 随机待机调度在有外部动画源时关闭，避免小动作叠加到外部动画上。
+    boneMotion_.SetRandomEnabled(!motionDirector_.UseExternalIdle(behavior_.State()));
+    model::BonePose bonePose;
+    boneMotion_.Tick(dt, bonePose);
+    ApplyBoneMotion(bonePose);
+
+    // 外部待机动画源（glTF / VRMA）优先：程序化待机让位（回退链）。
+    if (motionDirector_.UseExternalIdle(behavior_.State())) return;
+
     idleTime_ += dt;
     idleYaw_ = std::sin(idleTime_ * kIdleSwaySpeed) * kIdleSwayYawAmp;
     idlePitch_ = std::sin(idleTime_ * kIdleBreathSpeed) * kIdleSwayPitchAmp;
@@ -2023,12 +2043,6 @@ void VrmModel::UpdateIdle(float dt) {
     }
     idleYaw_ *= idleScale;
     idlePitch_ *= idleScale;
-
-    // 内置骨骼动作（VRM-VPet 风格：点头 / 摇头 / 挥手）。
-    // 随机触发，播完自动回到待机；与上面的连续微摆叠加。
-    model::BonePose bonePose;
-    boneMotion_.Tick(dt, bonePose);
-    ApplyBoneMotion(bonePose);
 
     const model::IdlePose& pose = idlePose_;
 

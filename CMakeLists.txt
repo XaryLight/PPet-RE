@@ -1381,6 +1381,10 @@ add_test(NAME dynamic_plugin_unit
 # 「该 VRM 模型能做什么基础动作」（nod/shake/wave、待机）。纯逻辑、零依赖。
 ppet_add_simple_test(vrm_motion_profile tools/vrm_motion_profile_test.cpp)
 
+# VRM 动作调度器（缺陷 3）：动作源仲裁 + 回退链（外部 glTF/VRMA 优先，程序化兜底）。
+# 纯逻辑、零依赖。
+ppet_add_simple_test(vrm_motion_director tools/vrm_motion_director_test.cpp)
+
 # 分区触摸响应（案例「摸头 / 点击」互动）：head/body/leg/left/right -> 差异化
 # 骨骼动作 + 临时表情叠层。纯逻辑、零依赖。
 ppet_add_simple_test(touch_response tools/touch_response_test.cpp)

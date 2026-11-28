@@ -179,7 +179,9 @@ void BoneMotionPlayer::Tick(float dt, BonePose& pose) {
     const float step = std::max(0.0f, dt);
 
     // 随机待机调度：即使当前没有动作也在走计时器。
-    if (step > 0.0f) {
+    // 外部待机动画源接管时由 VrmMotionDirector 关闭（randomEnabled_ = false），
+    // 避免随机小动作叠加到 glTF / VRMA 动画上。
+    if (step > 0.0f && randomEnabled_) {
         randomTimer_ -= step;
         if (randomTimer_ <= 0.0f) {
             randomTimer_ = randomMin_ +

@@ -167,9 +167,28 @@ claw-sama 的 Mood 系统，本轮补上 PPet 在「行为组织方式」上的�
 测试：新增 `touch_reaction_selector_test`（5 组），`touch_accumulator_test` 扩至 11 组，
 `vrm_test` 接入断言 283→286。三配置全绿：stub 72/72、nocubism 71/71、asan 70/70。
 
+### 动作源调度（`src/tools/model/vrm/VrmMotionDirector.hpp`）
+
+对标 Live2D 的 `MotionDirector`，把「程序化待机 vs glTF 内嵌动画」的硬编码二选一
+（`if (hasAnimation_) return;`）升级为可仲裁的动作源回退链：
+
+- `VrmMotionCategory`：Idle / Touch / Emote；`RegisterSource` 注册动作源
+  （类别 + 优先级 + 循环标记）；
+- 回退链：触摸/交互走 Touch 源（缺失回退内置骨骼动作 nod/shake/wave），
+  其余状态走 Idle 源（缺失回退程序化待机）；同类取优先级最高；
+- VrmModel 加载后把内嵌 glTF 动画注册为 Idle 源（id="gltf"），外部 VRMA 源通过
+  `RegisterMotionSource` 注册、优先级更高时接管对应状态；
+- 修复 glTF 动画模型触摸无骨骼反馈：内置骨骼动作始终 Tick，随机待机调度在外部
+  动画源存在时关闭（`BoneMotionPlayer::SetRandomEnabled`），避免小动作叠加到动画上。
+
+测试：新增 `vrm_motion_director_test`（6 组），`vrm_test` 接入断言 286→289。
+三配置全绿：stub 73/73、nocubism 72/72、asan 71/71。
+
 ## 暂未纳入参考项目的其它能力
 
 - **走路步态 / 膝轴推断（STVrmPet）**：PPet 桌宠是站姿、窗口由用户拖动，没有「桌面走动」语义，程序化走路暂不适用。
 - **分层视线权重（STVrmPet）**：PPet 只驱动 head + 眼球（无 neck / chest 独立骨骼绑定时优雅降级），分层收益有限，留待后续。
-- **VRMA / FBX 动画（xiaomate / Homunculus / dsh）**：涉及新动画格式解析与版权素材，超出本轮范围。行为状态机已为其预留接入点（`Sitting` 状态、`Reacting` 的动作/表情输出），后续可让 VRMA 池与程序化待机按状态仲裁。
+- **VRMA / FBX 动画（xiaomate / Homunculus / dsh）**：动作源调度器（`VrmMotionDirector`）
+  已就绪，外部 VRMA 源可通过 `RegisterMotionSource` 注册并参与回退链；但 **VRMA 文件
+  本身的解析（.vrma 格式）与版权素材仍未实现**，这是接入 VRMA 生态的剩余工作。
 - **夜间时段感知的困倦（super-mind / Godot）**：需要本地时区时间源，未来可结合 `Dozing` 小动作在夜间提权触发。

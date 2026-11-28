@@ -422,6 +422,15 @@ void TestRuntime() {
         const int animHips = FindBone(animMesh, "hips");
         CHECK(animHips >= 0);
 
+        // 动作源调度（缺陷 3）：test.vrm 内嵌 glTF 动画 → 自动注册为外部 Idle 源。
+        CHECK_MSG(animModel.MotionSourceCount() == 1, "内嵌动画模型应注册 1 个 glTF Idle 源");
+        CHECK_MSG(animModel.HasMotionSource(ppet::vrm::VrmMotionCategory::Idle),
+                  "应存在 Idle 类别动作源");
+        const ppet::vrm::VrmMotionDecision decision = animModel.CurrentMotionDecision();
+        CHECK_MSG(decision.useExternal &&
+                      decision.category == ppet::vrm::VrmMotionCategory::Idle,
+                  "Idle 状态应选外部待机动画源（glTF）");
+
         // 播放 0.5 秒后，旋转应接近 45 度（动画从 0 度到 90 度）。
         RenderContext actx;
         actx.deltaTime = 1.0f / 60.0f;

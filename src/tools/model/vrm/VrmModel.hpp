@@ -37,6 +37,7 @@
 #include <src/tools/model/BehaviorStateMachine.hpp>
 #include <src/tools/model/TouchAccumulator.hpp>
 #include <src/tools/model/TouchReactionSelector.hpp>
+#include <src/tools/model/vrm/VrmMotionDirector.hpp>
 #include <src/tools/model/vrm/VrmMotionProfile.hpp>
 #include <src/tools/render/Renderer.hpp>
 
@@ -165,6 +166,23 @@ public:
     const model::TouchModifier& LastTouchModifier() const { return lastTouchModifier_; }
     /// 最近一次触摸反应变体类别（Normal/Intensified/Fatigued/Confused，供诊断）。
     model::ReactionKind LastReactionKind() const { return lastReactionKind_; }
+
+    // --- 动作源调度（对标 Live2D MotionDirector，缺陷 3） ---
+    /// 注册一个外部动作源（VRMA 待机 / 触摸动画等），返回其下标。
+    /// 内嵌 glTF 动画已作为 Idle 源自动注册；外部 VRMA 源以更高优先级注册后
+    /// 会按回退链接管对应状态。
+    int RegisterMotionSource(VrmMotionSource source) {
+        return motionDirector_.RegisterSource(std::move(source));
+    }
+    /// 是否存在某类别的动作源（供诊断 / 测试）。
+    bool HasMotionSource(VrmMotionCategory category) const {
+        return motionDirector_.HasCategory(category);
+    }
+    std::size_t MotionSourceCount() const { return motionDirector_.SourceCount(); }
+    /// 当前行为状态下的动作调度决策（供诊断）。
+    VrmMotionDecision CurrentMotionDecision() const {
+        return motionDirector_.Select(behavior_.State());
+    }
     /// 点击渲染窗口：把归一化坐标映射成分区后走 TriggerTouch，
     /// 与 Live2D 的命中区点击体验对齐。
     bool OnInteract(float nx, float ny) override;
@@ -482,6 +500,8 @@ private:
     model::TouchModifier lastTouchModifier_;
     /// 最近一次触摸反应变体类别（供诊断）。
     model::ReactionKind lastReactionKind_ = model::ReactionKind::Normal;
+    /// 动作源调度器：外部动画源（glTF / VRMA）与程序化待机 / 内置骨骼动作的回退链。
+    VrmMotionDirector motionDirector_;
 
     /// 模型中心与高度，用于自动取景。
     Vec3 center_{0.0f, 0.0f, 0.0f};

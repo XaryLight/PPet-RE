@@ -142,6 +142,12 @@ public:
     /// 到达随机间隔后，以该概率决定是否真的播放（避免过于机械）。
     void SetRandomChance(float chance) { randomChance_ = chance; }
 
+    /// 是否允许随机待机调度。
+    /// 存在外部待机动画源（glTF / VRMA）时由调度器关闭，避免随机小动作
+    /// 叠加到外部动画上；触摸触发的动作仍照常播放。
+    void SetRandomEnabled(bool enabled) { randomEnabled_ = enabled; }
+    bool RandomEnabled() const { return randomEnabled_; }
+
     /// 注册一个可用于随机触发的预置动作。
     void AddRandomMotion(const BoneMotion& motion) { randomMotions_.push_back(motion); }
 
@@ -193,6 +199,8 @@ private:
     float randomChance_ = 0.7f;
     float randomTimer_ = 6.0f;
     std::size_t randomCursor_ = 0;
+    /// 随机待机调度开关（默认开，外部动画源接管待机时关闭）。
+    bool randomEnabled_ = true;
 };
 
 /// 内置骨骼动作库（VRM-VPet 风格）。
