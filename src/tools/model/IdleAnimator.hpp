@@ -103,6 +103,8 @@ public:
         Stretch,     ///< 伸懒腰（抬胸 + 展臂）
         LookAround,  ///< 东张西望（头部大幅转动）
         Breathe,     ///< 深吸一口气（胸腔大幅起伏）
+        Dozing,      ///< 打盹（头缓缓低垂 + 眯眼 + 呼吸放缓），配合夜间困倦
+        Shake,       ///< 抖擞（快速小幅抖头 + 身体轻颤），打破待机循环感
     };
 
     explicit IdleAnimator(std::uint32_t seed = 20240501u) : rng_(seed) {
@@ -266,9 +268,12 @@ private:
 
     /// 随机挑一个小动作。
     void StartGesture() {
+        // 六个动作等概率。打盹/抖擞是新增的「打破循环感」变体：
+        // 待机占桌宠 90% 时间，动作越多样越不像机械循环（见 docs/vrm-interaction.md）。
         static const Gesture kAll[] = {Gesture::WeightShift, Gesture::Stretch,
-                                       Gesture::LookAround, Gesture::Breathe};
-        std::uniform_int_distribution<int> dist(0, 3);
+                                       Gesture::LookAround, Gesture::Breathe,
+                                       Gesture::Dozing, Gesture::Shake};
+        std::uniform_int_distribution<int> dist(0, 5);
         gesture_ = kAll[dist(rng_)];
         gestureTime_ = 0.0f;
         // 每个小动作的时长略有差异，避免机械的固定节奏。
@@ -314,6 +319,23 @@ private:
                 pose.chestScale += env * 0.045f;
                 pose.spinePitch += env * 0.045f;
                 pose.spineLift += env * 0.020f;
+                break;
+            case Gesture::Dozing:
+                // 打盹：头缓缓低垂并眯眼，身体放松下沉。包络的缓入缓出
+                // 让「低头—抬头」像真的犯困点了一下，而不是机械摆动。
+                pose.headPitch += env * 0.30f;       // 低头约 17°
+                pose.headRoll += env * 0.08f;        // 头微歪
+                pose.spinePitch += env * 0.06f;      // 上身略前倾放松
+                pose.spineLift -= env * 0.015f;      // 重心下沉
+                pose.eyeSquint = std::max(pose.eyeSquint, env * 0.85f);
+                break;
+            case Gesture::Shake:
+                // 抖擞：高频小幅抖头 + 身体轻颤，用 3 个周期的 sin 包络，
+                // 结束后干净归零。打破长待机的循环感。
+                pose.headYaw += std::sin(t * 6.2831853f * 3.0f) * 0.11f * env;
+                pose.headRoll += std::sin(t * 6.2831853f * 4.0f + 0.7f) * 0.07f * env;
+                pose.spineRoll += std::sin(t * 6.2831853f * 5.0f) * 0.025f * env;
+                pose.spineLift += std::fabs(std::sin(t * 6.2831853f * 5.0f)) * 0.008f * env;
                 break;
             case Gesture::None:
             default:

@@ -84,8 +84,34 @@ PMX 后端（`PmxModel`）仍用原指数平滑，未改动——本轮聚焦 VR
 
 ---
 
+## 待机动画增强（Idle Animator）
+
+网上范例（dev.to《9 Animation States of a Pixel Pet》、super-mind、Godot 随机 Idle 案例）
+的共识：**idle 是桌宠 90% 时间所在的状态，动画预算应优先投在 idle 上**——呼吸、
+轻微转头、随机眨眼/甩尾，动作小到你几乎注意不到循环，这才是「活物感」的来源。
+PPet 已有程序化待机（呼吸/重心/头/臂/四肢 + 4 种小动作）、自动眨眼（2–6s）、
+表情随机待机；本轮按范例补齐两处缺口：
+
+- **两种新小动作**（`IdleAnimator::Gesture`）：
+  - `Dozing` 打盹：头缓缓低垂 + 眯眼 + 重心下沉，对应范例里的「困倦」状态；
+  - `Shake` 抖擞：高频小幅抖头 + 身体轻颤，打破长待机的机械循环感。
+  两者纳入随机池（4→6 种），沿用钟形包络淡入淡出。
+- **`eyeSquint` 死字段激活**：`IdlePose::eyeSquint` 此前定义了却恒为 0、后端也不用。
+  现在打盹时驱动它，并在 `VrmModel::Update` 里以 max 方式叠加到 blink 表情
+  （与自动眨眼取较大值，不覆盖），眯眼真正可见。
+- 新增 `VrmModel::TriggerIdleGesture()` / `SetAutoBlink()` 能力接口（调试/互动/测试用）。
+
+测试：`idle_animator_test` 新增打盹/抖擞用例；`vrm_test` 新增联动断言（VRM 237→241）。
+
+## 描边观感微调
+
+用户反馈 VRM 0.x 描边在 0.1 规范换算后（占模型高 0.48%）仍偏粗。
+`OutlineWidth.hpp::kVrm0OutlineScale` 从 0.1 调到 0.05（占 0.24%），更精致；
+抽成常量便于日后调整（0.1 = 规范值）。VRM 1.0 路径不受影响。
+
 ## 暂未纳入参考项目的其它能力
 
 - **走路步态 / 膝轴推断（STVrmPet）**：PPet 桌宠是站姿、窗口由用户拖动，没有「桌面走动」语义，程序化走路暂不适用。
 - **分层视线权重（STVrmPet）**：PPet 只驱动 head + 眼球（无 neck / chest 独立骨骼绑定时优雅降级），分层收益有限，留待后续。
 - **VRMA / FBX 动画（xiaomate）**：涉及新动画格式解析与版权素材，超出本轮范围。
+- **夜间时段感知的困倦（super-mind / Godot）**：需要本地时区时间源，未来可结合 `Dozing` 小动作在夜间提权触发。

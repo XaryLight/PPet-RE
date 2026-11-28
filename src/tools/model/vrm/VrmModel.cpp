@@ -1898,6 +1898,17 @@ void VrmModel::Update(const RenderContext& ctx) {
             expressionWeights_[i] = w[i];
         }
     }
+    // 待机眯眼叠层：打盹（Gesture::Dozing）时 eyeSquint > 0，叠加到 blink 表情，
+    // 与自动眨眼取较大值（不覆盖）。这让 IdlePose 的 eyeSquint 字段真正生效，
+    // 而不只是程序化待机里的一个占位值。
+    const float squint = idlePose_.eyeSquint;
+    if (squint > 0.0f) {
+        for (std::size_t i = 0; i < mesh_.expressions.size() && i < expressionWeights_.size(); ++i) {
+            const SkinnedMesh::Expression& expr = mesh_.expressions[i];
+            if (expr.category != "blink" && expr.name != "blink") continue;
+            if (squint > expressionWeights_[i]) expressionWeights_[i] = squint;
+        }
+    }
     // 口型叠加：元音表情权重加在当前表情之上（取较大值而不是相加，
     // 避免同一通道上两次叠加超过 1 造成形变过度）。
     for (std::size_t i = 0; i < expressionWeights_.size() && i < mouthOverlay_.size(); ++i) {

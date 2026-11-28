@@ -21,15 +21,15 @@ void Check(bool cond, const char* what) {
 
 bool Near(float a, float b) { return std::fabs(a - b) < 1e-6f; }
 
-// 1. VRM 0.x world 模式：0.08 面板值 -> 0.008 米（关键修复）。
+// 1. VRM 0.x world 模式：0.08 面板值 -> 0.004 米（PPet 观感系数 0.05）。
 void TestVrm0World() {
-    std::printf("-- VRM 0.x world 描边 *0.1 --\n");
-    Check(Near(ResolveOutlineWidthMeters(0.08f, "worldCoordinates", true), 0.008f),
-          "0.x world 0.08 -> 0.008m");
-    Check(Near(ResolveOutlineWidthMeters(0.076f, "worldCoordinates", true), 0.0076f),
-          "0.x world 0.076 -> 0.0076m");
-    Check(Near(ResolveOutlineWidthMeters(0.0677f, "worldCoordinates", true), 0.00677f),
-          "0.x world 0.0677 -> 0.00677m");
+    std::printf("-- VRM 0.x world 描边 *0.05 --\n");
+    Check(Near(ResolveOutlineWidthMeters(0.08f, "worldCoordinates", true), 0.004f),
+          "0.x world 0.08 -> 0.004m");
+    Check(Near(ResolveOutlineWidthMeters(0.076f, "worldCoordinates", true), 0.0038f),
+          "0.x world 0.076 -> 0.0038m");
+    Check(Near(ResolveOutlineWidthMeters(0.0677f, "worldCoordinates", true), 0.003385f),
+          "0.x world 0.0677 -> 0.003385m");
 }
 
 // 2. VRM 1.0 world 模式：原样返回米，不受影响（保护既有契约）。

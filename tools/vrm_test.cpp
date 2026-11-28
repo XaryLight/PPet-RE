@@ -847,6 +847,54 @@ void TestGazeNaturalization() {
     CHECK_MSG(Near(model.GazeBlend(), 0.0f), "重新加载后 blend 复位为 0");
 }
 
+void TestIdleGestureExpression() {
+    std::printf("[测试] 程序化待机小动作的表情联动（打盹眯眼）\n");
+    VrmModel model;
+    std::string error;
+    if (!model.Load(TestDataDir() + "/sample_vrm0_catbot.vrm", error)) {
+        CHECK_MSG(false, error);
+        return;
+    }
+    // VRM 0.x 的表情名可能是 "Blink"（首字母大写），按 category 查更稳。
+    int blink = -1;
+    for (std::size_t i = 0; i < model.Mesh().expressions.size(); ++i) {
+        if (model.Mesh().expressions[i].category == "blink") {
+            blink = static_cast<int>(i);
+            break;
+        }
+    }
+    CHECK_MSG(blink >= 0, "catbot 夹具应有 blink 表情");
+    if (blink < 0) return;
+
+    // 关掉自动眨眼，让 blink 权重只可能来自打盹眯眼（eyeSquint）。
+    model.SetAutoBlink(false);
+
+    RenderContext ctx;
+    ctx.deltaTime = 1.0f / 60.0f;
+    ctx.viewportWidth = 512;
+    ctx.viewportHeight = 512;
+    ctx.hasGlobalCursor = false;
+
+    // 先推进若干帧，确认无自动眨眼时 blink 保持 0。
+    for (int i = 0; i < 30; ++i) model.Update(ctx);
+    CHECK_MSG(model.ExpressionWeights()[static_cast<std::size_t>(blink)] < 0.01f,
+              "关闭自动眨眼后 blink 应保持 0");
+
+    // 触发打盹：打盹包络峰值时 eyeSquint>0，应联动 blink 表情。
+    model.TriggerIdleGesture(model::IdleAnimator::Gesture::Dozing);
+    float peakBlink = 0.0f;
+    for (int i = 0; i < 90; ++i) {
+        model.Update(ctx);
+        peakBlink = std::max(peakBlink, model.ExpressionWeights()[static_cast<std::size_t>(blink)]);
+    }
+    CHECK_MSG(peakBlink > 0.3f, "打盹眯眼应联动 blink 表情权重明显上升");
+
+    // 打盹结束后 blink 回落到 0（眯眼不残留）。
+    for (int i = 0; i < 180; ++i) model.Update(ctx);
+    CHECK_MSG(model.ExpressionWeights()[static_cast<std::size_t>(blink)] < 0.05f,
+              "打盹结束后 blink 应回落");
+}
+
 int main() {
     std::printf("=== PPet VRM 单元测试 ===\n");
     TestGltfParse();
@@ -856,6 +904,7 @@ int main() {
     TestVrm0();
     TestRobustness();
     TestRealSamples();
+    TestIdleGestureExpression();
     std::printf("=== 共 %d 项断言，失败 %d 项 ===\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }

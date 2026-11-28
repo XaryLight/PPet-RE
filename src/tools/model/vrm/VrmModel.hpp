@@ -127,6 +127,13 @@ public:
     bool PlayRandomIdle() override;
     /// 分区触摸反馈（案例「摸头 / 点击」互动）：按分区播差异化动作 + 临时表情叠层。
     bool TriggerTouch(const std::string& region) override;
+    /// 立即触发一个程序化待机小动作（打盹 / 抖擞 / 伸懒腰…），用于调试与外部互动。
+    void TriggerIdleGesture(model::IdleAnimator::Gesture gesture) {
+        idleAnimator_.TriggerGesture(gesture);
+    }
+    /// 自动眨眼开关（默认开）。关闭后 blink 表情只受手动/打盹眯眼驱动。
+    void SetAutoBlink(bool enabled) { expressionDirector_.SetAutoBlink(enabled); }
+    bool AutoBlink() const { return expressionDirector_.AutoBlink(); }
     /// 点击渲染窗口：把归一化坐标映射成分区后走 TriggerTouch，
     /// 与 Live2D 的命中区点击体验对齐。
     bool OnInteract(float nx, float ny) override;

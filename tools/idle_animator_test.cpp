@@ -198,6 +198,49 @@ void TestLargeDtIsClamped() {
     Check(std::fabs(pa.headYaw - pb.headYaw) < 1e-4f, "超大 dt 应被钳制到 0.1 秒");
 }
 
+void TestDozingGesture() {
+    // 打盹：低头 + 眯眼 + 重心下沉；eyeSquint 应真正被驱动（此前是死字段）。
+    ppet::model::IdleAnimator anim(321u);
+    ppet::model::IdleAnimator::Config cfg = anim.GetConfig();
+    cfg.gestureDuration = 2.0f;
+    anim.SetConfig(cfg);
+    anim.TriggerGesture(ppet::model::IdleAnimator::Gesture::Dozing);
+    anim.Tick(0.001f);
+
+    float peakSquint = 0.0f, peakPitch = 0.0f, minLift = 1e9f;
+    for (int i = 0; i < 120; ++i) {
+        const auto p = anim.Tick(1.0f / 60.0f);
+        peakSquint = std::max(peakSquint, p.eyeSquint);
+        peakPitch = std::max(peakPitch, p.headPitch);
+        minLift = std::min(minLift, p.spineLift);
+    }
+    Check(peakSquint > 0.3f, "打盹应驱动眯眼（eyeSquint 不再恒为 0）");
+    Check(peakPitch > 0.1f, "打盹应有明显低头");
+    Check(minLift < 0.0f, "打盹应有重心下沉");
+}
+
+void TestShakeGesture() {
+    // 抖擞：高频小幅抖头，结束后干净归零。
+    ppet::model::IdleAnimator anim(654u);
+    ppet::model::IdleAnimator::Config cfg = anim.GetConfig();
+    cfg.gestureDuration = 1.5f;
+    anim.SetConfig(cfg);
+    anim.TriggerGesture(ppet::model::IdleAnimator::Gesture::Shake);
+    anim.Tick(0.001f);
+
+    float peakYaw = 0.0f;
+    for (int i = 0; i < 90; ++i) {
+        const auto p = anim.Tick(1.0f / 60.0f);
+        peakYaw = std::max(peakYaw, std::fabs(p.headYaw));
+    }
+    Check(peakYaw > 0.05f, "抖擞应有明显的快速抖头");
+
+    // 播完后 eyeSquint 归零（打盹类动作不会残留眯眼）。
+    for (int i = 0; i < 120; ++i) anim.Tick(1.0f / 60.0f);
+    Check(!anim.InGesture(), "抖擞播完回到待机");
+    Check(std::fabs(anim.Current().eyeSquint) < 1e-6f, "动作结束后不应残留眯眼");
+}
+
 void TestHotReloadFrequencyNoJump() {
     // 缺陷 2.5.9：热改 breathSpeed 不应让呼吸姿态瞬移。
     const float dt = 1.0f / 60.0f;
@@ -226,6 +269,8 @@ int main() {
     TestFrequenciesAreDistinct();
     TestGestureLifecycle();
     TestRandomGestureTriggers();
+    TestDozingGesture();
+    TestShakeGesture();
     TestReproducible();
     TestLargeDtIsClamped();
     TestHotReloadFrequencyNoJump();
