@@ -109,9 +109,44 @@ PPet 已有程序化待机（呼吸/重心/头/臂/四肢 + 4 种小动作）、
 `OutlineWidth.hpp::kVrm0OutlineScale` 从 0.1 调到 0.05（占 0.24%），更精致；
 抽成常量便于日后调整（0.1 = 规范值）。VRM 1.0 路径不受影响。
 
+## 行为状态机与交互累积器（P0 行为丰富度）
+
+参考 Desktop Homunculus 的 Behavior Service、dsh-plugin-vrmpet3d 的状态联动、
+claw-sama 的 Mood 系统，本轮补上 PPet 在「行为组织方式」上的两块短板。
+
+### 行为状态机（`src/tools/model/BehaviorStateMachine.hpp`）
+
+把散落的「触摸 / 拖拽 / 待机 / 挂起」触发统一成跨帧状态：
+
+| 状态 | 含义 | 待机幅度倍率 |
+| --- | --- | --- |
+| `Idle` | 程序化待机 | 1.00 |
+| `Sitting` | 窗口坐姿（预留，待窗口几何接入） | 0.85 |
+| `Reacting` | 触摸 / 情绪反应 | 0.45 |
+| `Interacting` | 用户拖拽 | 0.70 |
+| `Suspended` | 挂起（全屏游戏 / 后台） | 0.25 |
+
+- `Suspended` 为最高优先级，可从任何状态进入，期间拒绝触摸且不被余韵超时打断；
+- 触摸进入 `Reacting` 并刷新 1.6 秒余韵，连续触摸刷新计时（「被摸头后的余韵」）；
+- 幅度倍率在 `VrmModel::UpdateIdle` 里整体缩放程序化姿态，避免与骨骼动作叠加抽搐；
+- `App` 在鼠标按下 / 松开时调用 `SetInteracting()`，拖拽期间让位给交互姿态。
+
+### 交互累积器（`src/tools/model/TouchAccumulator.hpp`）
+
+在「区域 → 动作」的单层映射之上加一层滑动窗口统计（默认 3 秒、防抖 0.15 秒）：
+
+- `intensity`：随窗口内触摸次数从 1.0 增长到 2.0 封顶；
+- `variant`：0=常规、1=加强（≥3 次）、2=疲劳厌烦（同区域连续 ≥4 次）。
+
+`VrmModel::TriggerTouch` 据此选择反应变体：同一区域被反复触摸时从「点头 + 开心」
+切换为「摇头 + 生气」，短时间内多次触摸则放大开心表情强度。无需新增任何动画资产。
+
+测试：新增 `behavior_state_machine_test`（10 组）、`touch_accumulator_test`（7 组），
+`vrm_test` 新增接入断言（241→281）。三配置全绿：stub 71/71、nocubism 70/70、asan 69/69。
+
 ## 暂未纳入参考项目的其它能力
 
 - **走路步态 / 膝轴推断（STVrmPet）**：PPet 桌宠是站姿、窗口由用户拖动，没有「桌面走动」语义，程序化走路暂不适用。
 - **分层视线权重（STVrmPet）**：PPet 只驱动 head + 眼球（无 neck / chest 独立骨骼绑定时优雅降级），分层收益有限，留待后续。
-- **VRMA / FBX 动画（xiaomate）**：涉及新动画格式解析与版权素材，超出本轮范围。
+- **VRMA / FBX 动画（xiaomate / Homunculus / dsh）**：涉及新动画格式解析与版权素材，超出本轮范围。行为状态机已为其预留接入点（`Sitting` 状态、`Reacting` 的动作/表情输出），后续可让 VRMA 池与程序化待机按状态仲裁。
 - **夜间时段感知的困倦（super-mind / Godot）**：需要本地时区时间源，未来可结合 `Dozing` 小动作在夜间提权触发。

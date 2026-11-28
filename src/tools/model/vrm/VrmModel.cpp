@@ -1863,6 +1863,10 @@ void VrmModel::Update(const RenderContext& ctx) {
     float dt = ctx.deltaTime;
     if (!(dt > 0.0f) || dt > 0.1f) dt = 1.0f / 60.0f;  // 防止切后台回来时动画跳变
 
+    // 行为状态机 / 交互累积器推进：跨帧状态与触摸窗口过期都在这里驱动。
+    behavior_.Tick(dt);
+    touchAccum_.Tick(dt);
+
     // 复位骨骼，避免上一帧的变换累积。
     for (Bone& bone : mesh_.bones) bone.currentLocal = bone.localBindPose;
 
@@ -1993,6 +1997,32 @@ void VrmModel::UpdateIdle(float dt) {
 
     // 程序化待机：呼吸 / 重心 / 头部 / 手臂 / 随机小动作。
     idlePose_ = idleAnimator_.Tick(dt);
+
+    // 行为状态机输出的待机幅度倍率：挂起 / 反应 / 交互中压低基础微摆，
+    // 既避免与触摸动作叠加成「抽搐」，也让安静模式真正安静。
+    const float idleScale = behavior_.IdleMasterScale();
+    if (idleScale < 1.0f) {
+        idlePose_.spinePitch *= idleScale;
+        idlePose_.spineYaw *= idleScale;
+        idlePose_.spineRoll *= idleScale;
+        idlePose_.spineLift *= idleScale;
+        idlePose_.chestScale *= idleScale;
+        idlePose_.headPitch *= idleScale;
+        idlePose_.headYaw *= idleScale;
+        idlePose_.headRoll *= idleScale;
+        idlePose_.leftArmPitch *= idleScale;
+        idlePose_.leftArmRoll *= idleScale;
+        idlePose_.rightArmPitch *= idleScale;
+        idlePose_.rightArmRoll *= idleScale;
+        idlePose_.leftForearmPitch *= idleScale;
+        idlePose_.rightForearmPitch *= idleScale;
+        idlePose_.leftLegLift *= idleScale;
+        idlePose_.rightLegLift *= idleScale;
+        idlePose_.weightShift *= idleScale;
+        idlePose_.eyeSquint *= idleScale;
+    }
+    idleYaw_ *= idleScale;
+    idlePitch_ *= idleScale;
 
     // 内置骨骼动作（VRM-VPet 风格：点头 / 摇头 / 挥手）。
     // 随机触发，播完自动回到待机；与上面的连续微摆叠加。
@@ -2423,9 +2453,32 @@ bool VrmModel::PlayRandomIdle() {
 
 bool VrmModel::TriggerTouch(const std::string& region) {
     if (!loaded_) return false;
+    // 行为状态机：挂起时拒绝触摸；其余状态进入 Reacting 并刷新「余韵」。
+    if (!behavior_.CanAcceptTouch()) return false;
+    behavior_.OnTouch();
+
+    // 交互累积器：窗口内的触摸次数 / 同区连续数决定反应变体与强度。
+    const model::TouchModifier mod = touchAccum_.Observe(region);
+    lastTouchModifier_ = mod;
+
     // 案例「摸头 / 点击」互动：按分区给差异化反馈（动作 + 临时表情叠层）。
     // 映射规则集中在纯逻辑模块 TouchResponse，可脱离后端单测。
-    const model::TouchResponse response = model::ResponseForRegion(region);
+    model::TouchResponse response = model::ResponseForRegion(region);
+    float influence = response.influence;
+    std::vector<std::pair<std::string, float>> expression = response.expression;
+
+    if (mod.variant == 2) {
+        // 同一区域被反复触摸：厌烦反应（摇头 + 生气），不再无限重复开心。
+        response.motionId = "shake";
+        expression = {{"angry", 0.7f}};
+        influence = 0.85f;
+    } else if (mod.variant == 1) {
+        // 短时间内多次触摸：增强开心反应（强度受累积器封顶约束）。
+        influence = std::min(1.0f, influence * mod.intensity);
+        for (auto& kv : expression) {
+            kv.second = std::min(1.0f, kv.second * mod.intensity);
+        }
+    }
 
     bool played = false;
     if (response.motionId && response.motionId[0]) {
@@ -2438,8 +2491,8 @@ bool VrmModel::TriggerTouch(const std::string& region) {
     if (!played) played = PlayRandomIdle();
 
     // 临时表情叠层：不动用户当前预设，到期后由 Update 里的计时器淡出回落。
-    if (response.influence > 0.0f && !response.expression.empty()) {
-        expressionDirector_.SetMotionWeights(response.expression, response.influence);
+    if (influence > 0.0f && !expression.empty()) {
+        expressionDirector_.SetMotionWeights(expression, influence);
         touchExpressionTimer_ = response.holdSeconds;
     }
     return played;

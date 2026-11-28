@@ -34,6 +34,8 @@
 #include <src/tools/model/ExpressionDirector.hpp>
 #include <src/tools/model/Model.hpp>
 #include <src/tools/model/SkinnedMesh.hpp>
+#include <src/tools/model/BehaviorStateMachine.hpp>
+#include <src/tools/model/TouchAccumulator.hpp>
 #include <src/tools/model/TouchResponse.hpp>
 #include <src/tools/model/vrm/VrmMotionProfile.hpp>
 #include <src/tools/render/Renderer.hpp>
@@ -134,6 +136,23 @@ public:
     /// 自动眨眼开关（默认开）。关闭后 blink 表情只受手动/打盹眯眼驱动。
     void SetAutoBlink(bool enabled) { expressionDirector_.SetAutoBlink(enabled); }
     bool AutoBlink() const { return expressionDirector_.AutoBlink(); }
+
+    // --- 行为状态机（跨帧状态，供调试 / 插件查询） ---
+    /// 当前行为状态。
+    model::BehaviorState CurrentBehaviorState() const { return behavior_.State(); }
+    /// 进入/退出挂起：全屏游戏 / 后台时压低待机幅度并拒绝触摸。
+    void SetSuspended(bool suspended) override {
+        if (suspended) behavior_.OnSuspend();
+        else behavior_.OnResume();
+    }
+    bool IsSuspended() const { return behavior_.IsSuspended(); }
+    /// 用户开始/结束拖拽：用于行为状态机的优先级仲裁。
+    void SetInteracting(bool interacting) override {
+        if (interacting) behavior_.OnInteractionBegin();
+        else behavior_.OnInteractionEnd();
+    }
+    /// 最近一次触摸的修饰符（强度 / 变体，供诊断）。
+    const model::TouchModifier& LastTouchModifier() const { return lastTouchModifier_; }
     /// 点击渲染窗口：把归一化坐标映射成分区后走 TriggerTouch，
     /// 与 Live2D 的命中区点击体验对齐。
     bool OnInteract(float nx, float ny) override;
@@ -440,6 +459,13 @@ private:
 
     /// 触摸表情叠层的剩余保持时间（秒，>0 表示正在叠加）。
     float touchExpressionTimer_ = 0.0f;
+
+    /// 行为状态机：统一触摸 / 拖拽 / 挂起的跨帧状态与优先级。
+    model::BehaviorStateMachine behavior_;
+    /// 交互累积器：滑动窗口内的触摸强度与变体（疲劳 / 加强）。
+    model::TouchAccumulator touchAccum_;
+    /// 最近一次触摸的修饰符（供诊断 / UI）。
+    model::TouchModifier lastTouchModifier_;
 
     /// 模型中心与高度，用于自动取景。
     Vec3 center_{0.0f, 0.0f, 0.0f};

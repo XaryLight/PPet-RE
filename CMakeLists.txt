@@ -1414,6 +1414,11 @@ add_test(NAME motion_recognizer_unit
 # 零外部依赖，直接单测。
 ppet_add_simple_test(idle_animator tools/idle_animator_test.cpp)
 
+# 行为状态机 + 交互累积器：把散落的触摸/拖拽/挂起触发统一成跨帧状态，
+# 并在「区域→动作」之上加一层触摸累积（强度 / 变体）。两者都是纯逻辑头文件。
+ppet_add_simple_test(behavior_state_machine tools/behavior_state_machine_test.cpp)
+ppet_add_simple_test(touch_accumulator tools/touch_accumulator_test.cpp)
+
 # 内置骨骼动作（VRM-VPet 风格：点头 / 摇头 / 挥手）：播放器 + 关键帧插值，
 # 纯逻辑，不依赖渲染层。
 add_executable(ppet_bone_motion_test

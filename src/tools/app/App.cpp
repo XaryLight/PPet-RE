@@ -237,9 +237,12 @@ bool App::Initialize(std::string& error) {
             dragGrabX_ = cx;
             dragGrabY_ = cy;
             dragging_ = true;
+            // 行为状态机：拖拽期间为 Interacting，压低待机微摆并优先让位。
+            if (model_) model_->SetInteracting(true);
         } else if (action == GLFW_RELEASE) {
             if (!dragging_) return;
             dragging_ = false;
+            if (model_) model_->SetInteracting(false);
             // 松手时兜底钳制，避免最后一次移动把窗口带出可视范围。
             ClampWindowToDesktop();
             if (windowMovedByUser_) {

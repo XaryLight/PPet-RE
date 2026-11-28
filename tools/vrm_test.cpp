@@ -459,6 +459,49 @@ void TestRuntime() {
             }
         }
     }
+
+    // --- 行为状态机 + 交互累积器：连续触摸变体升级，挂起拒绝触摸 ---
+    {
+        VrmModel behaveModel;
+        if (!behaveModel.Load(TestDataDir() + "/test.vrm", error)) {
+            CHECK_MSG(false, error);
+        } else {
+            CHECK_MSG(behaveModel.CurrentBehaviorState() == model::BehaviorState::Idle,
+                      "初始行为状态应为 Idle");
+
+            RenderContext bctx;
+            bctx.deltaTime = 0.05f;  // Update 会把 dt>0.1 钳到 1/60，用小步推进
+            for (int i = 0; i < 4; ++i) {
+                behaveModel.TriggerTouch("head");
+                // 每次触摸间隔 4×0.05=0.2s，超过累积器防抖间隔 0.15s。
+                if (i < 3) {
+                    for (int k = 0; k < 4; ++k) behaveModel.Update(bctx);
+                }
+            }
+            CHECK_MSG(behaveModel.LastTouchModifier().totalInWindow == 4,
+                      "连续四次触摸应全部计入窗口");
+            CHECK_MSG(behaveModel.LastTouchModifier().variant == 2,
+                      "同一区域连续四次应进入疲劳变体");
+            CHECK_MSG(behaveModel.CurrentBehaviorState() == model::BehaviorState::Reacting,
+                      "触摸后应处于 Reacting");
+
+            // 挂起为最高优先级：拒绝触摸并压低待机。
+            behaveModel.SetSuspended(true);
+            CHECK_MSG(behaveModel.IsSuspended(), "SetSuspended 应进入挂起");
+            CHECK_MSG(!behaveModel.TriggerTouch("head"), "挂起时应拒绝触摸");
+            behaveModel.SetSuspended(false);
+            CHECK_MSG(behaveModel.CurrentBehaviorState() == model::BehaviorState::Idle,
+                      "退出挂起应回 Idle");
+
+            // 拖拽交互状态。
+            behaveModel.SetInteracting(true);
+            CHECK_MSG(behaveModel.CurrentBehaviorState() == model::BehaviorState::Interacting,
+                      "SetInteracting(true) 应进入 Interacting");
+            behaveModel.SetInteracting(false);
+            CHECK_MSG(behaveModel.CurrentBehaviorState() == model::BehaviorState::Idle,
+                      "SetInteracting(false) 应回 Idle");
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
