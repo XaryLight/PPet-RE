@@ -28,15 +28,22 @@ int main(int argc, char** argv) {
                 mesh.morphs.size(), mesh.expressions.size(), mesh.springBones.size());
 
     int matMask = 0, matBlend = 0, matOpaque = 0, matOutline = 0, matShadeTex = 0;
+    float maxOutlineWidth = 0.0f;
     for (const Material& m : mesh.materials) {
         if (m.alphaMode == Material::AlphaMode::Mask) ++matMask;
         if (m.alphaMode == Material::AlphaMode::Blend) ++matBlend;
         if (m.alphaMode == Material::AlphaMode::Opaque) ++matOpaque;
         if (m.outlineWidth > 0.0f) ++matOutline;
         if (m.toonRampTex >= 0) ++matShadeTex;
+        if (m.outlineWidth > maxOutlineWidth) maxOutlineWidth = m.outlineWidth;
     }
     std::printf("材质: MASK=%d BLEND=%d OPAQUE=%d 有描边=%d 有阴影贴图=%d\n",
                 matMask, matBlend, matOpaque, matOutline, matShadeTex);
+    // 描边宽度应远小于模型高度；VRM 0.x 未换算时 0.08m 会占 4.8% 遮住模型。
+    const float modelHeight = static_cast<float>(mesh.boundsMax.y - mesh.boundsMin.y);
+    std::printf("描边最大宽度=%.4f m, 模型高度=%.3f m, 占比=%.2f%%\n",
+                maxOutlineWidth, modelHeight,
+                modelHeight > 0.0f ? (maxOutlineWidth / modelHeight) * 100.0f : 0.0f);
 
     if (!mesh.materials.empty()) {
         const Material& m = mesh.materials.front();
@@ -79,6 +86,12 @@ int main(int argc, char** argv) {
     if (matMask < 20) { std::printf("FAIL: MASK 材质过少\n"); ++fail; }
     if (matBlend < 1) { std::printf("FAIL: BLEND 材质缺失\n"); ++fail; }
     if (matOutline < 20) { std::printf("FAIL: MToon 描边参数未解析\n"); ++fail; }
+    // VRM 0.x 描边必须做 0.1 换算，否则 0.08m 会占模型高度 ~5% 而遮住模型。
+    // 正常描边应 < 模型高度的 2%。
+    if (modelHeight > 0.0f && maxOutlineWidth > modelHeight * 0.02f) {
+        std::printf("FAIL: 描边过粗，占比 %.2f%% > 2%%\n", (maxOutlineWidth / modelHeight) * 100.0f);
+        ++fail;
+    }
     if (mesh.springBones.size() < 20) { std::printf("FAIL: 弹簧骨过少\n"); ++fail; }
     std::printf("结果: %s\n", fail == 0 ? "PASS" : "FAIL");
     return fail == 0 ? 0 : 1;

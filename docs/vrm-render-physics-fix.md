@@ -46,6 +46,26 @@ morph 映射表建不全，VRM 0.x 的 70 组 blendShape 表情**一个都绑定
 修复：预算从 256 MiB 提到 1 GiB（仍是硬上限，防恶意文件 OOM）。
 实测表情数从 **0 → 66**，morph 从 41 → 117。
 
+### 4. VRM 0.x 描边宽度单位混用——一大圈棕色遮住模型
+
+上一步把描边解析出来后，用户反馈「模型外围有一圈棕色把模型遮住」。
+描边色本身就是深棕红 `(0.275, 0.09, 0.125)`（19 个材质），问题在**宽度**：
+千璃模型 `_OutlineWidth=0.08` 且 20 个材质为 world 模式，解析器把这个值当成
+**0.08 米**直接用；模型高 1.67 m，描边外扩占 **4.8%**（约 8 cm），于是在屏幕
+上形成一大圈粗棕色轮廓，把本体遮住。
+
+根因是 VRM 0.x 与 1.0 的描边单位定义不同：
+
+- **VRM 0.x**（UniVRM/MToon，`extensions.VRM.materialProperties`）：
+  world 模式的 `_OutlineWidth` 是美术面板数值，MToon shader 实际外扩 =
+  `_OutlineWidth × 0.1` 米；
+- **VRM 1.0**（`VRMC_materials_mtoon`）：`outlineWidthFactor` 直接以米为单位。
+
+修复：新增纯逻辑函数 `ResolveOutlineWidthMeters()`（`OutlineWidth.hpp`），
+VRM 0.x 的 world 值乘 0.1 换算到米，VRM 1.0 原样保留；`GltfParser` 调用它，
+单测 `outline_width_test`（13 断言）覆盖 0.x/1.0/screen/非法值。
+实测描边从 **0.08 m（4.8%）→ 0.008 m（0.48%）**，恢复为正常动漫描边。
+
 ---
 
 ## 二、弹簧骨物理问题
@@ -76,15 +96,16 @@ morph 映射表建不全，VRM 0.x 的 70 组 blendShape 表情**一个都绑定
 | 指标 | 修复前 | 修复后 |
 | --- | --- | --- |
 | 材质 | MASK 被当 opaque（实心块） | MASK=23 / BLEND=5 正确处理 |
-| MToon 描边 | 0 | 20 |
+| MToon 描边 | 0（未解析）| 20（宽度 0.008m，占高 0.48%，不再遮住模型）|
 | MToon 阴影贴图 | 0 | 28 |
 | shadeShift/shadeToony/rimFresnel | 默认值 | 0.0 / 0.642 / 100.0（正确解析）|
 | 表情 | 0 | 66 |
 | morph | 41（预算截断）| 117 |
 | 弹簧骨 | 54 根但无回正力 | 54 根，stiffness 0.277~1.0，回正/阻尼/重力生效 |
 
-测试：stub 68/68、nocubism 67/67 全绿；`spring_integrator_test` 8 断言覆盖静止稳定、
-回正力、惯性方向、重力 dt 量级、骨长约束、NaN 防御。
+测试：stub / nocubism 全绿；`spring_integrator_test` 8 断言覆盖静止稳定、
+回正力、惯性方向、重力 dt 量级、骨长约束、NaN 防御；`outline_width_test` 13 断言
+覆盖 VRM 0.x world ×0.1、VRM 1.0 直接用米、screen 原样、非法值防御。
 
 > 注：千璃模型仅用于只读验证，不入库。`ppet_qianli_probe` 是手动工具（需传 `.vrm` 路径），
 > 不加入 ctest 矩阵。

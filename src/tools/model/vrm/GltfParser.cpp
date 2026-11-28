@@ -15,6 +15,7 @@
 //   因此矩阵可以直接拷贝，不需要转置。
 #include <src/tools/core/FileIO.hpp>
 #include <src/tools/model/vrm/GltfParser.hpp>
+#include <src/tools/model/vrm/OutlineWidth.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -1364,7 +1365,12 @@ static void ApplyVrm0MaterialProperties(const nlohmann::json& root,
     } else if (outlineMode == 2) {
         mat.outlineWidthMode = "screenCoordinates";
     }
-    mat.outlineWidthFactor = GetFloatOr(floats, "_OutlineWidth", mat.outlineWidthFactor);
+    const float rawOutlineWidth = GetFloatOr(floats, "_OutlineWidth", mat.outlineWidthFactor);
+    // 关键单位换算：VRM 0.x 的 world 模式 _OutlineWidth 需 *0.1 才是米（VRM 1.0
+    // 直接就是米）。混用会把 0.08 当 0.08 米，1.67m 模型描边粗到 4.8% 遮住本体。
+    // 规则集中在纯函数 ResolveOutlineWidthMeters，供单测覆盖。
+    mat.outlineWidthFactor =
+        ResolveOutlineWidthMeters(rawOutlineWidth, mat.outlineWidthMode, /*isVrm0=*/true);
 
     Vec3 color;
     if (GetVec3(vectors, "_ShadeColor", color)) mat.shadeColorFactor = color;

@@ -1368,6 +1368,9 @@ ppet_add_simple_test(gaze_follow tools/gaze_follow_test.cpp)
 # 重力 dt + 骨长约束 + NaN 防御。纯逻辑、零依赖。
 ppet_add_simple_test(spring_integrator tools/spring_integrator_test.cpp)
 
+# VRM MToon 描边宽度单位换算（0.x world *0.1 / 1.0 直接用米）。纯逻辑、零依赖。
+ppet_add_simple_test(outline_width tools/outline_width_test.cpp)
+
 # 真实 VRM 模型探针（手动运行，需传入 .vrm 路径）：验证 VRM 0.x MToon 材质与弹簧骨。
 add_executable(ppet_qianli_probe tools/qianli_probe.cpp)
 target_link_libraries(ppet_qianli_probe PRIVATE ppet_model)
