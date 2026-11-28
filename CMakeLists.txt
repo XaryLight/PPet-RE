@@ -1356,6 +1356,16 @@ add_test(NAME plugin_unit
          COMMAND ppet_plugin_test
          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
+# 插件行为契约（缺陷 5）：状态覆盖仲裁 / 动作池收集排序 / 事件拦截 / ABI 版本。
+# 纯逻辑、零依赖，直接单测。
+add_executable(ppet_plugin_behavior_test
+    tools/plugin_behavior_test.cpp
+    src/tools/plugin/PluginManager.cpp
+)
+add_test(NAME plugin_behavior_unit
+         COMMAND ppet_plugin_behavior_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
 # 动态插件加载（报告 2.3.3）：把一个测试插件编译成 MODULE 库，验证
 # ABI 校验 / dlopen 加载 / 目录扫描 / 注册 / 卸载生命周期。
 add_library(ppet_test_plugin MODULE tools/test_plugin.cpp)

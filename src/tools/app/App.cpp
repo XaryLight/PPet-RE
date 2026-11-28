@@ -258,11 +258,18 @@ bool App::Initialize(std::string& error) {
                         static_cast<float>(dragGrabX_ / size.x), 0.0f, 1.0f);
                     const float ny = std::clamp(
                         static_cast<float>(dragGrabY_ / size.y), 0.0f, 1.0f);
-                    model_->OnInteract(nx, ny);
-                    // 需求 6：广播「用户互动」事件。区域判定复用 Model.hpp 的
-                    // RegionFromPoint（与 NormalizedFromRegion 互为反查），
-                    // 保证各处「坐标 → 分区」口径一致。
+                    // 区域判定复用 Model.hpp 的 RegionFromPoint（与 NormalizedFromRegion
+                    // 互为反查），保证各处「坐标 → 分区」口径一致。
                     const std::string region = RegionFromPoint(nx, ny);
+                    // 缺陷 5 行为契约：先询问插件是否拦截该交互语义事件；
+                    // 被拦截则跳过默认触摸行为（由插件接管反馈）。
+                    plugin::PluginEvent interEvent;
+                    interEvent.kind = plugin::PluginEventKind::Interaction;
+                    interEvent.payload["region"] = region;
+                    if (!pluginManager_.AnyPluginIntercepts(interEvent)) {
+                        model_->OnInteract(nx, ny);
+                    }
+                    // 需求 6：广播「用户互动」事件（通知性质，无论是否拦截都广播）。
                     EmitPluginEvent(plugin::PluginEventKind::Interaction,
                                     std::string(), {{"region", region}});
                     // 点击角色时来一句问候，配合口型让桌宠更有回应感。
@@ -1436,7 +1443,15 @@ void App::Run() {
         // 先推进语言系统（台词/气泡/口型），把口型权重写进模型，
         // 再 Update 让本帧的表情/口型生效。
         TickDialogue(deltaTime);
+        // 缺陷 5 行为契约：每帧收集插件请求的行为状态覆盖并仲裁，喂给模型状态机。
+        // 插件间冲突由 PluginManager 取最高优先级；与内置状态的最终仲裁由状态机完成。
         if (model_) {
+            const auto override = pluginManager_.CollectBehaviorOverride();
+            if (override.has_value()) {
+                model_->SetBehaviorOverride(override->state, override->priority);
+            } else {
+                model_->ClearBehaviorOverride();
+            }
             model_->Update(ctx);
             model_->Render(ctx);
         }

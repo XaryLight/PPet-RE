@@ -232,14 +232,21 @@ CTest 总数 45。
 
 | 层 | 文件 | 职责 | 依赖 |
 | --- | --- | --- | --- |
-| 接口与事件 | `src/tools/plugin/Plugin.hpp` | `IPlugin`（Name / Interests / OnEnable / OnDisable / OnEvent）、`IPluginHost`（Emit / Config）、`PluginEvent`（kind + source + payload + timestamp） | **纯 STL，零依赖** |
-| 管理器 | `src/tools/plugin/PluginManager.{hpp,cpp}` | 注册去重、启用禁用、兴趣过滤分发（Interests 空 = 全收）、快照遍历 + 嵌套深度限制（插件在回调里注册 / 重入不破坏遍历）、配置快照注入 | `core/Config.hpp` |
+| 接口与事件 | `src/tools/plugin/Plugin.hpp` | `IPlugin`（Name / Interests / OnEnable / OnDisable / OnEvent + 四个可选行为扩展：WantOverrideState / StatePriority / ProvideMotions / InterceptEvent）、`IPluginHost`（Emit / Config）、`PluginEvent`（kind + source + payload + timestamp）、`PluginMotion` / `BehaviorOverride` | 纯 STL + `model/BehaviorStateMachine.hpp` |
+| 管理器 | `src/tools/plugin/PluginManager.{hpp,cpp}` | 注册去重、启用禁用、兴趣过滤分发（Interests 空 = 全收）、快照遍历 + 嵌套深度限制（插件在回调里注册 / 重入不破坏遍历）、配置快照注入；行为仲裁（CollectBehaviorOverride / CollectMotions / AnyPluginIntercepts） | `core/Config.hpp` |
 | 内置示例 | `src/tools/plugin/BuiltinPlugins.hpp` | `greeter`（模型加载打招呼 / 互动记录）、`counter`（按事件类型计数，演示兴趣过滤） | `core/Log.hpp` |
 
 事件类型：`AppStart` / `AppShutdown` / `ModelLoaded` / `ModelUnloaded` /
 `MotionPlayed` / `MotionStopped` / `ConfigChanged` / `Interaction` / `FrameTick`（节流约 1s）。
 `App` 在模型加载、动作播放/停止、配置变更、点击互动、每帧心跳处广播；
 控制台 `plugin list` / `plugin <enable|disable> <name>` 管理，单测 `plugin_unit`。
+
+**行为契约（缺陷 5）**：`IPlugin` 末尾追加四个可选虚方法让插件参与行为决策——
+`WantOverrideState` / `StatePriority` 请求临时状态覆盖，`ProvideMotions` 提供动作池，
+`InterceptEvent` 拦截语义事件；`PluginManager` 只统计已启用插件做多插件仲裁，
+`App` 每帧把覆盖结果喂给模型状态机、触摸前查询拦截。虚方法放末尾保证旧虚函数
+vtable 槽位不变，`kPluginAbiVersion` 1→2 让旧动态插件被明确拒绝而非越界调用。
+单测 `plugin_behavior_unit`。
 
 ## 动作识别（需求 2 / 4）
 

@@ -121,4 +121,47 @@ const AppConfig& PluginManager::Config() const {
     return config_ ? *config_ : kDefault;
 }
 
+std::optional<BehaviorOverride> PluginManager::CollectBehaviorOverride() const {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::optional<BehaviorOverride> best;
+    for (const auto& e : plugins_) {
+        if (!e.enabled || !e.plugin) continue;
+        const int priority = e.plugin->StatePriority();
+        if (priority <= 0) continue;
+        const auto state = e.plugin->WantOverrideState();
+        if (!state.has_value()) continue;
+        // 多个插件请求冲突时，只保留优先级最高者；并列时先注册者胜出。
+        if (!best.has_value() || priority > best->priority) {
+            best = BehaviorOverride{*state, priority};
+        }
+    }
+    return best;
+}
+
+std::vector<PluginMotion> PluginManager::CollectMotions() const {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::vector<PluginMotion> out;
+    for (const auto& e : plugins_) {
+        if (!e.enabled || !e.plugin) continue;
+        std::vector<PluginMotion> motions = e.plugin->ProvideMotions();
+        for (PluginMotion& m : motions) out.push_back(std::move(m));
+    }
+    // 按类别分组（枚举升序），同类别内按优先级降序；stable_sort 保证并列优先级
+    // 保留收集（注册）顺序，结果可复现。
+    std::stable_sort(out.begin(), out.end(), [](const PluginMotion& a, const PluginMotion& b) {
+        if (a.category != b.category) return a.category < b.category;
+        return a.priority > b.priority;
+    });
+    return out;
+}
+
+bool PluginManager::AnyPluginIntercepts(const PluginEvent& event) const {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    for (const auto& e : plugins_) {
+        if (!e.enabled || !e.plugin) continue;
+        if (e.plugin->InterceptEvent(event)) return true;
+    }
+    return false;
+}
+
 }  // namespace ppet::plugin

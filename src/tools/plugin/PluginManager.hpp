@@ -38,6 +38,22 @@ public:
     /// 应用侧在配置加载完成后调用一次即可；配置变化后指针仍有效（引用同一对象）。
     void SetConfigSource(const AppConfig* config) { config_ = config; }
 
+    // --- 行为契约仲裁（缺陷 5） ---
+    // 只统计「已启用」插件，结果供 App 每帧喂给模型状态机 / 动作源调度。
+
+    /// 收集已启用插件请求的行为状态覆盖并仲裁：取 StatePriority 最高（且 >0）
+    /// 的覆盖。无插件请求时返回 nullopt。插件间冲突只保留最强的一个，与内置
+    /// 状态的最终仲裁由模型侧状态机（EffectiveState）完成。
+    std::optional<BehaviorOverride> CollectBehaviorOverride() const;
+
+    /// 收集已启用插件提供的动作池，按 category 分组、同类别内 priority 降序
+    /// 稳定排序（并列时保留注册顺序）。供动作源调度消费。
+    std::vector<PluginMotion> CollectMotions() const;
+
+    /// 是否有已启用插件拦截该语义事件（InterceptEvent 返回 true）。
+    /// 用于宿主在触发默认行为前询问「是否由插件接管」。
+    bool AnyPluginIntercepts(const PluginEvent& event) const;
+
     // --- IPluginHost ---
     /// 广播事件给所有「已启用且关心该类型」的插件。
     void Emit(const PluginEvent& event) override;

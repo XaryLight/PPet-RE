@@ -158,10 +158,10 @@ public:
                                         : model::BehaviorEvent::SpeechEnded);
     }
     /// 插件 / 外部请求的临时状态覆盖（带优先级，缺陷 5 的接入点）。
-    void SetBehaviorOverride(model::BehaviorState state, int priority) {
+    void SetBehaviorOverride(model::BehaviorState state, int priority) override {
         behavior_.SetExternalOverride(state, priority);
     }
-    void ClearBehaviorOverride() { behavior_.ClearExternalOverride(); }
+    void ClearBehaviorOverride() override { behavior_.ClearExternalOverride(); }
     /// 最近一次触摸的修饰符（强度 / 变体，供诊断）。
     const model::TouchModifier& LastTouchModifier() const { return lastTouchModifier_; }
     /// 最近一次触摸反应变体类别（Normal/Intensified/Fatigued/Confused，供诊断）。

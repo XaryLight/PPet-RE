@@ -184,6 +184,30 @@ claw-sama 的 Mood 系统，本轮补上 PPet 在「行为组织方式」上的�
 测试：新增 `vrm_motion_director_test`（6 组），`vrm_test` 接入断言 286→289。
 三配置全绿：stub 73/73、nocubism 72/72、asan 71/71。
 
+### 插件行为契约（缺陷 5）
+
+让插件从「被动通知」升级为「可参与行为决策」，同时保持向后兼容：
+
+- `IPlugin` 末尾追加四个可选虚方法（默认空实现，不强制每个插件都关心）：
+  `WantOverrideState()`（请求临时状态覆盖）/ `StatePriority()`（覆盖强度）/
+  `ProvideMotions()`（动作池）/ `InterceptEvent()`（语义事件拦截）；
+- `PluginManager` 新增行为仲裁接口，只统计已启用插件：
+  `CollectBehaviorOverride()`（多插件冲突取 `StatePriority` 最高者）/
+  `CollectMotions()`（按类别分组、同类优先级降序稳定排序）/
+  `AnyPluginIntercepts()`（拦截查询）；
+- 仲裁分两层：插件间冲突由 `PluginManager` 收敛为单一覆盖，插件覆盖与内置状态的
+  最终仲裁仍由状态机 `EffectiveState()` 按 `BehaviorStatePriority()` 完成——
+  插件想压过内置 `Interacting`(4) 需给更高 `StatePriority`，想覆盖 `Suspended`(100)
+  则需 ≥100；
+- `App` 每帧把 `CollectBehaviorOverride()` 结果经 `IModel::SetBehaviorOverride()` 下发
+  （Live2D 未接入状态机，走默认空实现），触摸前先 `AnyPluginIntercepts()` 询问是否被
+  插件接管；
+- ABI 稳定：四个新虚方法放在接口末尾，`kPluginAbiVersion` 1→2，旧动态插件在加载时
+  被明确拒绝而非越界调用；不实现行为扩展的插件（如计数器 / 日志）无需任何改动。
+
+测试：新增 `plugin_behavior_test`（状态覆盖仲裁 / 动作池排序 / 事件拦截 / ABI 版本）。
+三配置全绿：stub 74/74、nocubism 73/73、asan 72/72。
+
 ## 暂未纳入参考项目的其它能力
 
 - **走路步态 / 膝轴推断（STVrmPet）**：PPet 桌宠是站姿、窗口由用户拖动，没有「桌面走动」语义，程序化走路暂不适用。

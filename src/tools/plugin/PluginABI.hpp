@@ -18,7 +18,14 @@
 namespace ppet::plugin {
 
 /// 当前插件 ABI 版本。任何 IPlugin 虚表/签名变化都要 +1。
-constexpr int kPluginAbiVersion = 1;
+///
+/// 版本历史：
+///   - 1：初始版本（Name/Interests/OnEnable/OnDisable/OnEvent）。
+///   - 2：IPlugin 末尾追加行为扩展契约（WantOverrideState/StatePriority/
+///        ProvideMotions/InterceptEvent，均默认空实现）。追加在末尾保证旧虚函数
+///        的 vtable 槽位偏移不变，但宿主会调用新虚方法，旧插件无法提供，故必须
+///        +1 让旧动态插件在加载时被明确拒绝，而不是越界调用。
+constexpr int kPluginAbiVersion = 2;
 
 /// C 链接符号名（跨平台一致，便于文档与工具约定）。
 inline constexpr char kSymbolAbiVersion[] = "ppet_plugin_abi";

@@ -10,6 +10,7 @@
 #include <vector>
 
 #include <src/tools/core/Math.hpp>
+#include <src/tools/model/BehaviorStateMachine.hpp>
 #include <src/tools/model/SkinnedMesh.hpp>
 
 namespace ppet {
@@ -352,6 +353,14 @@ public:
 
     /// 开始 / 结束说话（气泡 + 口型驱动）：行为状态机据此进入 / 退出 Talking。
     virtual void SetSpeaking(bool /*speaking*/) {}
+
+    /// 插件 / 外部请求的临时行为状态覆盖（缺陷 5 行为契约）。
+    /// 默认空实现：未接入行为状态机的后端（如 Live2D）忽略。VRM 后端 override
+    /// 后把覆盖写入状态机，与内置状态按优先级每帧仲裁。
+    virtual void SetBehaviorOverride(model::BehaviorState /*state*/, int /*priority*/) {}
+
+    /// 清除上述覆盖。
+    virtual void ClearBehaviorOverride() {}
 
     /// 重建渲染资源（控制台 `re draw`）。
     virtual void ReloadRenderer() {}
