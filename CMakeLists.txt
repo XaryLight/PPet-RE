@@ -1419,6 +1419,10 @@ ppet_add_simple_test(idle_animator tools/idle_animator_test.cpp)
 ppet_add_simple_test(behavior_state_machine tools/behavior_state_machine_test.cpp)
 ppet_add_simple_test(touch_accumulator tools/touch_accumulator_test.cpp)
 
+# 触摸反应变体选择器：把累积器输出映射成 Normal/Intensified/Fatigued/Confused
+# 四类反应，纯逻辑头文件。
+ppet_add_simple_test(touch_reaction_selector tools/touch_reaction_selector_test.cpp)
+
 # 内置骨骼动作（VRM-VPet 风格：点头 / 摇头 / 挥手）：播放器 + 关键帧插值，
 # 纯逻辑，不依赖渲染层。
 add_executable(ppet_bone_motion_test

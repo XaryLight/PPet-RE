@@ -2461,29 +2461,16 @@ bool VrmModel::TriggerTouch(const std::string& region) {
     const model::TouchModifier mod = touchAccum_.Observe(region);
     lastTouchModifier_ = mod;
 
-    // 案例「摸头 / 点击」互动：按分区给差异化反馈（动作 + 临时表情叠层）。
-    // 映射规则集中在纯逻辑模块 TouchResponse，可脱离后端单测。
-    model::TouchResponse response = model::ResponseForRegion(region);
-    float influence = response.influence;
-    std::vector<std::pair<std::string, float>> expression = response.expression;
-
-    if (mod.variant == 2) {
-        // 同一区域被反复触摸：厌烦反应（摇头 + 生气），不再无限重复开心。
-        response.motionId = "shake";
-        expression = {{"angry", 0.7f}};
-        influence = 0.85f;
-    } else if (mod.variant == 1) {
-        // 短时间内多次触摸：增强开心反应（强度受累积器封顶约束）。
-        influence = std::min(1.0f, influence * mod.intensity);
-        for (auto& kv : expression) {
-            kv.second = std::min(1.0f, kv.second * mod.intensity);
-        }
-    }
+    // 反应变体选择器：把「区域 + 累积器输出」映射成具体动作 + 表情叠层。
+    // 变体：常规 / 加强 / 疲劳厌烦 / 困惑（交替触摸）。
+    const model::TouchReaction reaction =
+        touchSelector_.Select(model::TouchRegionFromString(region), mod, touchAccum_);
+    lastReactionKind_ = reaction.kind;
 
     bool played = false;
-    if (response.motionId && response.motionId[0]) {
+    if (reaction.motionId && reaction.motionId[0]) {
         model::BoneMotion motion;
-        if (model::bone_motions::Find(response.motionId, motion)) {
+        if (model::bone_motions::Find(reaction.motionId, motion)) {
             played = boneMotion_.Play(motion);
         }
     }
@@ -2491,9 +2478,9 @@ bool VrmModel::TriggerTouch(const std::string& region) {
     if (!played) played = PlayRandomIdle();
 
     // 临时表情叠层：不动用户当前预设，到期后由 Update 里的计时器淡出回落。
-    if (influence > 0.0f && !expression.empty()) {
-        expressionDirector_.SetMotionWeights(expression, influence);
-        touchExpressionTimer_ = response.holdSeconds;
+    if (reaction.influence > 0.0f && !reaction.expression.empty()) {
+        expressionDirector_.SetMotionWeights(reaction.expression, reaction.influence);
+        touchExpressionTimer_ = reaction.holdSeconds;
     }
     return played;
 }

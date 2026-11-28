@@ -482,6 +482,8 @@ void TestRuntime() {
                       "连续四次触摸应全部计入窗口");
             CHECK_MSG(behaveModel.LastTouchModifier().variant == 2,
                       "同一区域连续四次应进入疲劳变体");
+            CHECK_MSG(behaveModel.LastReactionKind() == model::ReactionKind::Fatigued,
+                      "同区连续四次应产出疲劳变体反应");
             CHECK_MSG(behaveModel.CurrentBehaviorState() == model::BehaviorState::Reacting,
                       "触摸后应处于 Reacting");
 
@@ -508,6 +510,28 @@ void TestRuntime() {
             behaveModel.SetSpeaking(false);
             CHECK_MSG(behaveModel.CurrentBehaviorState() == model::BehaviorState::Idle,
                       "SetSpeaking(false) 应回 Idle");
+        }
+    }
+
+    // --- 触摸反应变体选择器：交替触摸不同区域 → 困惑变体 ---
+    {
+        VrmModel altModel;
+        if (!altModel.Load(TestDataDir() + "/test.vrm", error)) {
+            CHECK_MSG(false, error);
+        } else {
+            RenderContext actx;
+            actx.deltaTime = 0.05f;
+            const char* regions[4] = {"head", "body", "head", "body"};
+            for (int i = 0; i < 4; ++i) {
+                altModel.TriggerTouch(regions[i]);
+                if (i < 3) {
+                    for (int k = 0; k < 4; ++k) altModel.Update(actx);
+                }
+            }
+            CHECK_MSG(altModel.LastTouchModifier().totalInWindow == 4,
+                      "交替四次触摸应全部计入窗口");
+            CHECK_MSG(altModel.LastReactionKind() == model::ReactionKind::Confused,
+                      "交替触摸不同区域应产出困惑变体");
         }
     }
 }

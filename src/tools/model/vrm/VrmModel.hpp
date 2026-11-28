@@ -36,7 +36,7 @@
 #include <src/tools/model/SkinnedMesh.hpp>
 #include <src/tools/model/BehaviorStateMachine.hpp>
 #include <src/tools/model/TouchAccumulator.hpp>
-#include <src/tools/model/TouchResponse.hpp>
+#include <src/tools/model/TouchReactionSelector.hpp>
 #include <src/tools/model/vrm/VrmMotionProfile.hpp>
 #include <src/tools/render/Renderer.hpp>
 
@@ -163,6 +163,8 @@ public:
     void ClearBehaviorOverride() { behavior_.ClearExternalOverride(); }
     /// 最近一次触摸的修饰符（强度 / 变体，供诊断）。
     const model::TouchModifier& LastTouchModifier() const { return lastTouchModifier_; }
+    /// 最近一次触摸反应变体类别（Normal/Intensified/Fatigued/Confused，供诊断）。
+    model::ReactionKind LastReactionKind() const { return lastReactionKind_; }
     /// 点击渲染窗口：把归一化坐标映射成分区后走 TriggerTouch，
     /// 与 Live2D 的命中区点击体验对齐。
     bool OnInteract(float nx, float ny) override;
@@ -474,8 +476,12 @@ private:
     model::BehaviorStateMachine behavior_;
     /// 交互累积器：滑动窗口内的触摸强度与变体（疲劳 / 加强）。
     model::TouchAccumulator touchAccum_;
+    /// 触摸反应变体选择器：把累积器输出映射成具体动作 + 表情叠层。
+    model::TouchReactionSelector touchSelector_;
     /// 最近一次触摸的修饰符（供诊断 / UI）。
     model::TouchModifier lastTouchModifier_;
+    /// 最近一次触摸反应变体类别（供诊断）。
+    model::ReactionKind lastReactionKind_ = model::ReactionKind::Normal;
 
     /// 模型中心与高度，用于自动取景。
     Vec3 center_{0.0f, 0.0f, 0.0f};

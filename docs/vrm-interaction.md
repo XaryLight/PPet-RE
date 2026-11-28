@@ -144,14 +144,28 @@ claw-sama 的 Mood 系统，本轮补上 PPet 在「行为组织方式」上的�
 
 在「区域 → 动作」的单层映射之上加一层滑动窗口统计（默认 3 秒、防抖 0.15 秒）：
 
+- `TouchRegion` 枚举（Head/Body/Left/Right/Leg/Other）与字符串口径互转，`Observe`
+  同时支持枚举与字符串重载；
+- `TouchRecord` 带按压强度字段，提供 `CountInRegion` / `LastRegion` /
+  `CumulativeIntensity` / `RecentRegions` / `IsAlternating` 查询接口；
 - `intensity`：随窗口内触摸次数从 1.0 增长到 2.0 封顶；
 - `variant`：0=常规、1=加强（≥3 次）、2=疲劳厌烦（同区域连续 ≥4 次）。
 
-`VrmModel::TriggerTouch` 据此选择反应变体：同一区域被反复触摸时从「点头 + 开心」
-切换为「摇头 + 生气」，短时间内多次触摸则放大开心表情强度。无需新增任何动画资产。
+### 反应变体选择器（`src/tools/model/TouchReactionSelector.hpp`）
 
-测试：新增 `behavior_state_machine_test`（15 组）、`touch_accumulator_test`（7 组），
-`vrm_test` 新增接入断言（241→283）。三配置全绿：stub 71/71、nocubism 70/70、asan 69/69。
+把累积器输出映射成四类反应变体，取代 `VrmModel` 里硬编码的分支：
+
+| 变体 | 触发条件 | 动作 / 表情 |
+| --- | --- | --- |
+| `Normal` | 单次触摸 | 保持区域默认映射 |
+| `Intensified` | 窗口内多次触摸 | 放大开心强度 |
+| `Fatigued` | 同区域连续 ≥4 次 | 摇头 + 生气 |
+| `Confused` | 交替触摸不同区域 | 摇头 + 惊讶 |
+
+优先级：疲劳 > 困惑 > 加强 > 常规。无需新增任何动画资产。
+
+测试：新增 `touch_reaction_selector_test`（5 组），`touch_accumulator_test` 扩至 11 组，
+`vrm_test` 接入断言 283→286。三配置全绿：stub 72/72、nocubism 71/71、asan 70/70。
 
 ## 暂未纳入参考项目的其它能力
 
