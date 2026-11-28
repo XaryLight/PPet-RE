@@ -157,6 +157,11 @@ public:
         behavior_.ProcessEvent(speaking ? model::BehaviorEvent::SpeechStarted
                                         : model::BehaviorEvent::SpeechEnded);
     }
+    /// 进入/退出窗口坐姿（缺陷 4）：进入 / 退出 Sitting。
+    void SetSitting(bool sitting) override {
+        behavior_.ProcessEvent(sitting ? model::BehaviorEvent::Sit
+                                       : model::BehaviorEvent::Stand);
+    }
     /// 插件 / 外部请求的临时状态覆盖（带优先级，缺陷 5 的接入点）。
     void SetBehaviorOverride(model::BehaviorState state, int priority) override {
         behavior_.SetExternalOverride(state, priority);

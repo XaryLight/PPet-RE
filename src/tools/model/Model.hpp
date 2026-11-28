@@ -354,6 +354,10 @@ public:
     /// 开始 / 结束说话（气泡 + 口型驱动）：行为状态机据此进入 / 退出 Talking。
     virtual void SetSpeaking(bool /*speaking*/) {}
 
+    /// 进入 / 退出窗口坐姿（缺陷 4）：行为状态机据此进入 / 退出 Sitting。
+    /// 默认空实现：未接入坐姿姿态的后端（如 Live2D）忽略。
+    virtual void SetSitting(bool /*sitting*/) {}
+
     /// 插件 / 外部请求的临时行为状态覆盖（缺陷 5 行为契约）。
     /// 默认空实现：未接入行为状态机的后端（如 Live2D）忽略。VRM 后端 override
     /// 后把覆盖写入状态机，与内置状态按优先级每帧仲裁。

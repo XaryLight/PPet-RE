@@ -2044,6 +2044,16 @@ void VrmModel::UpdateIdle(float dt) {
     idleYaw_ *= idleScale;
     idlePitch_ *= idleScale;
 
+    // 窗口坐姿（缺陷 4）：Sitting 状态下叠加一个恒定的坐姿姿态（屈腿 + 上身
+    // 略前倾 + 头略低），与程序化待机微摆相加。放在 idleScale 缩放之后，保证
+    // 坐姿偏移不会被「待机幅度倍率」压低——这是有意的姿态，不是待机微摆。
+    if (behavior_.State() == model::BehaviorState::Sitting) {
+        idlePose_.spinePitch += 0.08f;   // 上身略前倾（约 4.6°）
+        idlePose_.headPitch += 0.05f;    // 头略低（约 2.9°）
+        idlePose_.leftLegLift += 0.25f;  // 屈腿前伸（约 14°，模拟坐姿）
+        idlePose_.rightLegLift += 0.25f;
+    }
+
     const model::IdlePose& pose = idlePose_;
 
     auto boneAt = [&](int index) -> Bone* {

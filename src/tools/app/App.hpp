@@ -15,6 +15,7 @@
 #include <src/tools/core/ModelPackage.hpp>
 #include <src/tools/model/Model.hpp>
 #include <src/tools/model/ModelError.hpp>
+#include <src/tools/model/WindowSittingController.hpp>
 #include <src/tools/agent/DialogueSystem.hpp>
 #include <src/tools/render/FrameCapture.hpp>
 #include <src/tools/platform/GlobalCursorTracker.hpp>
@@ -238,6 +239,9 @@ private:
 
     /// 插件管理器（需求 6）：注册内置插件、广播应用事件。
     plugin::PluginManager pluginManager_;
+
+    /// 窗口坐姿控制器（缺陷 4）：光标靠近前台窗口上边缘防抖坐下，窗口丢失站起。
+    model::WindowSittingController sittingController_;
 
     /// 应用启动时刻（steady_clock），用于给插件事件打时间戳。
     std::chrono::steady_clock::time_point appStartTime_;

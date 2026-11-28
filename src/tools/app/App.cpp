@@ -36,6 +36,7 @@
 #include <src/ui/ErrorDialog.hpp>
 #include <src/tools/platform/AutoStart.hpp>
 #include <src/tools/platform/OpenExternal.hpp>
+#include <src/tools/platform/WindowGeometry.hpp>
 #include <src/tools/render/RenderUtils.hpp>
 
 namespace ppet {
@@ -1443,6 +1444,23 @@ void App::Run() {
         // 先推进语言系统（台词/气泡/口型），把口型权重写进模型，
         // 再 Update 让本帧的表情/口型生效。
         TickDialogue(deltaTime);
+        // 缺陷 4 窗口坐姿：每帧查询前台窗口几何，喂给坐姿控制器做防抖决策；
+        // 上升/下降沿驱动模型状态机进入/退出 Sitting。窗口几何不可用（Wayland /
+        // 无前台窗口）时控制器自动站起，坐姿行为随之禁用。
+        {
+            Vec2 cursor{0.0f, 0.0f};
+            const bool haveCursor = GlobalCursorTracker::QueryCursor(cursor);
+            const WindowRect fg = WindowGeometry::ForegroundWindow();
+            const model::SitTarget target{fg.x, fg.y, fg.width, fg.height, fg.valid};
+            // 拿不到光标时给一个远离所有窗口的坐标，保证 NearTopEdge 恒为 false。
+            sittingController_.Update(target,
+                                      haveCursor ? cursor : Vec2(-1e9f, -1e9f),
+                                      deltaTime);
+            if (model_) {
+                if (sittingController_.JustSat()) model_->SetSitting(true);
+                else if (sittingController_.JustStood()) model_->SetSitting(false);
+            }
+        }
         // 缺陷 5 行为契约：每帧收集插件请求的行为状态覆盖并仲裁，喂给模型状态机。
         // 插件间冲突由 PluginManager 取最高优先级；与内置状态的最终仲裁由状态机完成。
         if (model_) {

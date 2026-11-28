@@ -122,7 +122,7 @@ claw-sama 的 Mood 系统，本轮补上 PPet 在「行为组织方式」上的�
 | 状态 | 含义 | 待机幅度倍率 |
 | --- | --- | --- |
 | `Idle` | 程序化待机（+ 可选 VRMA 循环） | 1.00 |
-| `Sitting` | 窗口坐姿（预留，待窗口几何接入） | 0.85 |
+| `Sitting` | 窗口坐姿（光标靠近前台窗口上边缘触发） | 0.85 |
 | `Talking` | 气泡说话（口型驱动中） | 0.80 |
 | `Reacting` | 触摸 / 情绪反应 | 0.45 |
 | `Interacting` | 用户拖拽 | 0.70 |
@@ -207,6 +207,29 @@ claw-sama 的 Mood 系统，本轮补上 PPet 在「行为组织方式」上的�
 
 测试：新增 `plugin_behavior_test`（状态覆盖仲裁 / 动作池排序 / 事件拦截 / ABI 版本）。
 三配置全绿：stub 74/74、nocubism 73/73、asan 72/72。
+
+### 窗口坐姿（缺陷 4）
+
+把「空间感知」的决策与平台几何获取分离，坐姿行为可脱离后端单测：
+
+- `WindowGeometry`（`src/tools/platform/WindowGeometry.hpp/.cpp`）：`ForegroundWindow()`
+  与 `WindowUnderCursor()` 返回虚拟桌面坐标系下的窗口边框；Windows 用
+  `GetForegroundWindow + DwmGetWindowAttribute`，macOS 用 `CGWindowListCopyWindowInfo`，
+  Linux 用 X11 `_NET_ACTIVE_WINDOW + XTranslateCoordinates`；Wayland / 无显示返回
+  `valid=false`，坐姿自动禁用（与仓库现有的 Wayland 降级策略一致）；
+- `WindowSittingController`（`src/tools/model/WindowSittingController.hpp`，纯逻辑）：
+  光标靠近窗口上边缘（默认 48px）并停留 0.45s → 坐下；光标离开 0.7s → 站起；
+  **窗口丢失（关闭 / 最小化）立即站起**；坐姿锚点（窗口上边缘中点）跟随窗口移动；
+- 状态机集成：`App` 每帧查前台窗口 + 光标，喂给控制器，`JustSat` / `JustStood`
+  上升下降沿驱动 `IModel::SetSitting()`（`Sit` / `Stand` 事件）；
+- 坐姿姿态：`VrmModel::UpdateIdle` 在 `Sitting` 状态下叠加恒定坐姿偏移（上身略前倾
+  约 4.6°、头略低、双腿屈曲约 14°），且放在待机幅度缩放**之后**，不被压低。
+
+已知限制：桌宠窗口自身的排除依赖平台窗口句柄桥接，本轮未做——当用户直接点击桌宠
+窗口（非穿透模式）且光标恰好停在其上边缘时，可能误判为坐姿目标；实际触发概率低。
+
+测试：新增 `window_sitting_controller_test`（防抖坐下 / 离开站起 / 窗口丢失立即站起 /
+锚点跟随 / 边沿标志复位）。三配置全绿：stub 75/75、nocubism 74/74、asan 73/73。
 
 ## 暂未纳入参考项目的其它能力
 

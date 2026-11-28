@@ -248,6 +248,16 @@ CTest 总数 45。
 vtable 槽位不变，`kPluginAbiVersion` 1→2 让旧动态插件被明确拒绝而非越界调用。
 单测 `plugin_behavior_unit`。
 
+## 窗口坐姿（缺陷 4）
+
+「空间感知」拆成平台几何获取与纯逻辑决策两层，坐姿行为可脱离后端单测：
+
+| 层 | 文件 | 职责 |
+| --- | --- | --- |
+| 平台几何 | `src/tools/platform/WindowGeometry.{hpp,cpp}` | `ForegroundWindow()` / `WindowUnderCursor()`：Windows `GetForegroundWindow + DwmGetWindowAttribute`，macOS `CGWindowListCopyWindowInfo`，Linux X11 `_NET_ACTIVE_WINDOW + XTranslateCoordinates`；Wayland/无显示返回 `valid=false` |
+| 坐姿决策 | `src/tools/model/WindowSittingController.hpp` | 光标靠近窗口上边缘防抖坐下（0.45s）、离开防抖站起（0.7s）、窗口丢失立即站起、锚点跟随窗口移动；纯逻辑头文件 |
+| 接入 | `App` / `IModel::SetSitting` / `VrmModel` | 每帧查前台窗口喂给控制器，`JustSat`/`JustStood` 驱动状态机 `Sit`/`Stand`；`VrmModel` 在 `Sitting` 状态叠加坐姿姿态 |
+
 ## 动作识别（需求 2 / 4）
 
 | 模块 | 文件 | 职责 |
