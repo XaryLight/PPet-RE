@@ -176,9 +176,14 @@ done
 > ctest --preset stub --output-on-failure# 测试
 > ```
 >
-> `asan` preset 额外带 `-fsanitize=address,undefined`；因 preset v2 不支持用例过滤，
-> ASAN 下两个已知 Qt GUI 泄漏用例（`error_dialog_smoke` / `debug_panel_smoke`）需在 CI
-> 里用 `ctest -E` 排除。CI 矩阵见 `.github/workflows/ci.yml`。
+> `asan` preset 额外带 `-fsanitize=address,undefined`。CI 的 Ubuntu 22.04 上 Mesa 23.x
+> 与 Qt 在进程退出时会留下第三方静态缓存，触发 LeakSanitizer 把退出码变成 1 —— 渲染
+> 本身是 PASS 的（`render_verify_*` / `render_smoke` / `render_integration` /
+> `platform_smoke` 皆此）。`CMakeLists.txt` 的 `ppet_no_leak_check()` 只对这类 GL/Qt
+> 图形用例设置 `ASAN_OPTIONS=detect_leaks=0`，保留 ASAN 的越界/UBSAN 能力；纯逻辑
+> 用例仍完整保留泄漏检测。另有两个 Qt 对话框用例（`error_dialog_smoke` /
+> `debug_panel_smoke`）因同类既有泄漏被 CI 用 `ctest -E` 排除。CI 矩阵见
+> `.github/workflows/ci.yml`。
 
 > **纯逻辑优先**：待机动画、骨骼动作、Live2D 物理、动作分组这几块的实现
 > 都刻意做成「不碰 GL / Qt / 文件 IO」的纯逻辑模块，因此上面三种配置都能编译并运行
