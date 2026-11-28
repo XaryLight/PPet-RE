@@ -433,6 +433,32 @@ void TestRuntime() {
             CHECK_MSG(std::fabs(sin45) > 0.4f, "动画应驱动 hips 骨骼旋转");
         }
     }
+
+    // --- 分区点击互动（案例「摸头」反馈）：点击头部区域应触发动作+表情 ---
+    {
+        VrmModel touchModel;
+        if (!touchModel.Load(TestDataDir() + "/test.vrm", error)) {
+            CHECK_MSG(false, error);
+        } else {
+            // 头部区域归一化坐标 (0.5, 0.1) -> RegionFromPoint -> "head"。
+            CHECK_MSG(touchModel.OnInteract(0.5f, 0.1f), "点击头部区域应触发互动反馈");
+
+            // 若模型含 happy 表情通道，摸头后应被临时叠加出非零权重。
+            const int happyIdx = FindExpression(touchModel.Mesh(), "happy");
+            if (happyIdx >= 0) {
+                RenderContext tctx;
+                tctx.deltaTime = 1.0f / 60.0f;
+                touchModel.Update(tctx);  // 一帧后叠层生效（influence=0.9）
+                CHECK_MSG(touchModel.ExpressionWeights()[static_cast<std::size_t>(happyIdx)] > 0.1f,
+                          "摸头应临时叠加开心表情");
+
+                // 保持期（1.2s）+ 0.2s 淡出后回落到基础表情。
+                for (int i = 0; i < 100; ++i) touchModel.Update(tctx);
+                CHECK_MSG(touchModel.ExpressionWeights()[static_cast<std::size_t>(happyIdx)] < 0.3f,
+                          "表情叠层到期后应淡出回落");
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

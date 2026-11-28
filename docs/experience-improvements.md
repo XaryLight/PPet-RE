@@ -88,9 +88,28 @@ CI 矩阵跑 stub/nocubism/asan（真实 SDK 因许可证无法在公开 CI 分�
 - 单测 `motion_queue_test` 新增：打断渐进淡入、交接权重守恒、显式 fade 不被覆盖、
   关闭默认值退回硬切、优先级透传；共 46 项断言全绿。
 
+### VRM 分区触摸互动（2026-11 新增需求）
+
+学习 AniMate（getanimate.app）VRM 桌宠案例：其工坊把互动分为「鼠标靠近 / 点击 /
+摸头 / 拖拽」，强调反馈明确但不过度频繁；导出要点含 humanoid 骨骼、MToon、
+BlendShape 表情、SpringBone、纹理体积。对照本项目：视线跟随 / 眨眼 / 弹簧骨 /
+待机 / 表情口型 / 骨骼动作均已具备，唯一缺口是**点击分区互动**——VRM 此前未 override
+`OnInteract`，点击没有任何动作反馈，且 `TriggerTouch` 忽略 region 全随机。
+
+- 新增纯逻辑模块 `src/tools/model/TouchResponse.hpp`：`ResponseForRegion(region)` 把
+  head/body/leg/left/right 映射到差异化「骨骼动作 + 临时表情叠层」：
+  摸头→点头+开心、左右→对应侧挥手+开心、身体→摇头+惊讶、腿→只点头。
+- `VrmModel::OnInteract(nx,ny)` 复用 `RegionFromPoint` 口径转 `TriggerTouch`；
+  表情用 `ExpressionDirector::SetMotionWeights` 临时叠层，保持期到点 `ClearMotionWeights`
+  0.2s 淡出回落，**不碰用户当前预设/保护期**。
+- 单测 `touch_response_test`（45 断言）覆盖分区映射/动作 id 合法/权重范围/分区反查一致；
+  `vrm_test` 增补集成断言（点击头部触发反馈、表情叠加与回落，共 263 断言全绿）。
+
 ## 有意未引入 / 延后
 
 - AI/TTS、进程隔离 ZeroMQ、模型市场、导入向导、全局快捷键、点击粒子：均为中高成本功能，
   需要独立需求与设计，不在「依据报告逐条修复」的健壮性完善批次内强行实现。
+- 音乐律动 / 随音乐匹配的舞蹈：案例反复强调，但需系统音频捕获（回环采集 / 节拍检测），
+  涉及平台音频权限与额外依赖，独立于本轮「分区互动」；待有明确音频输入方案再规划。
 - 插件完整示例：现有 `BuiltinPlugins.hpp` 的计数器/问候已演示扩展点，完整业务插件另行规划。
-- tag 自动发布 / RuntimeStats 的 JSON-CSV 导出：低优先，待 CI 稳定运行后补充。
+- tag 自动发布：低优先，待 CI 稳定运行后补充（RuntimeStats 的 JSON/CSV 导出已于 4.2.3 落地）。

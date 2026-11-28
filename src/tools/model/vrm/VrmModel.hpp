@@ -33,6 +33,7 @@
 #include <src/tools/model/ExpressionDirector.hpp>
 #include <src/tools/model/Model.hpp>
 #include <src/tools/model/SkinnedMesh.hpp>
+#include <src/tools/model/TouchResponse.hpp>
 #include <src/tools/model/vrm/VrmMotionProfile.hpp>
 #include <src/tools/render/Renderer.hpp>
 
@@ -113,8 +114,11 @@ public:
     bool StopMotion() override;
     /// 需求 2：随机播放一个内置骨骼动作（点头/摇头/挥手…），用于 `action random`。
     bool PlayRandomIdle() override;
-    /// 需求 2：分区触摸。VRM 没有 Live2D 式的命中区，统一随机触发一个骨骼动作反馈。
+    /// 分区触摸反馈（案例「摸头 / 点击」互动）：按分区播差异化动作 + 临时表情叠层。
     bool TriggerTouch(const std::string& region) override;
+    /// 点击渲染窗口：把归一化坐标映射成分区后走 TriggerTouch，
+    /// 与 Live2D 的命中区点击体验对齐。
+    bool OnInteract(float nx, float ny) override;
     void ReloadRenderer() override;
     float PreferredFrameAspect() const override;
     void SetArmRestDrop(float degrees) override;
@@ -397,6 +401,9 @@ private:
     bool blinking_ = false;
     /// 眨眼总时长（秒）。
     float blinkDuration_ = 0.15f;
+
+    /// 触摸表情叠层的剩余保持时间（秒，>0 表示正在叠加）。
+    float touchExpressionTimer_ = 0.0f;
 
     /// 模型中心与高度，用于自动取景。
     Vec3 center_{0.0f, 0.0f, 0.0f};

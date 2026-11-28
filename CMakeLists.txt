@@ -1356,6 +1356,10 @@ add_test(NAME dynamic_plugin_unit
 # 「该 VRM 模型能做什么基础动作」（nod/shake/wave、待机）。纯逻辑、零依赖。
 ppet_add_simple_test(vrm_motion_profile tools/vrm_motion_profile_test.cpp)
 
+# 分区触摸响应（案例「摸头 / 点击」互动）：head/body/leg/left/right -> 差异化
+# 骨骼动作 + 临时表情叠层。纯逻辑、零依赖。
+ppet_add_simple_test(touch_response tools/touch_response_test.cpp)
+
 # 智能动作识别（需求 2）：按文件名 / 动作组识别 idle / touch / expression
 # 并产出「区域 -> 触摸动作」映射。纯逻辑、零依赖。
 add_executable(ppet_motion_recognizer_test

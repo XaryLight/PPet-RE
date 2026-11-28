@@ -1840,6 +1840,15 @@ void VrmModel::Update(const RenderContext& ctx) {
     UpdateSpringBones(dt);
     UpdateSkinningMatrices();
 
+    // 触摸表情临时叠层到点回落：0.2s 淡出回用户当前表情（不动预设/保护期）。
+    if (touchExpressionTimer_ > 0.0f) {
+        touchExpressionTimer_ -= dt;
+        if (touchExpressionTimer_ <= 0.0f) {
+            touchExpressionTimer_ = 0.0f;
+            expressionDirector_.ClearMotionWeights();
+        }
+    }
+
     // 表情调度：预设/过渡 + 自动眨眼（独立叠层） + 动作表情临时叠层，
     // 全部由 ExpressionDirector 统一计算，结果同步进 expressionWeights_，
     // 再由 UpdateMorphWeights 写成 morph 顶点变形。
@@ -2328,10 +2337,34 @@ bool VrmModel::PlayRandomIdle() {
     return boneMotion_.Play(builtins[idx]);
 }
 
-bool VrmModel::TriggerTouch(const std::string&) {
-    // 需求 2：VRM 无命中区，分区触摸统一随机触发一个骨骼动作作为反馈。
-    // （后续可结合 humanoid 头/躯干骨骼做更细的区域化反应。）
-    return PlayRandomIdle();
+bool VrmModel::TriggerTouch(const std::string& region) {
+    if (!loaded_) return false;
+    // 案例「摸头 / 点击」互动：按分区给差异化反馈（动作 + 临时表情叠层）。
+    // 映射规则集中在纯逻辑模块 TouchResponse，可脱离后端单测。
+    const model::TouchResponse response = model::ResponseForRegion(region);
+
+    bool played = false;
+    if (response.motionId && response.motionId[0]) {
+        model::BoneMotion motion;
+        if (model::bone_motions::Find(response.motionId, motion)) {
+            played = boneMotion_.Play(motion);
+        }
+    }
+    // 没有可用动作时至少给一个表情反馈，保证「点了有反应」。
+    if (!played) played = PlayRandomIdle();
+
+    // 临时表情叠层：不动用户当前预设，到期后由 Update 里的计时器淡出回落。
+    if (response.influence > 0.0f && !response.expression.empty()) {
+        expressionDirector_.SetMotionWeights(response.expression, response.influence);
+        touchExpressionTimer_ = response.holdSeconds;
+    }
+    return played;
+}
+
+bool VrmModel::OnInteract(float nx, float ny) {
+    if (!loaded_) return false;
+    // 与 App 点击链路、插件 Interaction 事件共用同一分区口径。
+    return TriggerTouch(RegionFromPoint(nx, ny));
 }
 
 void VrmModel::ReloadRenderer() {
