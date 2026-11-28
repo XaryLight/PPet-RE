@@ -1360,6 +1360,10 @@ ppet_add_simple_test(vrm_motion_profile tools/vrm_motion_profile_test.cpp)
 # 骨骼动作 + 临时表情叠层。纯逻辑、零依赖。
 ppet_add_simple_test(touch_response tools/touch_response_test.cpp)
 
+# 凝视跟随（参考 dsh-plugin-vrmpet3d / STVrmPet 的动作交互）：均匀 ramp 起停、
+# 鼠标静止休眠、最后方向记忆、头部预算让位、NaN 防御。纯逻辑、零依赖。
+ppet_add_simple_test(gaze_follow tools/gaze_follow_test.cpp)
+
 # 智能动作识别（需求 2）：按文件名 / 动作组识别 idle / touch / expression
 # 并产出「区域 -> 触摸动作」映射。纯逻辑、零依赖。
 add_executable(ppet_motion_recognizer_test

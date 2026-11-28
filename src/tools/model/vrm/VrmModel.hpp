@@ -29,6 +29,7 @@
 
 #include <src/tools/core/Math.hpp>
 #include <src/tools/model/BoneMotion.hpp>
+#include <src/tools/model/GazeFollow.hpp>
 #include <src/tools/model/IdleAnimator.hpp>
 #include <src/tools/model/ExpressionDirector.hpp>
 #include <src/tools/model/Model.hpp>
@@ -66,6 +67,16 @@ public:
     /// 【Q5】配置页「最大偏转角」下发到 VRM 视线追踪（受模型 lookAt 上限约束）。
     void SetMaxTrackingAngle(float degrees) override;
     float MaxTrackingAngle() const override { return maxTrackingAngleDeg_; }
+
+    // --- 凝视自然化（综合三个桌宠参考项目） ---
+    /// 凝视起停的均匀 ramp 时长（秒）。0 表示硬切换。默认 1.0。
+    void SetGazeBlendSeconds(float seconds) { gazeFollow_.SetBlendSeconds(seconds); }
+    float GazeBlendSeconds() const { return gazeFollow_.BlendSeconds(); }
+    /// 鼠标静止多久后停止凝视（秒）。0 表示关闭休眠。默认 6.0。
+    void SetGazeIdleSeconds(float seconds) { gazeFollow_.SetIdleSeconds(seconds); }
+    float GazeIdleSeconds() const { return gazeFollow_.IdleSeconds(); }
+    /// 当前凝视混合系数 [0,1]（调试 / 测试用）。
+    float GazeBlend() const { return gazeFollow_.Blend(); }
 
     /// 显示名：优先用 VRM meta.name，缺失时退回文件名。
     std::string DisplayName() const override;
@@ -368,6 +379,12 @@ private:
     float gazePitch_ = 0.0f;
     float targetGazeYaw_ = 0.0f;
     float targetGazePitch_ = 0.0f;
+    /// 凝视自然化控制器：指数平滑 + 均匀 ramp 起停 + 鼠标静止休眠 +
+    /// 头部预算让位 + NaN 防御（综合三个桌宠参考项目的成熟做法）。
+    /// 取代旧的手写指数平滑；renderer 线程独占，无需加锁。
+    model::GazeFollow gazeFollow_;
+    /// 当前内置动作占用的头部转角（弧度，绝对值），喂给 gazeFollow_ 做预算让位。
+    float motionHeadTurn_ = 0.0f;
     /// 视线角度上限（弧度），来自 VRM lookAt 的 rangeMap。
     float lookYawLimit_ = 0.0f;
     float lookPitchLimit_ = 0.0f;

@@ -34,9 +34,6 @@ constexpr float kDefaultLookYaw = 0.2618f;    // 15 度
 /// 这里取 10 度以避免低头时穿模。
 constexpr float kDefaultLookPitch = 0.1745f;  // 10 度
 
-/// 视线角度的平滑系数（每秒衰减到 1/e 的比例）。
-constexpr float kGazeSmoothing = 9.0f;
-
 /// 待机摆动的幅度（弧度）与频率。
 constexpr float kIdleSwayYawAmp = 0.0262f;    // 约 1.5 度
 constexpr float kIdleSwayPitchAmp = 0.0131f;  // 约 0.75 度
@@ -339,6 +336,13 @@ bool VrmModel::Load(const std::string& path, std::string& error) {
     gpuReady_ = false;
     gpuInitFailed_ = false;
     error.clear();
+
+    // 切换模型时复位凝视状态：不把上一个模型的朝向 / 休眠计时带过来。
+    gazeFollow_.Reset();
+    // VRM 后端不做 0.85 折扣：目标角度已在 ResolveGazeLimits 里按
+    // 「配置最大偏转角 + 模型 lookAt 上限」钳好，这里要让滑块与最终头部转角一一对应。
+    gazeFollow_.SetWeight(1.0f);
+    motionHeadTurn_ = 0.0f;
 
     // 注册 VRM-VPet 风格的内置骨骼动作到随机待机池（点头 / 摇头 / 挥手）。
     boneMotion_.ClearRandomMotions();
@@ -1831,6 +1835,10 @@ void VrmModel::Update(const RenderContext& ctx) {
     // 复位骨骼，避免上一帧的变换累积。
     for (Bone& bone : mesh_.bones) bone.currentLocal = bone.localBindPose;
 
+    // 每帧重置动作头部转角：即使有 glTF 动画（UpdateIdle 提前返回）也不会
+    // 把上一帧的动作占用量带给凝视预算。
+    motionHeadTurn_ = 0.0f;
+
     UpdateAnimation(dt);
     UpdateIdle(dt);
     UpdateGaze(ctx, dt);
@@ -2006,12 +2014,25 @@ void VrmModel::UpdateIdle(float dt) {
 }
 
 void VrmModel::ApplyBoneMotion(const model::BonePose& pose) {
+    // 动作占用的头部转角在 Update() 每帧开头已归零，这里只做累加。
     if (pose.entries.empty()) return;
 
     auto boneAt = [&](int index) -> Bone* {
         if (index < 0 || static_cast<std::size_t>(index) >= mesh_.bones.size()) return nullptr;
         return &mesh_.bones[static_cast<std::size_t>(index)];
     };
+
+    constexpr float kDeg2Rad = 3.14159265358979323846f / 180.0f;
+    for (const model::BonePose::Entry& entry : pose.entries) {
+        // 内置动作转头时记录幅度（度 -> 弧度），供凝视预算让位。
+        // 向量的三个分量是不同轴的转角，取合角度上限的保守估计。
+        if (entry.bone == "head") {
+            const float magnitude =
+                std::sqrt(entry.pitch * entry.pitch + entry.yaw * entry.yaw +
+                          entry.roll * entry.roll) * kDeg2Rad;
+            motionHeadTurn_ = std::max(motionHeadTurn_, magnitude);
+        }
+    }
 
     for (const model::BonePose::Entry& entry : pose.entries) {
         // 动作里的骨骼名是「角色名」（head / leftArm / ...），
@@ -2035,8 +2056,7 @@ void VrmModel::ApplyBoneMotion(const model::BonePose& pose) {
         Bone* bone = boneAt(index);
         if (bone == nullptr) continue;
 
-        // 骨骼动作的角度单位是度，这里转成弧度。
-        constexpr float kDeg2Rad = 3.14159265358979323846f / 180.0f;
+        // 骨骼动作的角度单位是度，这里转成弧度（kDeg2Rad 见函数开头）。
         const Mat4 rot = Mat4::RotationY(entry.yaw * kDeg2Rad) *
                          Mat4::RotationX(entry.pitch * kDeg2Rad) *
                          Mat4::RotationZ(entry.roll * kDeg2Rad);
@@ -2065,15 +2085,22 @@ void VrmModel::UpdateGaze(const RenderContext& ctx, float dt) {
         // RotationX(正角) 会让模型朝向从 +Z 偏向 -Y（即低头），
         // 所以「向上看」需要负角度。
         targetGazePitch_ = -y * limits.pitchRad;
+        gazeFollow_.SetAim(targetGazeYaw_, targetGazePitch_);
     } else {
         targetGazeYaw_ = 0.0f;
         targetGazePitch_ = 0.0f;
+        gazeFollow_.ClearAim();
     }
 
-    // 指数平滑：避免鼠标抖动导致头部瞬移。
-    const float alpha = 1.0f - std::exp(-kGazeSmoothing * dt);
-    gazeYaw_ += (targetGazeYaw_ - gazeYaw_) * alpha;
-    gazePitch_ += (targetGazePitch_ - gazePitch_) * alpha;
+    // 内置动作占用的头部转角：凝视只用剩余预算，避免与点头/摇头抢同一根骨骼。
+    gazeFollow_.SetMotionHeadTurn(motionHeadTurn_);
+
+    // 凝视自然化：目标指数平滑 + 均匀 ramp 起停 + 鼠标静止休眠 + NaN 防御。
+    // VRM 后端把 weight 设为 1.0，让「最大偏转角」滑块与最终头部转角一一对应；
+    // 模型 lookAt 上限已在 targetGazeYaw_ 里钳过，这里不会再扭过头。
+    const model::GazeFollow::Output gaze = gazeFollow_.Tick(dt);
+    gazeYaw_ = gaze.yaw;
+    gazePitch_ = gaze.pitch;
 
     // 视线追踪统一用骨骼方式驱动（VRM lookAt.type == "expression" 的模型同样适用），
     // 找不到对应骨骼时直接跳过（优雅降级）。

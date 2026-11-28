@@ -105,6 +105,18 @@ BlendShape 表情、SpringBone、纹理体积。对照本项目：视线跟随 /
 - 单测 `touch_response_test`（45 断言）覆盖分区映射/动作 id 合法/权重范围/分区反查一致；
   `vrm_test` 增补集成断言（点击头部触发反馈、表情叠加与回落，共 263 断言全绿）。
 
+### VRM 凝视自然化（参考三个桌宠项目，非报告条目 / 用户新增）
+
+用户给出三个参考项目（xiaomate-desktop、dsh-plugin-vrmpet3d、STVrmPet）学习 VRM 动作交互。
+其中 dsh 的凝视系统工程化最成熟，PPet 此前只有简单指数平滑，缺「起停过渡 / 静止休眠 / 与动作让位」。
+
+- 新增纯逻辑模块 `src/tools/model/GazeFollow.hpp`：目标指数平滑 + 均匀 ramp 起停 +
+  鼠标静止休眠 + 最后方向记忆 + 头部预算让位 + 全程 NaN/Inf 防御。
+- `VrmModel` 接线：`Load` 复位并设 `weight=1.0`（保留 Q5 最大偏转角契约），`UpdateGaze`
+  用控制器输出驱动头/眼球，新增 `SetGazeBlendSeconds` / `SetGazeIdleSeconds` / `GazeBlend()`。
+- 单测 `gaze_follow_test`（25 断言）+ `vrm_test::TestGazeNaturalization`（5 集成断言，
+  VRM 测试 232 -> 237）。详见 [vrm-interaction.md](vrm-interaction.md)。
+
 ## 有意未引入 / 延后
 
 - AI/TTS、进程隔离 ZeroMQ、模型市场、导入向导、全局快捷键、点击粒子：均为中高成本功能，

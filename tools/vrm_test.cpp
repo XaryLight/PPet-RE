@@ -798,11 +798,61 @@ void TestRealSamples() {
 
 }  // namespace
 
+// ---------------------------------------------------------------------------
+// 凝视自然化（综合 dsh-plugin-vrmpet3d / STVrmPet）：
+// 验证 GazeFollow 已接入 VRM 后端——blend 均匀渐入、静止休眠回落、重新加载复位。
+// ---------------------------------------------------------------------------
+void TestGazeNaturalization() {
+    std::printf("[测试] 凝视自然化（起停 ramp / 静止休眠 / 复位）\n");
+    VrmModel model;
+    std::string error;
+    if (!model.Load(TestDataDir() + "/test.vrm", error)) {
+        CHECK_MSG(false, error);
+        return;
+    }
+    // 缩短缓冲，便于用少量帧观测；先关闭休眠，单独测 ramp。
+    model.SetGazeBlendSeconds(0.3f);
+    model.SetGazeIdleSeconds(0.0f);
+
+    RenderContext ctx;
+    ctx.deltaTime = 1.0f / 60.0f;
+    ctx.viewportWidth = 640;
+    ctx.viewportHeight = 480;
+    ctx.hasGlobalCursor = true;
+    ctx.localCursor = Vec2(0.8f, 0.0f);
+
+    // 首次给目标：blend 从 0 均匀上升，不是瞬间到 1。
+    model.Update(ctx);
+    const float firstBlend = model.GazeBlend();
+    CHECK_MSG(firstBlend > 0.0f && firstBlend < 0.2f, "凝视首帧 blend 渐入（不瞬移）");
+
+    for (int i = 0; i < 30; ++i) model.Update(ctx);  // 0.5s
+    CHECK_MSG(model.GazeBlend() > 0.9f, "目标稳定后 blend 接近 1");
+
+    // 开启休眠（0.5s）：光标保持不动，blend 应回落到 0。
+    model.SetGazeIdleSeconds(0.5f);
+    for (int i = 0; i < 40; ++i) model.Update(ctx);
+    CHECK_MSG(model.GazeBlend() < 0.3f, "鼠标静止休眠后 blend 回落");
+
+    // 重新鼠标移动：恢复跟随。
+    ctx.localCursor = Vec2(-0.6f, 0.0f);
+    for (int i = 0; i < 30; ++i) model.Update(ctx);
+    CHECK_MSG(model.GazeBlend() > 0.9f, "鼠标再次移动后恢复凝视");
+
+    // 重新加载模型：凝视状态复位，blend 归零。
+    if (!model.Load(TestDataDir() + "/test.vrm", error)) {
+        CHECK_MSG(false, error);
+        return;
+    }
+    CHECK_MSG(Near(model.GazeBlend(), 0.0f), "重新加载后 blend 复位为 0");
+}
+
 int main() {
     std::printf("=== PPet VRM 单元测试 ===\n");
     TestGltfParse();
     TestVrmToSkinnedMesh();
     TestRuntime();
+    TestGazeNaturalization();
     TestVrm0();
     TestRobustness();
     TestRealSamples();
