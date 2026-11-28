@@ -34,7 +34,7 @@ jobs:
             libxext-dev libxft-dev libfontconfig1-dev libssl-dev \
             qt6-base-dev xvfb
 
-      - name: 配置（preset: ${{ matrix.preset }}）
+      - name: "配置（preset: ${{ matrix.preset }}）"
         run: cmake --preset ${{ matrix.preset }}
 
       - name: 构建
