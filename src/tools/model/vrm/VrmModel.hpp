@@ -137,20 +137,30 @@ public:
     void SetAutoBlink(bool enabled) { expressionDirector_.SetAutoBlink(enabled); }
     bool AutoBlink() const { return expressionDirector_.AutoBlink(); }
 
-    // --- 行为状态机（跨帧状态，供调试 / 插件查询） ---
-    /// 当前行为状态。
+    // --- 行为状态机（跨帧状态，统一事件入口，供调试 / 插件查询） ---
+    /// 当前有效行为状态（含插件外部覆盖仲裁结果）。
     model::BehaviorState CurrentBehaviorState() const { return behavior_.State(); }
     /// 进入/退出挂起：全屏游戏 / 后台时压低待机幅度并拒绝触摸。
     void SetSuspended(bool suspended) override {
-        if (suspended) behavior_.OnSuspend();
-        else behavior_.OnResume();
+        behavior_.ProcessEvent(suspended ? model::BehaviorEvent::Suspend
+                                         : model::BehaviorEvent::Resume);
     }
     bool IsSuspended() const { return behavior_.IsSuspended(); }
     /// 用户开始/结束拖拽：用于行为状态机的优先级仲裁。
     void SetInteracting(bool interacting) override {
-        if (interacting) behavior_.OnInteractionBegin();
-        else behavior_.OnInteractionEnd();
+        behavior_.ProcessEvent(interacting ? model::BehaviorEvent::InteractionBegin
+                                           : model::BehaviorEvent::InteractionEnd);
     }
+    /// 开始/结束说话（气泡 + 口型）：进入 / 退出 Talking。
+    void SetSpeaking(bool speaking) override {
+        behavior_.ProcessEvent(speaking ? model::BehaviorEvent::SpeechStarted
+                                        : model::BehaviorEvent::SpeechEnded);
+    }
+    /// 插件 / 外部请求的临时状态覆盖（带优先级，缺陷 5 的接入点）。
+    void SetBehaviorOverride(model::BehaviorState state, int priority) {
+        behavior_.SetExternalOverride(state, priority);
+    }
+    void ClearBehaviorOverride() { behavior_.ClearExternalOverride(); }
     /// 最近一次触摸的修饰符（强度 / 变体，供诊断）。
     const model::TouchModifier& LastTouchModifier() const { return lastTouchModifier_; }
     /// 点击渲染窗口：把归一化坐标映射成分区后走 TriggerTouch，

@@ -141,6 +141,68 @@ void TestInvalidDt() {
     Check(std::fabs(sm.ReactionTimeLeft() - 1.6f) < 1e-5f, "零 dt 不应推进");
 }
 
+void TestTalking() {
+    BehaviorStateMachine sm;
+    sm.ProcessEvent(ppet::model::BehaviorEvent::SpeechStarted);
+    Check(sm.IsTalking(), "SpeechStarted 应进入 Talking");
+    Check(std::fabs(sm.IdleMasterScale() - 0.8f) < 1e-6f, "说话待机倍率应为 0.8");
+
+    sm.OnTouch();
+    Check(sm.IsReacting(), "说话中触摸应进入 Reacting");
+    sm.ProcessEvent(ppet::model::BehaviorEvent::SpeechEnded);
+    Check(sm.IsReacting(), "说话结束不应打断正在进行的反应");
+
+    sm.OnReactionFinished();
+    Check(sm.IsIdle(), "反应结束应回 Idle");
+}
+
+void TestSpeechEndedFromTalking() {
+    BehaviorStateMachine sm;
+    sm.ProcessEvent(ppet::model::BehaviorEvent::SpeechStarted);
+    sm.ProcessEvent(ppet::model::BehaviorEvent::SpeechEnded);
+    Check(sm.IsIdle(), "说话结束应回 Idle");
+}
+
+void TestExpressionChanged() {
+    BehaviorStateMachine sm;
+    sm.ProcessEvent(ppet::model::BehaviorEvent::ExpressionChanged);
+    Check(sm.IsReacting(), "表情切换应短暂进入 Reacting");
+    Check(std::fabs(sm.ReactionTimeLeft() - 0.8f) < 1e-5f, "表情切换余韵应为 0.8s");
+    sm.Tick(0.9f);
+    Check(sm.IsIdle(), "表情余韵耗尽应回 Idle");
+}
+
+void TestExternalOverride() {
+    BehaviorStateMachine sm;
+    sm.SetExternalOverride(ppet::model::BehaviorState::Suspended, 50);
+    Check(sm.State() == ppet::model::BehaviorState::Suspended, "外部覆盖应生效");
+    Check(sm.IsSuspended(), "外部覆盖为 Suspended 时 IsSuspended 应 true");
+    Check(!sm.CanAcceptTouch(), "外部覆盖挂起时应拒绝触摸");
+    Check(std::fabs(sm.IdleMasterScale() - 0.25f) < 1e-6f, "覆盖挂起时倍率应为 0.25");
+
+    // 内置状态优先级高于外部覆盖时，内置状态胜出。
+    sm.OnTouch();
+    sm.SetExternalOverride(ppet::model::BehaviorState::Suspended, 2);
+    Check(sm.State() == ppet::model::BehaviorState::Reacting,
+          "低优先级覆盖不应覆盖高优先级内置状态");
+
+    sm.ClearExternalOverride();
+    Check(sm.State() == ppet::model::BehaviorState::Reacting, "清除覆盖后回内置状态");
+    Check(sm.InternalState() == ppet::model::BehaviorState::Reacting,
+          "InternalState 不受外部覆盖影响");
+}
+
+void TestProcessEventsBatch() {
+    BehaviorStateMachine sm;
+    sm.ProcessEvents({ppet::model::BehaviorEvent::SpeechStarted,
+                      ppet::model::BehaviorEvent::SpeechEnded});
+    Check(sm.IsIdle(), "批量事件应依次处理，说话开始又结束回 Idle");
+
+    sm.ProcessEvents(std::vector<ppet::model::BehaviorEvent>{
+        ppet::model::BehaviorEvent::TouchStart});
+    Check(sm.IsReacting(), "批量事件应能进入 Reacting");
+}
+
 }  // namespace
 
 int main() {
@@ -154,6 +216,11 @@ int main() {
     TestSitStand();
     TestTimeAndReset();
     TestInvalidDt();
+    TestTalking();
+    TestSpeechEndedFromTalking();
+    TestExpressionChanged();
+    TestExternalOverride();
+    TestProcessEventsBatch();
 
     if (g_failures == 0) {
         std::printf("[OK] BehaviorStateMachine 全部用例通过\n");

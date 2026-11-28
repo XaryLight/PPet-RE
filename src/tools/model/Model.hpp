@@ -350,6 +350,9 @@ public:
     /// 进入 / 退出挂起（安静模式：全屏游戏 / 后台时压低待机并拒绝触摸）。
     virtual void SetSuspended(bool /*suspended*/) {}
 
+    /// 开始 / 结束说话（气泡 + 口型驱动）：行为状态机据此进入 / 退出 Talking。
+    virtual void SetSpeaking(bool /*speaking*/) {}
+
     /// 重建渲染资源（控制台 `re draw`）。
     virtual void ReloadRenderer() {}
 

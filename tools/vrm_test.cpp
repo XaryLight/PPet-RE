@@ -500,6 +500,14 @@ void TestRuntime() {
             behaveModel.SetInteracting(false);
             CHECK_MSG(behaveModel.CurrentBehaviorState() == model::BehaviorState::Idle,
                       "SetInteracting(false) 应回 Idle");
+
+            // 说话状态接入：气泡 + 口型期间进入 Talking。
+            behaveModel.SetSpeaking(true);
+            CHECK_MSG(behaveModel.CurrentBehaviorState() == model::BehaviorState::Talking,
+                      "SetSpeaking(true) 应进入 Talking");
+            behaveModel.SetSpeaking(false);
+            CHECK_MSG(behaveModel.CurrentBehaviorState() == model::BehaviorState::Idle,
+                      "SetSpeaking(false) 应回 Idle");
         }
     }
 }

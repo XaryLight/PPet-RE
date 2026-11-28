@@ -617,6 +617,13 @@ void App::TickDialogue(float dt) {
     // 气泡状态机：bubbleEnabled_ 同时控制「是否允许待机碎碎念」与「气泡可见性」。
     speech_.Tick(dt, bubbleEnabled_);
 
+    // 行为状态机：说话的上升 / 下降沿 → 进入 / 退出 Talking。
+    const bool speaking = speech_.IsSpeaking();
+    if (speaking != speakingSent_) {
+        speakingSent_ = speaking;
+        model_->SetSpeaking(speaking);
+    }
+
     // 口型写入模型：
     //   - Live2D 走 SetLipSync（ParamMouthOpenY / ParamMouthForm）；
     //   - PMX / VRM 走元音 morph 叠加层（SetExpressionWeights 的 aa/ih/ou/ee/oh）。

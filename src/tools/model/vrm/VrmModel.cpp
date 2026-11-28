@@ -2623,6 +2623,8 @@ bool VrmModel::SetExpressionPreset(const std::string& id) {
     const bool ok = expressionDirector_.ApplyPreset(id);
     // 用户手动切换表情后进入保护期，避免刚选好就被随机表情改掉。
     if (ok) expressionDirector_.NotifyManualChange();
+    // 表情切换纳入行为状态机：作为一次即时反馈（短余韵），供后续组合反应使用。
+    if (ok) behavior_.ProcessEvent(model::BehaviorEvent::ExpressionChanged);
     return ok;
 }
 

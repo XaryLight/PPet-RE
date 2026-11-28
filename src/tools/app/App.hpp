@@ -164,6 +164,8 @@ private:
     bool bubbleEnabled_ = true;
     /// 最近一次主动触发的台词情绪，供口型嘴形偏置（笑/怒）。待机碎碎念时为 Idle。
     agent::AgentStateKind lastSpeechKind_ = agent::AgentStateKind::Idle;
+    /// 上次已下发给模型的说话状态（用于检测说话的上升/下降沿 → 行为状态机）。
+    bool speakingSent_ = false;
     /// 台词气泡窗口（默认跟随主窗口，不随 Qt GUI 置顶）。
     /// 缺陷 2.4.7：用 unique_ptr 管理，避免裸 new/delete 在 Shutdown 双调用时泄漏/悬垂。
     std::unique_ptr<BubbleWidget> bubble_;

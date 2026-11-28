@@ -116,20 +116,29 @@ claw-sama 的 Mood 系统，本轮补上 PPet 在「行为组织方式」上的�
 
 ### 行为状态机（`src/tools/model/BehaviorStateMachine.hpp`）
 
-把散落的「触摸 / 拖拽 / 待机 / 挂起」触发统一成跨帧状态：
+把散落的「触摸 / 拖拽 / 表情 / 说话 / 挂起 / 窗口空间」触发统一收敛成跨帧状态，
+作为所有行为的唯一仲裁点：
 
 | 状态 | 含义 | 待机幅度倍率 |
 | --- | --- | --- |
-| `Idle` | 程序化待机 | 1.00 |
+| `Idle` | 程序化待机（+ 可选 VRMA 循环） | 1.00 |
 | `Sitting` | 窗口坐姿（预留，待窗口几何接入） | 0.85 |
+| `Talking` | 气泡说话（口型驱动中） | 0.80 |
 | `Reacting` | 触摸 / 情绪反应 | 0.45 |
 | `Interacting` | 用户拖拽 | 0.70 |
-| `Suspended` | 挂起（全屏游戏 / 后台） | 0.25 |
+| `Suspended` | 挂起（全屏游戏 / 后台 / 插件请求） | 0.25 |
 
+- 所有触发源统一收敛到 `BehaviorEvent` 枚举（TouchStart/TouchEnd/InteractionBegin/
+  InteractionEnd/ExpressionChanged/PluginStateChanged/WindowDetached/SpeechStarted/
+  SpeechEnded/Sit/Stand/Suspend/Resume），经 `ProcessEvent()` 走「当前状态 × 事件 →
+  下一状态」的转换表，不再是散落回调；
 - `Suspended` 为最高优先级，可从任何状态进入，期间拒绝触摸且不被余韵超时打断；
 - 触摸进入 `Reacting` 并刷新 1.6 秒余韵，连续触摸刷新计时（「被摸头后的余韵」）；
+  表情切换作为 0.8 秒短余韵的即时反馈，说话进入 `Talking`（不打断更优先的交互 / 反应）；
+- `externalStateOverride` 字段允许插件请求带优先级的临时状态，每帧与内置状态按
+  `BehaviorStatePriority()` 仲裁（缺陷 5 的接入点）；
 - 幅度倍率在 `VrmModel::UpdateIdle` 里整体缩放程序化姿态，避免与骨骼动作叠加抽搐；
-- `App` 在鼠标按下 / 松开时调用 `SetInteracting()`，拖拽期间让位给交互姿态。
+- `App` 在鼠标按下 / 松开、说话起止时分别调用 `SetInteracting()` / `SetSpeaking()`。
 
 ### 交互累积器（`src/tools/model/TouchAccumulator.hpp`）
 
@@ -141,8 +150,8 @@ claw-sama 的 Mood 系统，本轮补上 PPet 在「行为组织方式」上的�
 `VrmModel::TriggerTouch` 据此选择反应变体：同一区域被反复触摸时从「点头 + 开心」
 切换为「摇头 + 生气」，短时间内多次触摸则放大开心表情强度。无需新增任何动画资产。
 
-测试：新增 `behavior_state_machine_test`（10 组）、`touch_accumulator_test`（7 组），
-`vrm_test` 新增接入断言（241→281）。三配置全绿：stub 71/71、nocubism 70/70、asan 69/69。
+测试：新增 `behavior_state_machine_test`（15 组）、`touch_accumulator_test`（7 组），
+`vrm_test` 新增接入断言（241→283）。三配置全绿：stub 71/71、nocubism 70/70、asan 69/69。
 
 ## 暂未纳入参考项目的其它能力
 
