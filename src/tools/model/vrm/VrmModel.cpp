@@ -18,6 +18,7 @@
 #include <sstream>
 
 #include <src/tools/core/TrackingPolicy.hpp>
+#include <src/tools/model/SpringIntegrator.hpp>
 #include <src/tools/model/vrm/GltfParser.hpp>
 #include <src/tools/model/vrm/VrmImage.hpp>
 
@@ -58,8 +59,11 @@ constexpr std::size_t kMaxSpringChain = 64;
 constexpr int kMaxSpringDepth = 32;
 /// 缺陷 2.5.10：morph 目标按 vertexCount×(position+normal) 分配，
 /// targetCount 与 vertexCount 都可被恶意文件放大到极大值，这里设总预算上限，
-/// 超出后停止追加 morph，避免 OOM。256 MiB 足够容纳现实中任何模型的 morph。
-constexpr std::size_t kMaxMorphBytes = 256ull * 1024ull * 1024ull;
+/// 超出后停止追加 morph，避免 OOM。
+/// 注意：高精度 VRM（27 万顶点 × 数十 morph）会超过 256 MiB；若预算过早耗尽，
+/// morph 映射表建不全，VRM 0.x 的表情/口型全部失效（千璃模型即如此）。
+/// 提到 1 GiB：既容纳真实高精度模型，仍是硬上限，防恶意文件 OOM。
+constexpr std::size_t kMaxMorphBytes = 1024ull * 1024ull * 1024ull;
 /// 单个 morph 目标的字节数（Vec3 position + Vec3 normal = 24 字节/顶点）。
 constexpr std::size_t kBytesPerMorphVertex = 2 * 3 * sizeof(float);
 
@@ -990,6 +994,18 @@ void VrmModel::BuildMaterials() {
         // 未显式声明时按双面渲染，避免出现「模型破洞」。
         mat.doubleSided = src.doubleSided;
 
+        // alpha 模式：MASK 需要 alphaTest discard（头发/睫毛/裙边的镂空），
+        // BLEND 需要关闭深度写入（半透明眼睛/高光），OPAQUE 写深度。
+        // 旧实现把这两个字段解析后丢弃，导致 MASK 材质渲染成实心块。
+        if (src.alphaMode == "MASK") {
+            mat.alphaMode = Material::AlphaMode::Mask;
+        } else if (src.alphaMode == "BLEND") {
+            mat.alphaMode = Material::AlphaMode::Blend;
+        } else {
+            mat.alphaMode = Material::AlphaMode::Opaque;
+        }
+        mat.alphaCutoff = src.alphaCutoff;
+
         if (src.hasMtoon) {
             mat.shadeColor = src.shadeColorFactor;
             mat.rimColor = src.rimColorFactor;
@@ -1724,25 +1740,33 @@ void VrmModel::BuildSpringBones() {
     for (const SpringChain& chain : springChains_) {
         if (chain.nodes.empty()) continue;
 
-        // 碰撞球的世界坐标与半径。
-        // 契约里每根弹簧骨只保存一个碰撞球，这里取链条的第一个碰撞体。
-        Vec3 colliderCenter;
-        float colliderRadius = 0.0f;
-        if (!chain.colliders.empty()) {
-            const int colliderIndex = chain.colliders.front();
-            if (colliderIndex >= 0 &&
-                static_cast<std::size_t>(colliderIndex) < springColliders_.size()) {
-                const SpringCollider& collider =
-                    springColliders_[static_cast<std::size_t>(colliderIndex)];
-                if (collider.node >= 0 &&
-                    static_cast<std::size_t>(collider.node) < nodeGlobal_.size()) {
-                    const Mat4 world =
-                        modelTransform_ * nodeGlobal_[static_cast<std::size_t>(collider.node)];
-                    colliderCenter = world.TransformPoint(collider.offset);
-                }
-                colliderRadius = collider.radius;
+        // 碰撞球的世界坐标与半径：收集链条关联的全部碰撞体。
+        // 旧实现只取第一个球，头发/裙摆会穿过身体的其余部位；
+        // 现在逐个转成世界空间，UpdateSpringBones 对每个球做推出约束。
+        // 兼容字段 def.colliderCenter/colliderRadius 仍填第一个有效球，供既有单测读取。
+        std::vector<SpringColliderSphere> chainColliders;
+        chainColliders.reserve(chain.colliders.size());
+        for (const int colliderIndex : chain.colliders) {
+            if (colliderIndex < 0 ||
+                static_cast<std::size_t>(colliderIndex) >= springColliders_.size()) {
+                continue;
             }
+            const SpringCollider& collider =
+                springColliders_[static_cast<std::size_t>(colliderIndex)];
+            if (collider.radius <= 0.0f) continue;
+            Vec3 center;
+            if (collider.node >= 0 &&
+                static_cast<std::size_t>(collider.node) < nodeGlobal_.size()) {
+                const Mat4 world =
+                    modelTransform_ * nodeGlobal_[static_cast<std::size_t>(collider.node)];
+                center = world.TransformPoint(collider.offset);
+            }
+            chainColliders.push_back(SpringColliderSphere{center, collider.radius});
         }
+        const Vec3 colliderCenter =
+            chainColliders.empty() ? Vec3(0.0f, 0.0f, 0.0f) : chainColliders.front().center;
+        const float colliderRadius =
+            chainColliders.empty() ? 0.0f : chainColliders.front().radius;
 
         for (std::size_t i = 0; i < chain.nodes.size(); ++i) {
             const int node = chain.nodes[i];
@@ -1776,8 +1800,15 @@ void VrmModel::BuildSpringBones() {
                 const Vec3 parentPosition =
                     mesh_.bones[static_cast<std::size_t>(def.parentBoneIndex)].world.TransformPoint(
                         Vec3(0.0f, 0.0f, 0.0f));
-                state.restLength = Length(state.position - parentPosition);
+                const Vec3 offset = state.position - parentPosition;
+                state.restLength = Length(offset);
+                // 静止朝向：绑定姿态下从父关节指向自身骨骼的方向。
+                // 用世界坐标计算，保证回正力与模型缩放/旋转无关。
+                if (state.restLength > kEpsilon) {
+                    state.restDirection = Normalize(offset);
+                }
             }
+            state.colliders = chainColliders;
             springStates_.push_back(state);
             mesh_.springBones.push_back(def);
         }
@@ -2171,7 +2202,6 @@ void VrmModel::UpdateSpringBones(float dt) {
         return mesh_.springBones[a].boneIndex < mesh_.springBones[b].boneIndex;
     });
 
-    const float dtSq = dt * dt;
     for (const std::size_t index : order) {
         const SkinnedMesh::SpringBone& def = mesh_.springBones[index];
         SpringState& state = springStates_[index];
@@ -2188,20 +2218,36 @@ void VrmModel::UpdateSpringBones(float dt) {
             anchor = anchorWorld.TransformPoint(Vec3(0.0f, 0.0f, 0.0f));
         }
 
-        // verlet 积分：位置 + 阻尼 + 重力。
-        const Vec3 delta = (state.position - state.previous) * def.dragForce;
-        state.previous = state.position;
-        state.position = state.position + delta + state.gravityDir * (def.gravityPower * dtSq);
+        // VRM 规范的 verlet 积分（抽成纯函数以便单测，见 SpringIntegrator.hpp）。
+        // 旧实现有三处错误导致「没有自然物理效果」：惯性乘反了 dragForce、
+        // 完全没有 stiffness 回正力、重力误乘 dt²。此处一次性修正。
+        SpringIntegratorParams params;
+        params.stiffness = def.stiffness;
+        params.dragForce = def.dragForce;
+        params.gravityPower = def.gravityPower;
+        params.hitRadius = def.hitRadius;
+        params.gravityDir = state.gravityDir;
+        params.restDirection = state.restDirection;
+        params.anchor = anchor;
+        params.restLength = state.restLength;
 
-        // 长度约束：骨骼长度保持不变（只做上限约束，避免被拉长）。
-        const Vec3 toAnchor = state.position - anchor;
-        const float length = Length(toAnchor);
-        if (state.restLength > kEpsilon && length > state.restLength && length > kEpsilon) {
-            state.position = anchor + toAnchor * (state.restLength / length);
+        const Vec3 current = state.position;
+        const Vec3 previous = state.previous;
+        state.position = SpringIntegrate(current, previous, params, dt);
+        state.previous = current;
+
+        // 碰撞球约束：对每个关联球做推出，避免头发/裙摆穿过身体。
+        for (const SpringColliderSphere& sphere : state.colliders) {
+            if (sphere.radius <= 0.0f) continue;
+            const Vec3 fromCollider = state.position - sphere.center;
+            const float distance = Length(fromCollider);
+            const float minDistance = sphere.radius + def.hitRadius;
+            if (distance < minDistance && distance > kEpsilon) {
+                state.position = sphere.center + fromCollider * (minDistance / distance);
+            }
         }
-
-        // 碰撞球约束。
-        if (def.colliderRadius > 0.0f) {
+        // 兼容：没有关联球但保留旧单球字段时（例如测试手工构造），仍处理一次。
+        if (state.colliders.empty() && def.colliderRadius > 0.0f) {
             const Vec3 fromCollider = state.position - def.colliderCenter;
             const float distance = Length(fromCollider);
             const float minDistance = def.colliderRadius + def.hitRadius;

@@ -103,6 +103,8 @@ uniform int uUnlit;
 uniform int uHasBaseTex;
 uniform int uHasToonRamp;
 uniform int uHasSphereTex;
+uniform int uAlphaTest;     ///< 1 = MASK 模式，按 alphaCutoff 丢弃片元
+uniform float uAlphaCutoff; ///< MASK 模式的 alpha 阈值
 
 uniform sampler2D uBaseColorTex;   // 单元 0
 uniform sampler2D uToonRampTex;    // 单元 1
@@ -132,6 +134,10 @@ void main() {
         // 模型 UV 原点在左上，纹理原点在左下，因此 V 取反。
         base *= texture(uBaseColorTex, vec2(vUv.x, 1.0 - vUv.y));
     }
+
+    // MASK 模式（VRM 头发/睫毛/裙边的镂空贴图）：丢弃 alpha 低于阈值的片元，
+    // 否则镂空区域会渲染成不透明的实心块，模型看起来「破相」。
+    if (uAlphaTest == 1 && base.a < uAlphaCutoff) discard;
 
     vec3 color;
     if (uUnlit == 1) {

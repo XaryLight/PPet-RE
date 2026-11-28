@@ -43,6 +43,12 @@ struct Material {
     bool unlit = false;     ///< KHR_materials_unlit
     bool doubleSided = true;
 
+    /// glTF alpha 模式：决定片元着色器是否做 alphaTest、以及是否写深度。
+    /// VRM 0.x 的头发/睫毛/裙边大量使用 MASK（镂空贴图），缺失会导致渲染成实心块。
+    enum class AlphaMode : int { Opaque = 0, Mask = 1, Blend = 2 };
+    AlphaMode alphaMode = AlphaMode::Opaque;
+    float alphaCutoff = 0.5f;  ///< MASK 模式的 alphaTest 阈值
+
     /// PMX 的描边以 edge scale 表达，与 VRM 的 width 单位不同，此处归一化到世界单位。
     float edgeScale = 1.0f;
 };

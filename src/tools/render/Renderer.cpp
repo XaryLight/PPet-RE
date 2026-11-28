@@ -921,13 +921,28 @@ void SkinnedMeshRenderer::ApplyMaterial(const Material& material) {
     shader_->SetInt("uHasToonRamp", hasRamp ? 1 : 0);
     shader_->SetInt("uHasSphereTex", hasSphere ? 1 : 0);
 
+    // alphaTest（MASK 模式）：VRM 头发/睫毛/裙边的镂空贴图需要丢弃低 alpha 片元。
+    // 旧实现没有这个 uniform，MASK 材质被当成普通不透明，镂空处渲染成实心块。
+    const bool alphaTest = material.alphaMode == Material::AlphaMode::Mask;
+    shader_->SetInt("uAlphaTest", alphaTest ? 1 : 0);
+    shader_->SetFloat("uAlphaCutoff", material.alphaCutoff);
+
     // Alpha 混合：桌宠需要透明叠加。
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    // 深度写入：全不透明时写深度（保证遮挡关系正确），
-    // 半透明时不写深度（否则后面的部件会被挡掉）。
-    const bool opaque = material.diffuse.w >= 0.999f;
-    glDepthMask(opaque ? GL_TRUE : GL_FALSE);
+    // 深度写入策略：
+    //   BLEND（半透明眼睛/高光）不写深度，否则后面的部件会被挡掉；
+    //   MASK 与 OPAQUE 写深度——MASK 靠 alphaTest discard 挖空，剩余片元是实心的，
+    //   必须写深度才能正确遮挡（旧实现把 MASK 当半透明，遮挡关系全乱）。
+    bool writeDepth;
+    if (material.alphaMode == Material::AlphaMode::Blend) {
+        writeDepth = false;
+    } else if (alphaTest) {
+        writeDepth = true;
+    } else {
+        writeDepth = material.diffuse.w >= 0.999f;
+    }
+    glDepthMask(writeDepth ? GL_TRUE : GL_FALSE);
 
     // 双面材质（PMX 的「关闭背面剔除」标志）要关掉背面剔除。
     if (material.doubleSided) {

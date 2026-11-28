@@ -229,12 +229,24 @@ private:
         int count = 0;
     };
 
+    /// 弹簧骨碰撞球（世界空间，绑定姿态时计算一次）。
+    struct SpringColliderSphere {
+        Vec3 center;
+        float radius = 0.0f;
+    };
+
     /// 弹簧骨的运行时状态。
     struct SpringState {
         Vec3 position;   ///< 当前世界坐标
         Vec3 previous;   ///< 上一帧世界坐标（verlet 用）
         float restLength = 0.0f;  ///< 与父骨骼的距离（绑定姿态）
         Vec3 gravityDir{0.0f, -1.0f, 0.0f};  ///< 世界空间的重力方向
+        /// 静止朝向：绑定姿态下「父关节 -> 自身」的单位方向（世界空间）。
+        /// stiffness 回正力沿此方向把骨骼拉回原位，是「自然物理」的关键；
+        /// 缺失它时弹簧骨只受重力，静止后完全不动。
+        Vec3 restDirection{0.0f, 1.0f, 0.0f};
+        /// 该链条关联的全部碰撞球（旧实现只用第一个，头发/裙摆会穿过身体）。
+        std::vector<SpringColliderSphere> colliders;
     };
 
     /// 一条弹簧骨链的统一描述（VRM 1.0 与 0.x 共用）。

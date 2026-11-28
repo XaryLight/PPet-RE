@@ -1315,7 +1315,76 @@ static int GetTextureRef(const nlohmann::json& obj, const char* key) {
     return GetIntOr(*it, "index", -1);
 }
 
-/// 解析 materials（含 VRMC_materials_mtoon）。
+/// VRM 0.x：把 extensions.VRM.materialProperties 里同名材质的 MToon 属性
+/// 叠加到已解析的 GltfMaterial 上。VRM 0.x 的 MToon 参数不在 VRMC_materials_mtoon
+/// （那是 1.0 的写法），而在 root 的 VRM.materialProperties[].{float,vector,texture}Properties。
+/// 缺失这一步会导致 VRM 0.x 模型的描边、阴影色、边缘光全部丢失（渲染异常）。
+static void ApplyVrm0MaterialProperties(const nlohmann::json& root,
+                                        const std::string& materialName, GltfMaterial& mat) {
+    const auto extIt = root.find("extensions");
+    if (extIt == root.end() || !extIt->is_object()) return;
+    const auto vrmIt = extIt->find("VRM");
+    if (vrmIt == extIt->end() || !vrmIt->is_object()) return;
+    const auto propsIt = vrmIt->find("materialProperties");
+    if (propsIt == vrmIt->end() || !propsIt->is_array()) return;
+
+    const nlohmann::json* found = nullptr;
+    for (const auto& entry : *propsIt) {
+        if (GetStringOr(entry, "name", std::string()) == materialName) {
+            found = &entry;
+            break;
+        }
+    }
+    if (found == nullptr || !found->is_object()) return;
+
+    // 只有 MToon 着色器才带这些属性。
+    const std::string shader = GetStringOr(*found, "shader", std::string());
+    if (shader.find("MToon") == std::string::npos) return;
+
+    const auto floatsIt = found->find("floatProperties");
+    const auto vectorsIt = found->find("vectorProperties");
+    const auto texturesIt = found->find("textureProperties");
+    const nlohmann::json empty = nlohmann::json::object();
+    const nlohmann::json& floats = (floatsIt != found->end() && floatsIt->is_object()) ? *floatsIt : empty;
+    const nlohmann::json& vectors = (vectorsIt != found->end() && vectorsIt->is_object()) ? *vectorsIt : empty;
+    const nlohmann::json& textures = (texturesIt != found->end() && texturesIt->is_object()) ? *texturesIt : empty;
+
+    mat.hasMtoon = true;
+    mat.shadingShiftFactor = GetFloatOr(floats, "_ShadeShift", mat.shadingShiftFactor);
+    mat.shadingToonyFactor = GetFloatOr(floats, "_ShadeToony", mat.shadingToonyFactor);
+    mat.rimLightingMixFactor = GetFloatOr(floats, "_RimLightingMix", mat.rimLightingMixFactor);
+    mat.parametricRimFresnelPowerFactor =
+        GetFloatOr(floats, "_RimFresnelPower", mat.parametricRimFresnelPowerFactor);
+
+    // 描边：VRM 0.x 用 _OutlineWidthMode 数值（1=world, 2=screen），
+    // keywordMap.MTOON_OUTLINE_WIDTH_WORLD 也是标志；这里按数值映射。
+    const int outlineMode = GetIntOr(floats, "_OutlineWidthMode", 0);
+    if (outlineMode == 1) {
+        mat.outlineWidthMode = "worldCoordinates";
+    } else if (outlineMode == 2) {
+        mat.outlineWidthMode = "screenCoordinates";
+    }
+    mat.outlineWidthFactor = GetFloatOr(floats, "_OutlineWidth", mat.outlineWidthFactor);
+
+    Vec3 color;
+    if (GetVec3(vectors, "_ShadeColor", color)) mat.shadeColorFactor = color;
+    if (GetVec3(vectors, "_RimColor", color)) mat.rimColorFactor = color;
+    if (GetVec3(vectors, "_OutlineColor", color)) mat.outlineColorFactor = color;
+
+    // VRM 0.x 的 textureProperties 值是 glTF texture 的整数下标。
+    const auto shadeIt = textures.find("_ShadeTexture");
+    if (shadeIt != textures.end()) {
+        int idx = -1;
+        if (JsonToInt(*shadeIt, idx)) mat.shadeMultiplyTexture = idx;
+    }
+    const auto rimIt = textures.find("_RimTexture");
+    if (rimIt != textures.end()) {
+        int idx = -1;
+        if (JsonToInt(*rimIt, idx)) mat.rimMultiplyTexture = idx;
+    }
+}
+
+/// 解析 materials（含 VRMC_materials_mtoon / VRM 0.x materialProperties）。
 static bool ParseMaterials(const nlohmann::json& root, GltfDocument& doc, std::string& error) {
     const auto it = root.find("materials");
     if (it == root.end() || !it->is_array()) return true;
@@ -1379,6 +1448,11 @@ mat.rimColorTexture = GetTextureRef(*mtoon, "rimColorTexture");
                 mat.parametricRimFresnelPowerFactor =
                     GetFloatOr(*mtoon, "parametricRimFresnelPowerFactor", 5.0f);
             }
+        }
+        // VRM 0.x 兜底：VRM 1.0 的 VRMC_materials_mtoon 没命中时，
+        // 尝试从 root 的 VRM.materialProperties 按材质名读取 MToon 属性。
+        if (!mat.hasMtoon) {
+            ApplyVrm0MaterialProperties(root, mat.name, mat);
         }
         doc.materials_.push_back(std::move(mat));
     }

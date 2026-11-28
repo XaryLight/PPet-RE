@@ -1364,6 +1364,14 @@ ppet_add_simple_test(touch_response tools/touch_response_test.cpp)
 # 鼠标静止休眠、最后方向记忆、头部预算让位、NaN 防御。纯逻辑、零依赖。
 ppet_add_simple_test(gaze_follow tools/gaze_follow_test.cpp)
 
+# 弹簧骨积分器（VRM 自然物理）：verlet + stiffness 回正力 + 1-dragForce 阻尼 +
+# 重力 dt + 骨长约束 + NaN 防御。纯逻辑、零依赖。
+ppet_add_simple_test(spring_integrator tools/spring_integrator_test.cpp)
+
+# 真实 VRM 模型探针（手动运行，需传入 .vrm 路径）：验证 VRM 0.x MToon 材质与弹簧骨。
+add_executable(ppet_qianli_probe tools/qianli_probe.cpp)
+target_link_libraries(ppet_qianli_probe PRIVATE ppet_model)
+
 # 智能动作识别（需求 2）：按文件名 / 动作组识别 idle / touch / expression
 # 并产出「区域 -> 触摸动作」映射。纯逻辑、零依赖。
 add_executable(ppet_motion_recognizer_test
